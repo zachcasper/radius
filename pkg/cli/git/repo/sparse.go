@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/radius-project/radius/pkg/cli/git"
 )
@@ -27,11 +28,11 @@ import (
 // ResourceTypesRepoURL is the default repository for Resource Types.
 const ResourceTypesRepoURL = "https://github.com/radius-project/resource-types-contrib.git"
 
-// ResourceTypesPath is the subdirectory in the repository containing Resource Types.
-const ResourceTypesPath = "types"
+// ResourceTypeNamespaces are the top-level directories containing Resource Types.
+var ResourceTypeNamespaces = []string{"Compute", "Data", "Security"}
 
 // SparseCheckout performs a sparse checkout of a Git repository.
-// This is used to fetch only the Resource Types directory from the contrib repo.
+// This is used to fetch only the Resource Types directories from the contrib repo.
 type SparseCheckout struct {
 	// RepoURL is the Git repository URL to clone.
 	RepoURL string
@@ -39,8 +40,8 @@ type SparseCheckout struct {
 	// Branch is the branch or tag to checkout (default: main).
 	Branch string
 
-	// SparsePath is the subdirectory to checkout.
-	SparsePath string
+	// SparsePaths are the subdirectories to checkout.
+	SparsePaths []string
 
 	// TargetDir is the directory where the checkout will be placed.
 	TargetDir string
@@ -49,15 +50,16 @@ type SparseCheckout struct {
 // NewResourceTypesSparseCheckout creates a SparseCheckout configured for Resource Types.
 func NewResourceTypesSparseCheckout(targetDir string) *SparseCheckout {
 	return &SparseCheckout{
-		RepoURL:    ResourceTypesRepoURL,
-		Branch:     "main",
-		SparsePath: ResourceTypesPath,
-		TargetDir:  targetDir,
+		RepoURL:     ResourceTypesRepoURL,
+		Branch:      "main",
+		SparsePaths: ResourceTypeNamespaces,
+		TargetDir:   targetDir,
 	}
 }
 
 // Execute performs the sparse checkout operation.
-// Creates a shallow clone with only the specified path populated.
+// Creates a shallow clone with only the specified paths populated.
+// Copies only *.yaml files to the target directory (flattened, no nested directories).
 func (sc *SparseCheckout) Execute() error {
 	// Create a temporary directory for the clone
 	tempDir, err := os.MkdirTemp("", "radius-sparse-*")
@@ -81,9 +83,13 @@ func (sc *SparseCheckout) Execute() error {
 		return git.NewGeneralError("failed to enable sparse checkout", err)
 	}
 
-	// Configure sparse checkout paths
+	// Configure sparse checkout paths (one per line)
+	sparseContent := ""
+	for _, path := range sc.SparsePaths {
+		sparseContent += path + "\n"
+	}
 	sparseFile := filepath.Join(tempDir, ".git", "info", "sparse-checkout")
-	if err := os.WriteFile(sparseFile, []byte(sc.SparsePath+"\n"), 0644); err != nil {
+	if err := os.WriteFile(sparseFile, []byte(sparseContent), 0644); err != nil {
 		return git.NewGeneralError("failed to write sparse-checkout file", err)
 	}
 
@@ -106,10 +112,12 @@ func (sc *SparseCheckout) Execute() error {
 		return git.NewGeneralError("failed to create target directory", err)
 	}
 
-	// Copy sparse checkout content to target
-	sourcePath := filepath.Join(tempDir, sc.SparsePath)
-	if err := copyDirectory(sourcePath, sc.TargetDir); err != nil {
-		return git.NewGeneralError("failed to copy Resource Types", err)
+	// Find and copy all *.yaml files to target directory (flattened)
+	for _, sparsePath := range sc.SparsePaths {
+		sourcePath := filepath.Join(tempDir, sparsePath)
+		if err := copyYAMLFiles(sourcePath, sc.TargetDir); err != nil {
+			return git.NewGeneralError("failed to copy Resource Types", err)
+		}
 	}
 
 	return nil
@@ -121,6 +129,29 @@ func runGitCommand(dir string, args ...string) error {
 	cmd.Dir = dir
 	cmd.Stderr = nil // Suppress stderr for cleaner output
 	return cmd.Run()
+}
+
+// copyYAMLFiles recursively finds all *.yaml files in src and copies them to dst (flattened).
+func copyYAMLFiles(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+
+		// Only copy .yaml files
+		if !strings.HasSuffix(info.Name(), ".yaml") {
+			return nil
+		}
+
+		// Copy file to destination (flattened - just the filename)
+		dstPath := filepath.Join(dst, info.Name())
+		return copyFile(path, dstPath)
+	})
 }
 
 // copyDirectory recursively copies a directory from src to dst.

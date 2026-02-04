@@ -241,7 +241,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			WithSequence(step.Sequence)
 
 		if step.Recipe.Name != "" {
-			exec.WithRecipe(step.Recipe.Name, step.Recipe.Source)
+			exec.WithRecipe(step.Recipe.Name, step.Recipe.Location)
 		}
 
 		result, err := exec.Destroy(ctx)

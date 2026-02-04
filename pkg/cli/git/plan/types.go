@@ -16,6 +16,20 @@ limitations under the License.
 
 package plan
 
+import "gopkg.in/yaml.v3"
+
+// Timestamp is a string that marshals to YAML as a timestamp without quotes.
+type Timestamp string
+
+// MarshalYAML implements yaml.Marshaler to output as a timestamp without quotes.
+func (t Timestamp) MarshalYAML() (interface{}, error) {
+	return &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Tag:   "!!timestamp",
+		Value: string(t),
+	}, nil
+}
+
 // Plan represents a deployment plan for Git workspace mode.
 // It contains the application, environment, and ordered deployment steps.
 type Plan struct {
@@ -25,11 +39,17 @@ type Plan struct {
 	// EnvironmentFile is the path to the environment file (e.g., ".env", ".env.production").
 	EnvironmentFile string `yaml:"environmentFile" json:"environmentFile"`
 
-	// Summary provides a high-level overview of the plan.
-	Summary *PlanSummary `yaml:"summary,omitempty" json:"summary,omitempty"`
+	// GeneratedAt is the timestamp when the plan was generated.
+	GeneratedAt Timestamp `yaml:"generatedAt" json:"generatedAt"`
+
+	// ModelFile is the path to the Bicep model file.
+	ModelFile string `yaml:"modelFile" json:"modelFile"`
 
 	// Steps is the ordered list of deployment steps.
 	Steps []DeploymentStep `yaml:"steps" json:"steps"`
+
+	// Summary provides a high-level overview of the plan.
+	Summary *PlanSummary `yaml:"summary,omitempty" json:"summary,omitempty"`
 }
 
 // PlanSummary provides summary information about a deployment plan.
@@ -37,11 +57,35 @@ type PlanSummary struct {
 	// TotalSteps is the number of deployment steps.
 	TotalSteps int `yaml:"totalSteps" json:"totalSteps"`
 
-	// RecipeCount is the number of recipes to be deployed.
-	RecipeCount int `yaml:"recipeCount" json:"recipeCount"`
+	// TerraformSteps is the number of Terraform deployment steps.
+	TerraformSteps int `yaml:"terraformSteps" json:"terraformSteps"`
+
+	// BicepSteps is the number of Bicep deployment steps.
+	BicepSteps int `yaml:"bicepSteps" json:"bicepSteps"`
+
+	// TotalAdd is the total number of resources to be added.
+	TotalAdd int `yaml:"totalAdd" json:"totalAdd"`
+
+	// TotalChange is the total number of resources to be changed.
+	TotalChange int `yaml:"totalChange" json:"totalChange"`
+
+	// TotalDestroy is the total number of resources to be destroyed.
+	TotalDestroy int `yaml:"totalDestroy" json:"totalDestroy"`
 
 	// AllVersionsPinned indicates whether all recipe versions are pinned.
 	AllVersionsPinned bool `yaml:"allVersionsPinned" json:"allVersionsPinned"`
+}
+
+// ExpectedChanges represents the expected resource changes from terraform plan.
+type ExpectedChanges struct {
+	// Add is the number of resources to be added.
+	Add int `yaml:"add" json:"add"`
+
+	// Change is the number of resources to be changed.
+	Change int `yaml:"change" json:"change"`
+
+	// Destroy is the number of resources to be destroyed.
+	Destroy int `yaml:"destroy" json:"destroy"`
 }
 
 // DeploymentStep represents a single deployment step in a plan.
@@ -55,7 +99,13 @@ type DeploymentStep struct {
 	// Recipe contains information about the recipe being used.
 	Recipe RecipeReference `yaml:"recipe" json:"recipe"`
 
-	// Status is the current status of the step (pending, in-progress, completed, failed).
+	// DeploymentArtifacts is the path to the generated deployment artifacts.
+	DeploymentArtifacts string `yaml:"deploymentArtifacts" json:"deploymentArtifacts"`
+
+	// ExpectedChanges contains the expected resource changes from terraform/bicep plan.
+	ExpectedChanges *ExpectedChanges `yaml:"expectedChanges,omitempty" json:"expectedChanges,omitempty"`
+
+	// Status is the current status of the step (planned, in-progress, completed, failed).
 	Status string `yaml:"status,omitempty" json:"status,omitempty"`
 }
 
@@ -73,14 +123,14 @@ type ResourceInfo struct {
 
 // RecipeReference contains information about a recipe used by a resource.
 type RecipeReference struct {
-	// Name is the name of the recipe.
+	// Name is the name of the recipe (usually the resource type).
 	Name string `yaml:"name" json:"name"`
 
 	// Kind is the type of recipe (terraform, bicep).
 	Kind string `yaml:"kind" json:"kind"`
 
-	// Source is the source location of the recipe (e.g., OCI registry path).
-	Source string `yaml:"source" json:"source"`
+	// Location is the source location of the recipe (e.g., git URL, OCI registry path).
+	Location string `yaml:"location" json:"location"`
 
 	// Version is the pinned version of the recipe, if specified.
 	Version *RecipeVersion `yaml:"version,omitempty" json:"version,omitempty"`
@@ -113,39 +163,40 @@ type ConnectedResource struct {
 
 // ContextVariable represents the context passed to Terraform/Bicep recipes.
 // This mirrors the control plane's RecipeContext structure.
+// Field order is significant for JSON output - matches expected format.
 type ContextVariable struct {
-	// Resource contains information about the resource being deployed.
-	Resource *ContextResource `json:"resource,omitempty"`
-
 	// Application contains information about the application.
 	Application *ContextApplication `json:"application,omitempty"`
+
+	// AWS contains AWS-specific configuration, if applicable.
+	AWS *ContextAWS `json:"aws"`
+
+	// Azure contains Azure-specific configuration, if applicable.
+	Azure *ContextAzure `json:"azure"`
 
 	// Environment contains information about the environment.
 	Environment *ContextEnvironment `json:"environment,omitempty"`
 
+	// Resource contains information about the resource being deployed.
+	Resource *ContextResource `json:"resource,omitempty"`
+
 	// Runtime contains runtime-specific configuration.
 	Runtime *ContextRuntime `json:"runtime,omitempty"`
-
-	// Azure contains Azure-specific configuration, if applicable.
-	Azure *ContextAzure `json:"azure,omitempty"`
-
-	// AWS contains AWS-specific configuration, if applicable.
-	AWS *ContextAWS `json:"aws,omitempty"`
 }
 
 // ContextResource contains resource information for the context variable.
 type ContextResource struct {
+	// Connections contains resolved connected resources.
+	Connections map[string]*ConnectedResource `json:"connections"`
+
 	// Name is the resource name.
 	Name string `json:"name"`
-
-	// Type is the resource type.
-	Type string `json:"type"`
 
 	// Properties contains the resource properties.
 	Properties map[string]any `json:"properties,omitempty"`
 
-	// Connections contains resolved connected resources.
-	Connections map[string]*ConnectedResource `json:"connections,omitempty"`
+	// Type is the resource type.
+	Type string `json:"type"`
 }
 
 // ContextApplication contains application information for the context variable.
@@ -193,11 +244,13 @@ type ContextAWS struct {
 	AccountID string `json:"accountId,omitempty"`
 }
 
-// NewPlan creates a new Plan with the given application and environment file.
-func NewPlan(application, environmentFile string) *Plan {
+// NewPlan creates a new Plan with the given application, model file, and environment file.
+func NewPlan(application, modelFile, environmentFile string) *Plan {
 	return &Plan{
 		Application:     application,
 		EnvironmentFile: environmentFile,
+		GeneratedAt:     "",  // Set by caller
+		ModelFile:       modelFile,
 		Steps:           []DeploymentStep{},
 	}
 }
@@ -208,20 +261,37 @@ func (p *Plan) AddStep(step DeploymentStep) {
 	p.Steps = append(p.Steps, step)
 }
 
-// UpdateSummary recalculates the plan summary.
+// UpdateSummary recalculates the plan summary based on step data.
 func (p *Plan) UpdateSummary() {
 	summary := &PlanSummary{
 		TotalSteps:        len(p.Steps),
-		RecipeCount:       0,
+		TerraformSteps:    0,
+		BicepSteps:        0,
+		TotalAdd:          0,
+		TotalChange:       0,
+		TotalDestroy:      0,
 		AllVersionsPinned: true,
 	}
 
 	for _, step := range p.Steps {
-		if step.Recipe.Name != "" {
-			summary.RecipeCount++
-			if step.Recipe.Version == nil || (step.Recipe.Version.Tag == "" && step.Recipe.Version.Digest == "") {
-				summary.AllVersionsPinned = false
-			}
+		// Count by recipe kind
+		switch step.Recipe.Kind {
+		case "terraform":
+			summary.TerraformSteps++
+		case "bicep":
+			summary.BicepSteps++
+		}
+
+		// Aggregate expected changes
+		if step.ExpectedChanges != nil {
+			summary.TotalAdd += step.ExpectedChanges.Add
+			summary.TotalChange += step.ExpectedChanges.Change
+			summary.TotalDestroy += step.ExpectedChanges.Destroy
+		}
+
+		// Check if versions are pinned
+		if step.Recipe.Version == nil || (step.Recipe.Version.Tag == "" && step.Recipe.Version.Digest == "") {
+			summary.AllVersionsPinned = false
 		}
 	}
 

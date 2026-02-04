@@ -23,9 +23,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
-	"sigs.k8s.io/yaml"
+	"gopkg.in/yaml.v3"
 
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/git/config"
@@ -229,66 +230,118 @@ func (r *Runner) Run(ctx context.Context) error {
 	// Determine application and environment
 	r.Options.Application = r.extractApplication(model)
 	r.Options.Environment, r.Options.EnvironmentFile = r.extractEnvironment()
-	r.Options.PlanDir = filepath.Join(r.Options.WorkDir, ".radius", "plan", r.Options.Environment)
+	// Plan directory includes application name: .radius/plan/<app>/<env>/
+	r.Options.PlanDir = filepath.Join(r.Options.WorkDir, ".radius", "plan", r.Options.Application, r.Options.Environment)
+
+	// Load environment configuration to get recipes path
+	envPath := filepath.Join(r.Options.WorkDir, r.Options.EnvironmentFile)
+	envConfig, _ := config.LoadEnvironment(envPath)
+	if envConfig != nil && len(envConfig.Recipes) > 0 {
+		// Load recipes from environment-specified paths
+		var recipePaths []string
+		for _, recipePath := range envConfig.Recipes {
+			if !filepath.IsAbs(recipePath) {
+				recipePath = filepath.Join(r.Options.WorkDir, recipePath)
+			}
+			recipePaths = append(recipePaths, recipePath)
+		}
+		r.Options.Recipes, _ = config.LoadRecipes(recipePaths)
+
+		// Extract kubernetes config
+		if envConfig.Kubernetes != nil {
+			r.Options.KubernetesNamespace = envConfig.Kubernetes.Namespace
+			r.Options.KubernetesContext = envConfig.Kubernetes.Context
+		}
+	}
 
 	// Check for existing plan files
 	if err := r.checkExistingPlanFiles(); err != nil {
 		return err
 	}
 
-	// Create plan
-	p := plan.NewPlan(r.Options.Application, r.Options.EnvironmentFile)
+	// Compute relative model file path
+	relModelPath := r.ModelPath
+	if filepath.IsAbs(r.ModelPath) {
+		if rel, err := filepath.Rel(r.Options.WorkDir, r.ModelPath); err == nil {
+			relModelPath = rel
+		}
+	}
 
-	// Generate artifacts for each resource
+	// Create plan with timestamp
+	p := plan.NewPlan(r.Options.Application, relModelPath, r.Options.EnvironmentFile)
+	p.GeneratedAt = plan.Timestamp(time.Now().UTC().Format(time.RFC3339Nano))
+
+	// Filter out Application resources (they're not deployable via recipes)
 	resources := model.GetOrderedResources()
-	for i, resource := range resources {
+	var deployableResources []*plan.BicepResource
+	for _, resource := range resources {
+		// Skip Application resources - they define the application but aren't deployed via recipes
+		if strings.Contains(resource.Type, "/applications") {
+			continue
+		}
+		deployableResources = append(deployableResources, resource)
+	}
+
+	// Output header with app → env format
+	r.Output.LogInfo("📋 Generating deployment plan for %s → %s", r.Options.Application, r.Options.Environment)
+	r.Output.LogInfo("")
+	r.Output.LogInfo("📦 Found %d resources:", len(deployableResources))
+	r.Output.LogInfo("")
+
+	// Generate artifacts for each deployable resource
+	for i, resource := range deployableResources {
+		// Strip API version from resource type (e.g., "Applications.Compute/containers@2023-10-01-preview" -> "Radius.Compute/containers")
+		resourceType := resource.Type
+		if idx := strings.Index(resourceType, "@"); idx > 0 {
+			resourceType = resourceType[:idx]
+		}
+		// Convert Applications.* to Radius.* for display
+		if strings.HasPrefix(resourceType, "Applications.") {
+			resourceType = "Radius." + strings.TrimPrefix(resourceType, "Applications.")
+		}
+
 		step := plan.DeploymentStep{
 			Sequence: i + 1,
 			Resource: plan.ResourceInfo{
 				Name:       resource.SymbolicName,
-				Type:       resource.Type,
+				Type:       resourceType,
 				Properties: resource.Properties,
 			},
+			Status: "planned",
 		}
 
 		// Look up recipe source from recipes config based on resource type
-		var recipeSource string
+		var recipeLocation string
 		var recipeKind string
 		if r.Options.Recipes != nil {
 			if recipe, found := config.LookupRecipe(r.Options.Recipes, resource.Type); found {
-				recipeSource = recipe.RecipeLocation
+				recipeLocation = recipe.RecipeLocation
 				recipeKind = recipe.RecipeKind
 			}
 		}
 
-		// Add recipe info if available
-		if resource.Recipe != nil {
+		// Set recipe info - name is the resource type, not "default"
+		if recipeLocation != "" {
 			step.Recipe = plan.RecipeReference{
-				Name:   resource.Recipe.Name,
-				Kind:   resource.Recipe.Kind,
-				Source: resource.Recipe.Source,
+				Name:     resourceType,
+				Kind:     recipeKind,
+				Location: recipeLocation,
 			}
-			// Override source from recipes config if set
-			if recipeSource != "" {
-				step.Recipe.Source = recipeSource
-			}
-			if recipeKind != "" {
-				step.Recipe.Kind = recipeKind
-			}
-		} else if recipeSource != "" {
-			// No explicit recipe in bicep, but we have one from config
+		} else if resource.Recipe != nil {
 			step.Recipe = plan.RecipeReference{
-				Name:   "default",
-				Kind:   recipeKind,
-				Source: recipeSource,
+				Name:     resourceType,
+				Kind:     resource.Recipe.Kind,
+				Location: resource.Recipe.Source,
 			}
 		}
-
-		p.AddStep(step)
 
 		// Generate Terraform artifacts
 		stepDir := fmt.Sprintf("%03d-%s-terraform", i+1, resource.SymbolicName)
 		outputDir := filepath.Join(r.Options.PlanDir, stepDir)
+
+		// Set deployment artifacts path (relative to workspace)
+		relPlanDir := ".radius/plan/" + r.Options.Application + "/" + r.Options.Environment
+		step.DeploymentArtifacts = relPlanDir + "/" + stepDir
 
 		generator := plan.NewTerraformGenerator(resource, model, outputDir).
 			WithApplication(r.Options.Application).
@@ -296,8 +349,8 @@ func (r *Runner) Run(ctx context.Context) error {
 			WithKubernetes(r.Options.KubernetesNamespace, r.Options.KubernetesContext)
 
 		// Set recipe source (prefer config lookup over bicep definition)
-		if recipeSource != "" {
-			generator.WithRecipeSource(recipeSource)
+		if recipeLocation != "" {
+			generator.WithRecipeSource(recipeLocation)
 		} else if resource.Recipe != nil {
 			generator.WithRecipeSource(resource.Recipe.Source)
 		}
@@ -310,12 +363,21 @@ func (r *Runner) Run(ctx context.Context) error {
 		r.restoreStateFile(resource.SymbolicName, outputDir)
 
 		// Run terraform init and plan
-		r.Output.LogInfo("   📦 %s (%s)", resource.SymbolicName, resource.Type)
+		r.Output.LogInfo("   📦 %s (%s)", resource.SymbolicName, resourceType)
 
 		planResult, err := generator.InitAndPlan(ctx)
 		if err != nil {
 			return &exitError{message: fmt.Sprintf("Terraform plan failed for %s: %v", resource.SymbolicName, err)}
 		}
+
+		// Set expected changes from terraform plan result
+		step.ExpectedChanges = &plan.ExpectedChanges{
+			Add:     planResult.Add,
+			Change:  planResult.Change,
+			Destroy: planResult.Destroy,
+		}
+
+		p.AddStep(step)
 
 		if planResult.HasChanges {
 			r.Output.LogInfo("      Changes: +%d ~%d -%d", planResult.Add, planResult.Change, planResult.Destroy)
@@ -327,11 +389,19 @@ func (r *Runner) Run(ctx context.Context) error {
 	// Update plan summary
 	p.UpdateSummary()
 
-	// Write plan.yaml
+	// Write plan.yaml with 4-space indentation to match expected format
 	planPath := filepath.Join(r.Options.PlanDir, "plan.yaml")
-	planYAML, err := yaml.Marshal(p)
-	if err != nil {
-		return &exitError{message: fmt.Sprintf("Failed to marshal plan: %v", err)}
+
+	var planYAML []byte
+	{
+		var buf strings.Builder
+		encoder := yaml.NewEncoder(&buf)
+		encoder.SetIndent(4)
+		if err := encoder.Encode(p); err != nil {
+			return &exitError{message: fmt.Sprintf("Failed to marshal plan: %v", err)}
+		}
+		encoder.Close()
+		planYAML = []byte(buf.String())
 	}
 
 	if err := os.MkdirAll(filepath.Dir(planPath), 0755); err != nil {
@@ -408,7 +478,8 @@ func (r *Runner) resolveModelPath(workDir string) (string, error) {
 func (r *Runner) extractApplication(model *plan.BicepModel) string {
 	// Look for application resource or use directory name
 	for _, resource := range model.Resources {
-		if strings.Contains(resource.Type, "Application") {
+		// Check for Application resources (case-insensitive, handles both "Application" and "applications")
+		if strings.Contains(strings.ToLower(resource.Type), "application") {
 			if resource.Name != "" {
 				return resource.Name
 			}

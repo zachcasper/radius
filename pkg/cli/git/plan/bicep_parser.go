@@ -17,7 +17,6 @@ limitations under the License.
 package plan
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -230,10 +229,21 @@ func parseResourceProperties(resource *BicepResource, lines []string) {
 		resource.Properties = parsePropertiesBlock(matches[1])
 	}
 
-	// Extract connections block
+	// Extract connections block (may be inside properties or at root level)
 	connPattern := regexp.MustCompile(`(?s)connections:\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}`)
 	if matches := connPattern.FindStringSubmatch(content); matches != nil {
 		resource.Connections = parseConnectionsBlock(matches[1], resource.SymbolicName)
+		// Also add connections to properties map for plan.yaml output
+		if resource.Properties != nil {
+			connectionsMap := make(map[string]any)
+			for name, conn := range resource.Connections {
+				// Reconstruct the symbolic reference (e.g., "db.id")
+				connectionsMap[name] = map[string]any{
+					"source": conn.Name + ".id",
+				}
+			}
+			resource.Properties["connections"] = connectionsMap
+		}
 	}
 
 	// Extract recipe configuration
@@ -245,38 +255,220 @@ func parseResourceProperties(resource *BicepResource, lines []string) {
 	}
 }
 
-// parsePropertiesBlock parses a properties block into a map.
+// parsePropertiesBlock parses a properties block into a map, handling nested objects.
 func parsePropertiesBlock(content string) map[string]any {
 	props := make(map[string]any)
-	
-	// Simple key-value parsing
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	lines := strings.Split(content, "\n")
+	parsePropertiesRecursive(lines, props, 0)
+	return props
+}
+
+// parsePropertiesRecursive recursively parses property lines into a map.
+// Returns the number of lines consumed.
+func parsePropertiesRecursive(lines []string, props map[string]any, startIdx int) int {
+	i := startIdx
+	for i < len(lines) {
+		line := strings.TrimSpace(lines[i])
+
+		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "//") {
+			i++
 			continue
 		}
 
-		// Parse simple key: value pairs
-		if idx := strings.Index(line, ":"); idx > 0 {
-			key := strings.TrimSpace(line[:idx])
-			value := strings.TrimSpace(line[idx+1:])
-			
-			// Remove trailing comma
-			value = strings.TrimSuffix(value, ",")
-			
-			// Remove quotes
-			if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") {
-				value = value[1 : len(value)-1]
+		// Check for closing brace - end of this object
+		if line == "}" || strings.HasPrefix(line, "}") {
+			return i - startIdx + 1
+		}
+
+		// Parse key: value pairs
+		colonIdx := strings.Index(line, ":")
+		if colonIdx <= 0 {
+			i++
+			continue
+		}
+
+		key := strings.TrimSpace(line[:colonIdx])
+		value := strings.TrimSpace(line[colonIdx+1:])
+
+		// Remove trailing comma
+		value = strings.TrimSuffix(value, ",")
+
+		// Check if value is a nested object (starts with {)
+		if value == "{" || strings.HasPrefix(value, "{") {
+			// Find the matching closing brace
+			nestedProps := make(map[string]any)
+			consumed := parseNestedObject(lines, nestedProps, i+1)
+			props[key] = nestedProps
+			i += consumed + 1
+			continue
+		}
+
+		// Handle inline object like: web: { containerPort: 3000 }
+		if strings.HasPrefix(value, "{") && strings.HasSuffix(value, "}") {
+			// Parse inline object
+			innerContent := strings.TrimPrefix(value, "{")
+			innerContent = strings.TrimSuffix(innerContent, "}")
+			nestedProps := parseInlineObject(innerContent)
+			props[key] = nestedProps
+			i++
+			continue
+		}
+
+		// Simple value - remove quotes
+		if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") {
+			value = value[1 : len(value)-1]
+		}
+
+		// Try to parse as number
+		if numVal, err := parseNumber(value); err == nil {
+			props[key] = numVal
+		} else if key != "" && value != "" {
+			props[key] = value
+		}
+
+		i++
+	}
+
+	return i - startIdx
+}
+
+// parseNestedObject parses a nested object starting after the opening brace.
+func parseNestedObject(lines []string, props map[string]any, startIdx int) int {
+	braceCount := 1
+	i := startIdx
+
+	for i < len(lines) && braceCount > 0 {
+		line := strings.TrimSpace(lines[i])
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "//") {
+			i++
+			continue
+		}
+
+		// Count braces
+		for _, ch := range line {
+			if ch == '{' {
+				braceCount++
+			} else if ch == '}' {
+				braceCount--
+				if braceCount == 0 {
+					break
+				}
 			}
-			
-			if key != "" && value != "" {
-				props[key] = value
-			}
+		}
+
+		if braceCount == 0 {
+			break
+		}
+
+		// Parse key: value
+		colonIdx := strings.Index(line, ":")
+		if colonIdx <= 0 {
+			i++
+			continue
+		}
+
+		key := strings.TrimSpace(line[:colonIdx])
+		value := strings.TrimSpace(line[colonIdx+1:])
+		value = strings.TrimSuffix(value, ",")
+
+		// Check for nested object
+		if value == "{" {
+			nestedProps := make(map[string]any)
+			consumed := parseNestedObject(lines, nestedProps, i+1)
+			props[key] = nestedProps
+			i += consumed + 1
+			continue
+		}
+
+		// Handle inline object
+		if strings.HasPrefix(value, "{") && strings.Contains(value, "}") {
+			innerContent := extractInlineObject(value)
+			nestedProps := parseInlineObject(innerContent)
+			props[key] = nestedProps
+			i++
+			continue
+		}
+
+		// Simple value
+		if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") {
+			value = value[1 : len(value)-1]
+		}
+
+		if numVal, err := parseNumber(value); err == nil {
+			props[key] = numVal
+		} else if key != "" && value != "" {
+			props[key] = value
+		}
+
+		i++
+	}
+
+	return i - startIdx
+}
+
+// parseInlineObject parses an inline object like "containerPort: 3000".
+func parseInlineObject(content string) map[string]any {
+	props := make(map[string]any)
+	parts := strings.Split(content, ",")
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		colonIdx := strings.Index(part, ":")
+		if colonIdx <= 0 {
+			continue
+		}
+
+		key := strings.TrimSpace(part[:colonIdx])
+		value := strings.TrimSpace(part[colonIdx+1:])
+
+		// Remove quotes
+		if strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'") {
+			value = value[1 : len(value)-1]
+		}
+
+		// Try to parse as number
+		if numVal, err := parseNumber(value); err == nil {
+			props[key] = numVal
+		} else if key != "" && value != "" {
+			props[key] = value
 		}
 	}
 
 	return props
+}
+
+// extractInlineObject extracts content between first { and last }.
+func extractInlineObject(value string) string {
+	start := strings.Index(value, "{")
+	end := strings.LastIndex(value, "}")
+	if start >= 0 && end > start {
+		return value[start+1 : end]
+	}
+	return value
+}
+
+// parseNumber attempts to parse a string as a number.
+func parseNumber(value string) (any, error) {
+	// Try integer first
+	if !strings.Contains(value, ".") {
+		var intVal int64
+		_, err := fmt.Sscanf(value, "%d", &intVal)
+		if err == nil {
+			return intVal, nil
+		}
+	}
+
+	// Try float
+	var floatVal float64
+	_, err := fmt.Sscanf(value, "%f", &floatVal)
+	if err == nil {
+		return floatVal, nil
+	}
+
+	return nil, fmt.Errorf("not a number")
 }
 
 // parseConnectionsBlock parses a connections block.
@@ -385,14 +577,55 @@ func extractSymbolicName(reference string) string {
 	return ""
 }
 
-// GetOrderedResources returns resources in dependency order.
+// GetOrderedResources returns resources in dependency order using topological sort.
+// Dependencies come before the resources that depend on them.
 func (m *BicepModel) GetOrderedResources() []*BicepResource {
-	// Simple implementation: return resources sorted by name for now
-	// A more sophisticated implementation would do topological sorting based on dependencies
+	// Build dependency graph
 	var resources []*BicepResource
-	for _, r := range m.Resources {
-		resources = append(resources, r)
+	visited := make(map[string]bool)
+	inProgress := make(map[string]bool)
+
+	// Helper function for DFS topological sort
+	var visit func(name string) bool
+	visit = func(name string) bool {
+		if inProgress[name] {
+			// Cycle detected - skip to avoid infinite loop
+			return false
+		}
+		if visited[name] {
+			return true
+		}
+
+		inProgress[name] = true
+		resource, ok := m.Resources[name]
+		if !ok {
+			inProgress[name] = false
+			return true
+		}
+
+		// Visit dependencies first (from connections)
+		for _, conn := range resource.Connections {
+			if conn.Name != "" {
+				visit(conn.Name)
+			}
+		}
+
+		// Visit explicit dependencies
+		for _, dep := range resource.DependsOn {
+			visit(dep)
+		}
+
+		inProgress[name] = false
+		visited[name] = true
+		resources = append(resources, resource)
+		return true
 	}
+
+	// Visit all resources
+	for name := range m.Resources {
+		visit(name)
+	}
+
 	return resources
 }
 

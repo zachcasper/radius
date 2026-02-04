@@ -320,7 +320,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.47.0 // indirect
+	golang.org/x/crypto v0.47.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
@@ -352,14 +352,17 @@ require (
 )
 
 require (
+	github.com/gonvenience/ytbx v1.4.7
+	github.com/homeport/dyff v1.10.3
+	github.com/joho/godotenv v1.5.1
+)
+
+require (
 	github.com/gonvenience/bunt v1.4.2 // indirect
 	github.com/gonvenience/idem v0.0.2 // indirect
 	github.com/gonvenience/neat v1.3.16 // indirect
 	github.com/gonvenience/term v1.0.4 // indirect
 	github.com/gonvenience/text v1.0.9 // indirect
-	github.com/gonvenience/ytbx v1.4.7 // indirect
-	github.com/homeport/dyff v1.10.3 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/mattn/go-ciede2000 v0.0.0-20170301095244-782e8c62fec3 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/mitchellh/hashstructure v1.1.0 // indirect

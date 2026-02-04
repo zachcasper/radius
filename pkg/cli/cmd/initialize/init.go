@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/radius-project/radius/pkg/cli/framework"
+	"github.com/radius-project/radius/pkg/cli/git/repo"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/prompt"
 )
@@ -296,19 +297,13 @@ func (r *Runner) updateGitignore() error {
 	return os.WriteFile(gitignorePath, []byte(patterns), 0644)
 }
 
-// fetchResourceTypes fetches resource types from embedded data.
+// fetchResourceTypes fetches resource types from the resource-types-contrib repository.
 func (r *Runner) fetchResourceTypes() error {
-	// Define the resource types to create
-	resourceTypes := getEmbeddedResourceTypes()
+	targetDir := filepath.Join(r.WorkDir, ".radius", "config", "types")
 
-	for filename, content := range resourceTypes {
-		path := filepath.Join(r.WorkDir, ".radius", "config", "types", filename)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			return fmt.Errorf("failed to write resource type %s: %w", filename, err)
-		}
-	}
-
-	return nil
+	// Use sparse checkout to fetch only the resource type YAML files
+	checkout := repo.NewResourceTypesSparseCheckout(targetDir)
+	return checkout.Execute()
 }
 
 // selectPlatform prompts for deployment platform selection.
@@ -545,8 +540,8 @@ func (r *Runner) createEnvironmentConfig() error {
 
 // displayResults displays the initialization results.
 func (r *Runner) displayResults() {
-	// Get resource types
-	types := getResourceTypeNames()
+	// Get resource types from downloaded files
+	types := r.getResourceTypeNames()
 
 	r.Output.LogInfo("📦 Resource Types:")
 	for _, t := range types {
@@ -620,15 +615,25 @@ func getKubeNamespaces(context string) []string {
 	return namespaces
 }
 
-func getResourceTypeNames() []string {
-	return []string{
-		"Radius.Compute/containers",
-		"Radius.Compute/persistentVolumes",
-		"Radius.Compute/routes",
-		"Radius.Data/mySqlDatabases",
-		"Radius.Data/postgreSqlDatabases",
-		"Radius.Security/secrets",
+// getResourceTypeNames reads downloaded YAML files and extracts resource type names.
+func (r *Runner) getResourceTypeNames() []string {
+	typesDir := filepath.Join(r.WorkDir, ".radius", "config", "types")
+	entries, err := os.ReadDir(typesDir)
+	if err != nil {
+		return []string{}
 	}
+
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		// Convert filename to resource type name (e.g., containers.yaml -> Radius.Compute/containers)
+		name := strings.TrimSuffix(entry.Name(), ".yaml")
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // getAWSAccountID gets the AWS account ID from aws sts get-caller-identity
