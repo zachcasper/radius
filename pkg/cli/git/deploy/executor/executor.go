@@ -18,12 +18,14 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
+	tfjson "github.com/hashicorp/terraform-json"
 	"github.com/radius-project/radius/pkg/cli/git/deploy"
 )
 
@@ -41,9 +43,6 @@ type TerraformExecutor struct {
 	// RecipeName is the name of the recipe.
 	RecipeName string
 
-	// RecipeKind is the kind of recipe (terraform).
-	RecipeKind string
-
 	// RecipeSource is the source of the recipe.
 	RecipeSource string
 
@@ -60,8 +59,7 @@ type TerraformExecutor struct {
 // NewTerraformExecutor creates a new TerraformExecutor.
 func NewTerraformExecutor(stepDir string) *TerraformExecutor {
 	return &TerraformExecutor{
-		StepDir:    stepDir,
-		RecipeKind: "terraform",
+		StepDir: stepDir,
 	}
 }
 
@@ -94,19 +92,14 @@ func (e *TerraformExecutor) WithSequence(seq int) *TerraformExecutor {
 
 // Execute runs terraform init and apply for the step.
 func (e *TerraformExecutor) Execute(ctx context.Context) (*deploy.StepResult, error) {
+	startTime := time.Now()
 	result := &deploy.StepResult{
-		Sequence: e.Sequence,
-		Resource: &deploy.ResourceResult{
-			Name: e.ResourceName,
-			Type: e.ResourceType,
-		},
-		Recipe: &deploy.RecipeResult{
-			Name:   e.RecipeName,
-			Kind:   e.RecipeKind,
-			Source: e.RecipeSource,
-		},
-		Status:    deploy.StatusInProgress,
-		StartedAt: time.Now(),
+		Sequence:     e.Sequence,
+		Name:         e.ResourceName,
+		ResourceType: e.ResourceType,
+		Tool:         "terraform",
+		Status:       deploy.StatusInProgress,
+		StartedAt:    startTime,
 	}
 
 	tf, err := tfexec.NewTerraform(e.StepDir, "terraform")
@@ -114,6 +107,7 @@ func (e *TerraformExecutor) Execute(ctx context.Context) (*deploy.StepResult, er
 		result.Status = deploy.StatusFailed
 		result.Error = fmt.Sprintf("failed to create terraform executor: %v", err)
 		result.CompletedAt = time.Now()
+		result.Duration = time.Since(startTime).Nanoseconds()
 		return result, fmt.Errorf("failed to create terraform executor: %w", err)
 	}
 
@@ -122,6 +116,7 @@ func (e *TerraformExecutor) Execute(ctx context.Context) (*deploy.StepResult, er
 		result.Status = deploy.StatusFailed
 		result.Error = fmt.Sprintf("terraform init failed: %v", err)
 		result.CompletedAt = time.Now()
+		result.Duration = time.Since(startTime).Nanoseconds()
 		return result, fmt.Errorf("terraform init failed in %s: %w", e.StepDir, err)
 	}
 
@@ -130,63 +125,111 @@ func (e *TerraformExecutor) Execute(ctx context.Context) (*deploy.StepResult, er
 		result.Status = deploy.StatusFailed
 		result.Error = fmt.Sprintf("terraform apply failed: %v", err)
 		result.CompletedAt = time.Now()
+		result.Duration = time.Since(startTime).Nanoseconds()
 		return result, fmt.Errorf("terraform apply failed in %s: %w", e.StepDir, err)
 	}
 
-	// Parse terraform state for cloud resources
+	// Get terraform outputs
+	outputs, err := tf.Output(ctx)
+	if err == nil && len(outputs) > 0 {
+		result.Outputs = make(map[string]any)
+		for name, output := range outputs {
+			var value any
+			if err := json.Unmarshal(output.Value, &value); err == nil {
+				result.Outputs[name] = value
+			}
+		}
+	}
+
+	// Parse terraform state for Kubernetes resources and capture them
 	state, err := tf.Show(ctx)
-	if err == nil && state != nil && state.Values != nil && state.Values.RootModule != nil {
-		for _, resource := range state.Values.RootModule.Resources {
-			cloudResource := deploy.CloudResource{
-				Type: resource.Type,
-				Name: resource.Name,
-			}
+	if err == nil && state != nil && state.Values != nil {
+		// Collect all resources from root module and child modules
+		var allResources []*tfjson.StateResource
+		if state.Values.RootModule != nil {
+			allResources = append(allResources, state.Values.RootModule.Resources...)
+			allResources = append(allResources, collectChildResources(state.Values.RootModule.ChildModules)...)
+		}
 
-			// Determine provider from resource type
-			if provider := parseProvider(resource.Type); provider != "" {
-				cloudResource.Provider = provider
-			}
-
-			// Extract namespace for Kubernetes resources
-			if cloudResource.Provider == "kubernetes" {
-				if ns, ok := resource.AttributeValues["namespace"].(string); ok {
-					cloudResource.Namespace = ns
+		for _, resource := range allResources {
+			provider := parseProvider(resource.Type)
+			if provider == "kubernetes" {
+				captured := e.captureKubernetesResource(ctx, resource)
+				if captured != nil {
+					result.CapturedResources = append(result.CapturedResources, *captured)
 				}
 			}
-
-			result.CloudResources = append(result.CloudResources, cloudResource)
 		}
 	}
 
-	// Get change summary from plan if available
-	planFile := filepath.Join(e.StepDir, "tfplan.txt")
-	if _, err := os.Stat(planFile); err == nil {
-		result.Logs = &deploy.StepLogs{
-			TerraformPlan: planFile,
-		}
+	// Get change summary (resources are already applied, so changes are 0)
+	result.Changes = &deploy.ChangesSummary{
+		Add:     0,
+		Change:  0,
+		Destroy: 0,
 	}
 
-	result.Status = deploy.StatusCompleted
+	result.Status = deploy.StatusSucceeded
 	result.CompletedAt = time.Now()
+	result.Duration = time.Since(startTime).Nanoseconds()
 
 	return result, nil
 }
 
+// captureKubernetesResource captures a Kubernetes resource from the cluster.
+func (e *TerraformExecutor) captureKubernetesResource(ctx context.Context, resource *tfjson.StateResource) *deploy.CapturedResource {
+	// Extract resource type from terraform type (e.g., kubernetes_deployment -> deployment)
+	resourceType := strings.TrimPrefix(resource.Type, "kubernetes_")
+
+	// Get name and namespace from metadata (kubernetes provider stores these under metadata[0])
+	var name, namespace string
+	if metadata, ok := resource.AttributeValues["metadata"].([]interface{}); ok && len(metadata) > 0 {
+		if meta, ok := metadata[0].(map[string]interface{}); ok {
+			name, _ = meta["name"].(string)
+			namespace, _ = meta["namespace"].(string)
+		}
+	}
+	if namespace == "" {
+		namespace = e.KubeNamespace
+	}
+	if name == "" || namespace == "" {
+		return nil
+	}
+
+	// Build kubectl command to get resource
+	args := []string{"get", resourceType, name, "-n", namespace, "-o", "yaml"}
+	if e.KubeContext != "" {
+		args = append([]string{"--context", e.KubeContext}, args...)
+	}
+
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	return &deploy.CapturedResource{
+		ResourceID:         fmt.Sprintf("%s/%s/%s", namespace, resourceType, name),
+		ResourceType:       resourceType,
+		Provider:           "kubernetes",
+		Name:               name,
+		Namespace:          namespace,
+		RadiusResourceType: e.ResourceType,
+		DeploymentStep:     e.Sequence,
+		RawManifest:        string(output),
+	}
+}
+
 // Destroy runs terraform destroy for the step.
 func (e *TerraformExecutor) Destroy(ctx context.Context) (*deploy.StepResult, error) {
+	startTime := time.Now()
 	result := &deploy.StepResult{
-		Sequence: e.Sequence,
-		Resource: &deploy.ResourceResult{
-			Name: e.ResourceName,
-			Type: e.ResourceType,
-		},
-		Recipe: &deploy.RecipeResult{
-			Name:   e.RecipeName,
-			Kind:   e.RecipeKind,
-			Source: e.RecipeSource,
-		},
-		Status:    deploy.StatusInProgress,
-		StartedAt: time.Now(),
+		Sequence:     e.Sequence,
+		Name:         e.ResourceName,
+		ResourceType: e.ResourceType,
+		Tool:         "terraform",
+		Status:       deploy.StatusInProgress,
+		StartedAt:    startTime,
 	}
 
 	tf, err := tfexec.NewTerraform(e.StepDir, "terraform")
@@ -194,6 +237,7 @@ func (e *TerraformExecutor) Destroy(ctx context.Context) (*deploy.StepResult, er
 		result.Status = deploy.StatusFailed
 		result.Error = fmt.Sprintf("failed to create terraform executor: %v", err)
 		result.CompletedAt = time.Now()
+		result.Duration = time.Since(startTime).Nanoseconds()
 		return result, fmt.Errorf("failed to create terraform executor: %w", err)
 	}
 
@@ -202,6 +246,7 @@ func (e *TerraformExecutor) Destroy(ctx context.Context) (*deploy.StepResult, er
 		result.Status = deploy.StatusFailed
 		result.Error = fmt.Sprintf("terraform init failed: %v", err)
 		result.CompletedAt = time.Now()
+		result.Duration = time.Since(startTime).Nanoseconds()
 		return result, fmt.Errorf("terraform init failed in %s: %w", e.StepDir, err)
 	}
 
@@ -210,11 +255,13 @@ func (e *TerraformExecutor) Destroy(ctx context.Context) (*deploy.StepResult, er
 		result.Status = deploy.StatusFailed
 		result.Error = fmt.Sprintf("terraform destroy failed: %v", err)
 		result.CompletedAt = time.Now()
+		result.Duration = time.Since(startTime).Nanoseconds()
 		return result, fmt.Errorf("terraform destroy failed in %s: %w", e.StepDir, err)
 	}
 
-	result.Status = deploy.StatusCompleted
+	result.Status = deploy.StatusSucceeded
 	result.CompletedAt = time.Now()
+	result.Duration = time.Since(startTime).Nanoseconds()
 
 	return result, nil
 }
@@ -225,24 +272,27 @@ func parseProvider(resourceType string) string {
 		return ""
 	}
 
-	// Resource types are formatted as provider_resource_type
-	parts := splitResourceType(resourceType)
-	if len(parts) > 0 {
-		return parts[0]
-	}
-	return ""
-}
-
-// splitResourceType splits a resource type into provider and resource parts.
-func splitResourceType(resourceType string) []string {
 	// Common providers
 	providers := []string{"kubernetes", "azurerm", "aws", "google", "helm", "null", "random", "local", "time"}
 
 	for _, p := range providers {
 		if len(resourceType) > len(p) && resourceType[:len(p)] == p && resourceType[len(p)] == '_' {
-			return []string{p, resourceType[len(p)+1:]}
+			return p
 		}
 	}
 
-	return []string{resourceType}
+	return ""
+}
+
+// collectChildResources recursively collects resources from child modules.
+func collectChildResources(modules []*tfjson.StateModule) []*tfjson.StateResource {
+	var resources []*tfjson.StateResource
+	for _, mod := range modules {
+		if mod == nil {
+			continue
+		}
+		resources = append(resources, mod.Resources...)
+		resources = append(resources, collectChildResources(mod.ChildModules)...)
+	}
+	return resources
 }

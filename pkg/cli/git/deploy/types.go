@@ -21,7 +21,7 @@ import (
 )
 
 // DeploymentRecord captures the result of a deployment for Git workspace mode.
-// This record is stored in .radius/deployments/{env}/{timestamp}.json
+// This record is stored in .radius/deploy/{app}/{env}/deployment-{commit}.json
 type DeploymentRecord struct {
 	// Application is the name of the application that was deployed.
 	Application string `json:"application"`
@@ -29,26 +29,29 @@ type DeploymentRecord struct {
 	// Environment contains information about the deployment environment.
 	Environment *EnvironmentInfo `json:"environment"`
 
-	// Plan contains reference information about the plan that was deployed.
-	Plan *PlanReference `json:"plan"`
-
-	// Git contains information about the Git state at deployment time.
-	Git *GitInfo `json:"git"`
-
-	// CI contains information about the CI/CD system, if applicable.
-	CI *CIInfo `json:"ci,omitempty"`
-
-	// Steps contains the results of each deployment step.
-	Steps []StepResult `json:"steps"`
-
 	// StartedAt is when the deployment started.
 	StartedAt time.Time `json:"startedAt"`
 
 	// CompletedAt is when the deployment completed.
 	CompletedAt time.Time `json:"completedAt,omitempty"`
 
-	// Status is the overall deployment status (in-progress, completed, failed).
+	// Status is the overall deployment status (in-progress, succeeded, failed).
 	Status string `json:"status"`
+
+	// Git contains information about the Git state at deployment time.
+	Git *GitInfo `json:"git"`
+
+	// Plan contains reference information about the plan that was deployed.
+	Plan *PlanReference `json:"plan"`
+
+	// Steps contains the results of each deployment step.
+	Steps []StepResult `json:"steps"`
+
+	// Resources contains a list of all resources deployed (for backward compatibility).
+	Resources []string `json:"resources"`
+
+	// Summary contains summary statistics for the deployment.
+	Summary *DeploymentSummary `json:"summary"`
 
 	// Error contains error information if the deployment failed.
 	Error string `json:"error,omitempty"`
@@ -67,27 +70,18 @@ type EnvironmentInfo struct {
 
 	// KubernetesNamespace is the Kubernetes namespace used for deployment.
 	KubernetesNamespace string `json:"kubernetesNamespace,omitempty"`
-
-	// AzureSubscriptionID is the Azure subscription ID, if using Azure.
-	AzureSubscriptionID string `json:"azureSubscriptionId,omitempty"`
-
-	// AzureResourceGroup is the Azure resource group, if using Azure.
-	AzureResourceGroup string `json:"azureResourceGroup,omitempty"`
-
-	// AWSAccountID is the AWS account ID, if using AWS.
-	AWSAccountID string `json:"awsAccountId,omitempty"`
-
-	// AWSRegion is the AWS region, if using AWS.
-	AWSRegion string `json:"awsRegion,omitempty"`
 }
 
 // PlanReference contains reference information about the plan.
 type PlanReference struct {
-	// Commit is the Git commit SHA where the plan was generated.
-	Commit string `json:"commit"`
+	// PlanFile is the path to the plan.yaml file.
+	PlanFile string `json:"planFile"`
 
-	// Path is the path to the plan.yaml file.
-	Path string `json:"path"`
+	// PlanCommit is the Git commit SHA where the plan was generated.
+	PlanCommit string `json:"planCommit"`
+
+	// GeneratedAt is when the plan was generated.
+	GeneratedAt string `json:"generatedAt"`
 }
 
 // GitInfo contains information about the Git state at deployment time.
@@ -101,27 +95,8 @@ type GitInfo struct {
 	// Branch is the Git branch name.
 	Branch string `json:"branch"`
 
-	// Tag is the Git tag, if the commit is tagged.
-	Tag string `json:"tag,omitempty"`
-
 	// IsDirty indicates whether the working directory had uncommitted changes.
-	// When true, the deployed code may differ from what's recorded in the commit.
 	IsDirty bool `json:"isDirty"`
-}
-
-// CIInfo contains information about the CI/CD system.
-type CIInfo struct {
-	// System is the CI/CD system name (e.g., "github-actions", "azure-devops").
-	System string `json:"system,omitempty"`
-
-	// BuildID is the CI/CD build identifier.
-	BuildID string `json:"buildId,omitempty"`
-
-	// BuildURL is the URL to the CI/CD build.
-	BuildURL string `json:"buildUrl,omitempty"`
-
-	// PipelineName is the name of the CI/CD pipeline.
-	PipelineName string `json:"pipelineName,omitempty"`
 }
 
 // StepResult captures the result of a single deployment step.
@@ -129,13 +104,16 @@ type StepResult struct {
 	// Sequence is the step sequence number.
 	Sequence int `json:"sequence"`
 
-	// Resource contains information about the resource that was deployed.
-	Resource *ResourceResult `json:"resource"`
+	// Name is the resource name.
+	Name string `json:"name"`
 
-	// Recipe contains information about the recipe that was used.
-	Recipe *RecipeResult `json:"recipe"`
+	// ResourceType is the type of the resource.
+	ResourceType string `json:"resourceType"`
 
-	// Status is the step status (pending, in-progress, completed, failed, skipped).
+	// Tool is the deployment tool (terraform, bicep).
+	Tool string `json:"tool"`
+
+	// Status is the step status (pending, in-progress, succeeded, failed, skipped).
 	Status string `json:"status"`
 
 	// StartedAt is when the step started.
@@ -144,44 +122,20 @@ type StepResult struct {
 	// CompletedAt is when the step completed.
 	CompletedAt time.Time `json:"completedAt,omitempty"`
 
+	// Duration is the step duration in nanoseconds.
+	Duration int64 `json:"duration,omitempty"`
+
 	// Changes contains the summary of changes made by this step.
 	Changes *ChangesSummary `json:"changes,omitempty"`
 
-	// CloudResources contains information about cloud resources created/modified.
-	CloudResources []CloudResource `json:"cloudResources,omitempty"`
+	// Outputs contains the terraform outputs for this step.
+	Outputs map[string]any `json:"outputs,omitempty"`
 
 	// CapturedResources contains Kubernetes manifests captured after deployment.
 	CapturedResources []CapturedResource `json:"capturedResources,omitempty"`
 
 	// Error contains error information if the step failed.
 	Error string `json:"error,omitempty"`
-
-	// Logs contains paths to log files for this step.
-	Logs *StepLogs `json:"logs,omitempty"`
-}
-
-// ResourceResult contains information about a deployed resource.
-type ResourceResult struct {
-	// Name is the symbolic name of the resource.
-	Name string `json:"name"`
-
-	// Type is the resource type.
-	Type string `json:"type"`
-}
-
-// RecipeResult contains information about the recipe used for deployment.
-type RecipeResult struct {
-	// Name is the recipe name.
-	Name string `json:"name"`
-
-	// Kind is the recipe kind (terraform, bicep).
-	Kind string `json:"kind"`
-
-	// Source is the recipe source location.
-	Source string `json:"source"`
-
-	// Version is the recipe version that was used.
-	Version string `json:"version,omitempty"`
 }
 
 // ChangesSummary contains a summary of changes made by a deployment step.
@@ -196,32 +150,16 @@ type ChangesSummary struct {
 	Destroy int `json:"destroy"`
 }
 
-// CloudResource represents a cloud resource created or modified by deployment.
-type CloudResource struct {
-	// Provider is the cloud provider (kubernetes, azure, aws, gcp).
-	Provider string `json:"provider"`
-
-	// Type is the resource type (e.g., "kubernetes_deployment", "azurerm_storage_account").
-	Type string `json:"type"`
-
-	// Name is the resource name.
-	Name string `json:"name"`
-
-	// ID is the resource identifier.
-	ID string `json:"id,omitempty"`
-
-	// Namespace is the Kubernetes namespace, if applicable.
-	Namespace string `json:"namespace,omitempty"`
-
-	// RawManifest contains the raw Kubernetes manifest YAML, if applicable.
-	// This is used for drift detection with `rad diff <commit>...live`.
-	RawManifest string `json:"rawManifest,omitempty"`
-}
-
 // CapturedResource represents a Kubernetes resource captured after deployment.
 type CapturedResource struct {
-	// Kind is the Kubernetes resource kind (e.g., "Deployment", "Service").
-	Kind string `json:"kind"`
+	// ResourceID is the unique identifier for this resource (namespace/type/name).
+	ResourceID string `json:"resourceId"`
+
+	// ResourceType is the Kubernetes resource type (deployment, service, etc.).
+	ResourceType string `json:"resourceType"`
+
+	// Provider is the cloud provider (kubernetes, azure, aws, gcp).
+	Provider string `json:"provider"`
 
 	// Name is the resource name.
 	Name string `json:"name"`
@@ -229,32 +167,52 @@ type CapturedResource struct {
 	// Namespace is the Kubernetes namespace.
 	Namespace string `json:"namespace"`
 
-	// Manifest is the captured YAML manifest.
-	Manifest string `json:"manifest"`
+	// RadiusResourceType is the Radius resource type that created this.
+	RadiusResourceType string `json:"radiusResourceType"`
 
-	// CapturedAt is when the manifest was captured.
-	CapturedAt time.Time `json:"capturedAt"`
+	// DeploymentStep is the step number that created this resource.
+	DeploymentStep int `json:"deploymentStep"`
+
+	// RawManifest is the captured YAML manifest.
+	RawManifest string `json:"rawManifest"`
 }
 
-// StepLogs contains paths to log files for a deployment step.
-type StepLogs struct {
-	// TerraformPlan is the path to the terraform plan output.
-	TerraformPlan string `json:"terraformPlan,omitempty"`
+// DeploymentSummary contains summary statistics for the deployment.
+type DeploymentSummary struct {
+	// TotalSteps is the total number of deployment steps.
+	TotalSteps int `json:"totalSteps"`
 
-	// TerraformApply is the path to the terraform apply output.
-	TerraformApply string `json:"terraformApply,omitempty"`
+	// SucceededSteps is the number of steps that succeeded.
+	SucceededSteps int `json:"succeededSteps"`
 
-	// Context is the path to the context file.
-	Context string `json:"context,omitempty"`
+	// FailedSteps is the number of steps that failed.
+	FailedSteps int `json:"failedSteps"`
+
+	// SkippedSteps is the number of steps that were skipped.
+	SkippedSteps int `json:"skippedSteps"`
+
+	// TotalResources is the total number of cloud resources affected.
+	TotalResources int `json:"totalResources"`
+
+	// ResourcesAdded is the number of resources added.
+	ResourcesAdded int `json:"resourcesAdded"`
+
+	// ResourcesChanged is the number of resources changed.
+	ResourcesChanged int `json:"resourcesChanged"`
+
+	// ResourcesDestroyed is the number of resources destroyed.
+	ResourcesDestroyed int `json:"resourcesDestroyed"`
 }
 
 // DeploymentStatus constants
 const (
 	StatusPending    = "pending"
 	StatusInProgress = "in-progress"
-	StatusCompleted  = "completed"
+	StatusSucceeded  = "succeeded"
 	StatusFailed     = "failed"
 	StatusSkipped    = "skipped"
+	// For backward compatibility
+	StatusCompleted = "completed"
 )
 
 // NewDeploymentRecord creates a new DeploymentRecord.
@@ -262,11 +220,13 @@ func NewDeploymentRecord(application string, environment *EnvironmentInfo, planR
 	return &DeploymentRecord{
 		Application: application,
 		Environment: environment,
-		Plan:        planRef,
-		Git:         gitInfo,
-		Steps:       []StepResult{},
 		StartedAt:   time.Now(),
 		Status:      StatusInProgress,
+		Git:         gitInfo,
+		Plan:        planRef,
+		Steps:       []StepResult{},
+		Resources:   []string{},
+		Summary:     &DeploymentSummary{},
 	}
 }
 
@@ -275,10 +235,30 @@ func (r *DeploymentRecord) AddStepResult(result StepResult) {
 	r.Steps = append(r.Steps, result)
 }
 
-// Complete marks the deployment as completed.
+// Complete marks the deployment as succeeded and builds summary.
 func (r *DeploymentRecord) Complete() {
 	r.CompletedAt = time.Now()
-	r.Status = StatusCompleted
+	r.Status = StatusSucceeded
+
+	// Build summary
+	r.Summary.TotalSteps = len(r.Steps)
+	for _, step := range r.Steps {
+		switch step.Status {
+		case StatusSucceeded, StatusCompleted:
+			r.Summary.SucceededSteps++
+		case StatusFailed:
+			r.Summary.FailedSteps++
+		case StatusSkipped:
+			r.Summary.SkippedSteps++
+		}
+		if step.Changes != nil {
+			r.Summary.ResourcesAdded += step.Changes.Add
+			r.Summary.ResourcesChanged += step.Changes.Change
+			r.Summary.ResourcesDestroyed += step.Changes.Destroy
+		}
+	}
+	// TotalResources refers to cloud resources changed, not captured K8s manifests
+	r.Summary.TotalResources = r.Summary.ResourcesAdded + r.Summary.ResourcesChanged + r.Summary.ResourcesDestroyed
 }
 
 // Fail marks the deployment as failed with the given error.
@@ -287,6 +267,18 @@ func (r *DeploymentRecord) Fail(err error) {
 	r.Status = StatusFailed
 	if err != nil {
 		r.Error = err.Error()
+	}
+	// Build partial summary
+	r.Summary.TotalSteps = len(r.Steps)
+	for _, step := range r.Steps {
+		switch step.Status {
+		case StatusSucceeded, StatusCompleted:
+			r.Summary.SucceededSteps++
+		case StatusFailed:
+			r.Summary.FailedSteps++
+		case StatusSkipped:
+			r.Summary.SkippedSteps++
+		}
 	}
 }
 

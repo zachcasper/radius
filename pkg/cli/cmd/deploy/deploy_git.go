@@ -93,14 +93,19 @@ func NewGitRunner(output output.Interface, prompter prompt.Interface, workDir st
 	}
 }
 
-// ValidateGitWorkspace validates that we're in a Git workspace.
-func (r *GitRunner) ValidateGitWorkspace() error {
-	// Check for .git directory
-	if _, err := os.Stat(filepath.Join(r.WorkDir, ".git")); os.IsNotExist(err) {
-		return fmt.Errorf("not a Git repository")
+// shortCommit returns the short commit SHA from GitInfo, or empty string if not available.
+func (r *GitRunner) shortCommit() string {
+	if r.Options == nil || r.Options.GitInfo == nil {
+		return ""
 	}
-
-	return nil
+	if r.Options.GitInfo.ShortSHA != "" {
+		return r.Options.GitInfo.ShortSHA
+	}
+	// Fallback to truncating CommitSHA
+	if len(r.Options.GitInfo.CommitSHA) > 8 {
+		return r.Options.GitInfo.CommitSHA[:8]
+	}
+	return r.Options.GitInfo.CommitSHA
 }
 
 // LoadPlan loads the plan for the specified environment.
@@ -226,16 +231,9 @@ func (r *GitRunner) RunGit(ctx context.Context) error {
 	}
 
 	// Show deployment header
-	shortCommit := ""
-	if r.Options.GitInfo != nil {
-		shortCommit = r.Options.GitInfo.CommitSHA
-		if len(shortCommit) > 8 {
-			shortCommit = shortCommit[:8]
-		}
-	}
 	r.Output.LogInfo("🚀 Deploying %s to %s", r.Options.Application, r.Options.Environment)
-	if shortCommit != "" {
-		r.Output.LogInfo("   Commit: %s", shortCommit)
+	if commit := r.shortCommit(); commit != "" {
+		r.Output.LogInfo("   Commit: %s", commit)
 	}
 	r.Output.LogInfo("")
 
@@ -255,7 +253,8 @@ func (r *GitRunner) RunGit(ctx context.Context) error {
 
 		exec := executor.NewTerraformExecutor(stepPath).
 			WithResource(step.Resource.Name, step.Resource.Type).
-			WithSequence(step.Sequence)
+			WithSequence(step.Sequence).
+			WithKubernetes(r.Options.KubernetesNamespace, r.Options.KubernetesContext)
 
 		if step.Recipe.Name != "" {
 			exec.WithRecipe(step.Recipe.Name, step.Recipe.Location)
@@ -316,39 +315,6 @@ func (r *GitRunner) RunGit(ctx context.Context) error {
 	return nil
 }
 
-// detectEnvironment auto-detects the environment from existing plans.
-// The plan structure is: .radius/plan/<app>/<environment>/plan.yaml
-func (r *GitRunner) detectEnvironment() string {
-	planBaseDir := filepath.Join(r.WorkDir, ".radius", "plan")
-	appDirs, err := os.ReadDir(planBaseDir)
-	if err != nil {
-		return "default"
-	}
-
-	// Look for first valid plan in any app directory
-	for _, appEntry := range appDirs {
-		if !appEntry.IsDir() {
-			continue
-		}
-		appPath := filepath.Join(planBaseDir, appEntry.Name())
-		envDirs, err := os.ReadDir(appPath)
-		if err != nil {
-			continue
-		}
-		for _, envEntry := range envDirs {
-			if !envEntry.IsDir() {
-				continue
-			}
-			planPath := filepath.Join(appPath, envEntry.Name(), "plan.yaml")
-			if _, err := os.Stat(planPath); err == nil {
-				return envEntry.Name()
-			}
-		}
-	}
-
-	return "default"
-}
-
 // checkUncommittedChanges checks for uncommitted changes in the plan directory.
 func (r *GitRunner) checkUncommittedChanges(ctx context.Context) error {
 	if r.Yes {
@@ -392,11 +358,7 @@ func (r *GitRunner) confirmDeployment() error {
 	r.Output.LogInfo("")
 	r.Output.LogInfo("📍 Deploy from:")
 	if r.Options.GitInfo != nil {
-		shortCommit := r.Options.GitInfo.CommitSHA
-		if len(shortCommit) > 8 {
-			shortCommit = shortCommit[:8]
-		}
-		r.Output.LogInfo("   Commit: %s", shortCommit)
+		r.Output.LogInfo("   Commit: %s", r.shortCommit())
 		r.Output.LogInfo("   Branch: %s", r.Options.GitInfo.Branch)
 	}
 
@@ -442,11 +404,14 @@ func (r *GitRunner) confirmDeployment() error {
 func (r *GitRunner) createDeploymentRecord() *deploy.DeploymentRecord {
 	envInfo := r.buildEnvironmentInfo()
 	planRef := &deploy.PlanReference{
-		Path: filepath.Join(r.Options.PlanDir, "plan.yaml"),
+		PlanFile: filepath.Join(r.Options.PlanDir, "plan.yaml"),
 	}
 
 	if r.Options.GitInfo != nil {
-		planRef.Commit = r.Options.GitInfo.CommitSHA
+		planRef.PlanCommit = r.Options.GitInfo.CommitSHA
+	}
+	if r.Options.Plan != nil {
+		planRef.GeneratedAt = string(r.Options.Plan.GeneratedAt)
 	}
 
 	gitInfo := r.buildGitInfo()
@@ -479,14 +444,19 @@ func (r *GitRunner) buildGitInfo() *deploy.GitInfo {
 }
 
 // saveDeploymentRecord saves the deployment record to disk.
+// Path: .radius/deploy/{app}/{env}/deployment-{commit}.json
 func (r *GitRunner) saveDeploymentRecord(record *deploy.DeploymentRecord) (string, error) {
-	recordDir := filepath.Join(r.WorkDir, ".radius", "deployments", r.Options.Environment)
+	recordDir := filepath.Join(r.WorkDir, ".radius", "deploy", r.Options.Application, r.Options.Environment)
 	if err := os.MkdirAll(recordDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create record directory: %w", err)
 	}
 
-	timestamp := time.Now().Format("20060102-150405")
-	filename := fmt.Sprintf("deploy-%s.json", timestamp)
+	// Use short commit for filename
+	commitID := r.shortCommit()
+	if commitID == "" {
+		commitID = time.Now().Format("20060102-150405")
+	}
+	filename := fmt.Sprintf("deployment-%s.json", commitID)
 	recordPath := filepath.Join(recordDir, filename)
 
 	jsonBytes, err := json.MarshalIndent(record, "", "  ")
@@ -517,13 +487,7 @@ func (r *GitRunner) displayResults(record *deploy.DeploymentRecord, recordPath s
 		}
 	}
 
-	shortCommit := ""
-	if r.Options.GitInfo != nil {
-		shortCommit = r.Options.GitInfo.CommitSHA
-		if len(shortCommit) > 8 {
-			shortCommit = shortCommit[:8]
-		}
-	}
+	shortCommit := r.shortCommit()
 
 	r.Output.LogInfo("📊 Summary")
 	if shortCommit != "" {

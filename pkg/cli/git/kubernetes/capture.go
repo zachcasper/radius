@@ -19,7 +19,6 @@ package kubernetes
 import (
 	"context"
 	"fmt"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -107,45 +106,39 @@ func (c *ManifestCapture) CaptureResource(ctx context.Context, kind, name, names
 	}
 
 	return &deploy.CapturedResource{
-		Kind:       kind,
-		Name:       name,
-		Namespace:  namespace,
-		Manifest:   string(manifest),
-		CapturedAt: time.Now(),
+		ResourceID:   fmt.Sprintf("%s/%s/%s", namespace, kind, name),
+		ResourceType: kind,
+		Provider:     "kubernetes",
+		Name:         name,
+		Namespace:    namespace,
+		RawManifest:  string(manifest),
 	}, nil
 }
 
 // CaptureFromTerraformState captures manifests for all Kubernetes resources in terraform state.
-func (c *ManifestCapture) CaptureFromTerraformState(ctx context.Context, cloudResources []deploy.CloudResource) ([]deploy.CapturedResource, error) {
+// This function is deprecated - use the executor's direct capture instead.
+func (c *ManifestCapture) CaptureFromTerraformState(ctx context.Context, resourceType string, sequence int, resources []KubernetesResource) ([]deploy.CapturedResource, error) {
 	var captured []deploy.CapturedResource
 
-	for _, resource := range cloudResources {
-		if resource.Provider != "kubernetes" {
-			continue
-		}
-
-		// Parse the kind from terraform resource type
-		kind := parseKubernetesResourceType(resource.Type)
-		if kind == "" {
-			continue
-		}
-
-		namespace := resource.Namespace
-		if namespace == "" {
-			namespace = c.namespace
-		}
-
-		result, err := c.CaptureResource(ctx, kind, resource.Name, namespace)
+	for _, resource := range resources {
+		result, err := c.CaptureResource(ctx, resource.Kind, resource.Name, resource.Namespace)
 		if err != nil {
 			// Log warning but continue
-			fmt.Printf("Warning: failed to capture %s/%s: %v\n", kind, resource.Name, err)
 			continue
 		}
-
+		result.RadiusResourceType = resourceType
+		result.DeploymentStep = sequence
 		captured = append(captured, *result)
 	}
 
 	return captured, nil
+}
+
+// KubernetesResource represents a Kubernetes resource to capture.
+type KubernetesResource struct {
+	Kind      string
+	Name      string
+	Namespace string
 }
 
 // getGVR returns the GroupVersionResource for a given kind.
@@ -245,5 +238,5 @@ func (c *ManifestCapture) GetRawManifest(ctx context.Context, kind, name, namesp
 	if err != nil {
 		return "", err
 	}
-	return captured.Manifest, nil
+	return captured.RawManifest, nil
 }

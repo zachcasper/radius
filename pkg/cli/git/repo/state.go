@@ -109,9 +109,9 @@ func GetCurrentCommit(dir string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-// GetShortCommit returns the abbreviated current HEAD commit SHA.
+// GetShortCommit returns the abbreviated current HEAD commit SHA (8 characters).
 func GetShortCommit(dir string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
+	cmd := exec.Command("git", "rev-parse", "--short=8", "HEAD")
 	cmd.Dir = dir
 
 	output, err := cmd.Output()

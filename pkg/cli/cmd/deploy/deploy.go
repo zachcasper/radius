@@ -769,38 +769,6 @@ func (r *Runner) validateGitWorkspaceMode(cmd *cobra.Command) error {
 	return nil
 }
 
-// detectEnvironment auto-detects the environment from existing plans
-// Plan structure: .radius/plan/<app>/<environment>/plan.yaml
-func detectEnvironment(workDir string) string {
-	planBaseDir := filepath.Join(workDir, ".radius", "plan")
-	appDirs, err := os.ReadDir(planBaseDir)
-	if err != nil {
-		return "default"
-	}
-
-	for _, appEntry := range appDirs {
-		if !appEntry.IsDir() {
-			continue
-		}
-		appPath := filepath.Join(planBaseDir, appEntry.Name())
-		envDirs, err := os.ReadDir(appPath)
-		if err != nil {
-			continue
-		}
-		for _, envEntry := range envDirs {
-			if !envEntry.IsDir() {
-				continue
-			}
-			planPath := filepath.Join(appPath, envEntry.Name(), "plan.yaml")
-			if _, err := os.Stat(planPath); err == nil {
-				return envEntry.Name()
-			}
-		}
-	}
-
-	return "default"
-}
-
 // deployExitError is a friendly error that doesn't print TraceId.
 type deployExitError struct {
 	message string

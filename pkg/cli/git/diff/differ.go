@@ -198,11 +198,11 @@ func (d *Differ) DiffCommitToLive(ctx context.Context, commit string) (*DiffResu
 	for _, step := range record.Steps {
 		for _, captured := range step.CapturedResources {
 			// Get live manifest
-			liveManifest, err := capture.GetRawManifest(ctx, captured.Kind, captured.Name, captured.Namespace)
+			liveManifest, err := capture.GetRawManifest(ctx, captured.ResourceType, captured.Name, captured.Namespace)
 			if err != nil {
 				// Resource may have been deleted
 				result.ManifestDiffs = append(result.ManifestDiffs, ManifestDiff{
-					Kind:      captured.Kind,
+					Kind:      captured.ResourceType,
 					Name:      captured.Name,
 					Namespace: captured.Namespace,
 					Change:    ChangeRemoved,
@@ -212,14 +212,14 @@ func (d *Differ) DiffCommitToLive(ctx context.Context, commit string) (*DiffResu
 			}
 
 			// Compare manifests
-			diffs, dyffOutput, err := DiffStrings(captured.Manifest, liveManifest)
+			diffs, dyffOutput, err := DiffStrings(captured.RawManifest, liveManifest)
 			if err != nil {
 				continue
 			}
 
 			if len(diffs) > 0 {
 				result.ManifestDiffs = append(result.ManifestDiffs, ManifestDiff{
-					Kind:          captured.Kind,
+					Kind:          captured.ResourceType,
 					Name:          captured.Name,
 					Namespace:     captured.Namespace,
 					Change:        ChangeModified,

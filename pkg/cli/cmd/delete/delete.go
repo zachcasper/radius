@@ -303,12 +303,15 @@ func (r *Runner) createDeletionRecord() *deploy.DeploymentRecord {
 	}
 
 	planRef := &deploy.PlanReference{
-		Commit: "",
-		Path:   filepath.Join(r.Options.PlanDir, "plan.yaml"),
+		PlanFile:   filepath.Join(r.Options.PlanDir, "plan.yaml"),
+		PlanCommit: "",
 	}
 
 	if r.Options.GitInfo != nil {
-		planRef.Commit = r.Options.GitInfo.CommitSHA
+		planRef.PlanCommit = r.Options.GitInfo.CommitSHA
+	}
+	if r.Options.Plan != nil {
+		planRef.GeneratedAt = string(r.Options.Plan.GeneratedAt)
 	}
 
 	gitInfo := r.buildGitInfo()
