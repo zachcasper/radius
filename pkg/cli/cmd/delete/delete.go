@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -120,6 +121,12 @@ type Options struct {
 
 	// GitInfo contains Git information.
 	GitInfo *repo.GitInfo
+
+	// KubernetesContext is the Kubernetes context.
+	KubernetesContext string
+
+	// KubernetesNamespace is the Kubernetes namespace.
+	KubernetesNamespace string
 }
 
 // NewRunner creates a new Runner.
@@ -151,16 +158,62 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 		return &deleteExitError{message: "Not in a Radius Git workspace. Run 'rad init' first."}
 	}
 
-	// Auto-detect environment if not specified
-	if r.Environment == "" {
-		r.Environment = r.detectEnvironment()
+	// Discover plan from .radius/plan/<app>/<env>/plan.yaml
+	planBaseDir := filepath.Join(radiusDir, "plan")
+	if _, err := os.Stat(planBaseDir); os.IsNotExist(err) {
+		return &deleteExitError{message: "❌ No deployment plan found\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan."}
 	}
 
-	// Load plan
-	planDir := filepath.Join(workDir, ".radius", "plan", r.Environment)
-	planPath := filepath.Join(planDir, "plan.yaml")
+	appDirs, err := os.ReadDir(planBaseDir)
+	if err != nil {
+		return &deleteExitError{message: "❌ No deployment plan found\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan."}
+	}
 
-	if _, err := os.Stat(planPath); os.IsNotExist(err) {
+	// Find the application and environment
+	var planDir, planPath, appName, envName string
+	for _, appEntry := range appDirs {
+		if !appEntry.IsDir() {
+			continue
+		}
+		// Filter by application if specified
+		if r.Application != "" && appEntry.Name() != r.Application {
+			continue
+		}
+		appPath := filepath.Join(planBaseDir, appEntry.Name())
+		envDirs, err := os.ReadDir(appPath)
+		if err != nil {
+			continue
+		}
+		for _, envEntry := range envDirs {
+			if !envEntry.IsDir() {
+				continue
+			}
+			// Filter by environment if specified
+			if r.Environment != "" && envEntry.Name() != r.Environment {
+				continue
+			}
+			testPlanPath := filepath.Join(appPath, envEntry.Name(), "plan.yaml")
+			if _, err := os.Stat(testPlanPath); err == nil {
+				planDir = filepath.Join(appPath, envEntry.Name())
+				planPath = testPlanPath
+				appName = appEntry.Name()
+				envName = envEntry.Name()
+				break
+			}
+		}
+		if planPath != "" {
+			break
+		}
+	}
+
+	if planPath == "" {
+		if r.Application != "" && r.Environment != "" {
+			return &deleteExitError{message: fmt.Sprintf("❌ No deployment plan found for app '%s' environment '%s'\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan.", r.Application, r.Environment)}
+		} else if r.Environment != "" {
+			return &deleteExitError{message: fmt.Sprintf("❌ No deployment plan found for environment '%s'\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan.", r.Environment)}
+		} else if r.Application != "" {
+			return &deleteExitError{message: fmt.Sprintf("❌ No deployment plan found for app '%s'\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan.", r.Application)}
+		}
 		return &deleteExitError{message: "❌ No deployment plan found\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan."}
 	}
 
@@ -177,12 +230,17 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	// Get git info
 	gitInfo, _ := repo.GetGitInfo(workDir)
 
+	// Load Kubernetes config from .env file
+	kubeContext, kubeNamespace := loadKubernetesConfig(workDir, p.EnvironmentFile)
+
 	r.Options = &Options{
-		PlanDir:     planDir,
-		Plan:        &p,
-		Application: p.Application,
-		Environment: r.Environment,
-		GitInfo:     gitInfo,
+		PlanDir:             planDir,
+		Plan:                &p,
+		Application:         appName,
+		Environment:         envName,
+		GitInfo:             gitInfo,
+		KubernetesContext:   kubeContext,
+		KubernetesNamespace: kubeNamespace,
 	}
 
 	return nil
@@ -337,15 +395,20 @@ func (r *Runner) buildGitInfo() *deploy.GitInfo {
 }
 
 // saveDeletionRecord saves the deletion record to disk.
+// Path: .radius/deploy/{app}/{env}/{commit}/deployment.json
 func (r *Runner) saveDeletionRecord(record *deploy.DeploymentRecord) (string, error) {
-	recordDir := filepath.Join(r.WorkDir, ".radius", "deployments", r.Options.Environment)
+	// Use short commit for directory name
+	commitID := r.shortCommit()
+	if commitID == "" {
+		commitID = time.Now().Format("20060102-150405")
+	}
+
+	recordDir := filepath.Join(r.WorkDir, ".radius", "deploy", r.Options.Application, r.Options.Environment, commitID)
 	if err := os.MkdirAll(recordDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create record directory: %w", err)
 	}
 
-	timestamp := time.Now().Format("20060102-150405")
-	filename := fmt.Sprintf("delete-%s.json", timestamp)
-	recordPath := filepath.Join(recordDir, filename)
+	recordPath := filepath.Join(recordDir, "deployment.json")
 
 	jsonBytes, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
@@ -357,6 +420,17 @@ func (r *Runner) saveDeletionRecord(record *deploy.DeploymentRecord) (string, er
 	}
 
 	return recordPath, nil
+}
+
+// shortCommit returns the first 8 characters of the commit SHA.
+func (r *Runner) shortCommit() string {
+	if r.Options.GitInfo != nil && r.Options.GitInfo.CommitSHA != "" {
+		if len(r.Options.GitInfo.CommitSHA) >= 8 {
+			return r.Options.GitInfo.CommitSHA[:8]
+		}
+		return r.Options.GitInfo.CommitSHA
+	}
+	return ""
 }
 
 // displayResults displays the deletion results.
@@ -396,4 +470,29 @@ func (e *deleteExitError) Error() string {
 
 func (e *deleteExitError) IsFriendlyError() bool {
 	return true
+}
+
+// loadKubernetesConfig loads Kubernetes configuration from an environment file.
+func loadKubernetesConfig(workDir, envFile string) (context string, namespace string) {
+	if envFile == "" {
+		envFile = ".env"
+	}
+	envPath := filepath.Join(workDir, envFile)
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		return "", ""
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "KUBERNETES_CONTEXT=") {
+			context = strings.TrimPrefix(line, "KUBERNETES_CONTEXT=")
+		} else if strings.HasPrefix(line, "KUBERNETES_NAMESPACE=") {
+			namespace = strings.TrimPrefix(line, "KUBERNETES_NAMESPACE=")
+		}
+	}
+	return context, namespace
 }
