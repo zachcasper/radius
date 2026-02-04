@@ -21,6 +21,7 @@ import (
 )
 
 func init() {
+	envCmd.GroupID = groupControlPlane
 	RootCmd.AddCommand(envCmd)
 	envCmd.PersistentFlags().StringP("environment", "e", "", "The environment name")
 	envCmd.PersistentFlags().StringP("workspace", "w", "", "The workspace name")

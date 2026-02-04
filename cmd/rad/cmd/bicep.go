@@ -27,5 +27,6 @@ var bicepCmd = &cobra.Command{
 }
 
 func init() {
+	bicepCmd.GroupID = groupManagement
 	RootCmd.AddCommand(bicepCmd)
 }

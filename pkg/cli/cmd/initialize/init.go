@@ -20,89 +20,59 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"sigs.k8s.io/yaml"
 
 	"github.com/radius-project/radius/pkg/cli/clierrors"
 	"github.com/radius-project/radius/pkg/cli/framework"
-	"github.com/radius-project/radius/pkg/cli/git/commit"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/prompt"
 )
 
-// Gitignore patterns for Radius
-var radiusGitignorePatterns = []string{
-	"# Radius generated files",
-	"*.tfstate",
-	"*.tfstate.*",
-	"*.tfvars",
-	"!*.tfvars.example",
-	".terraform/",
-	".terraform.lock.hcl",
-}
-
-// NewCommand creates the `rad init --git` command for Git workspace mode.
+// NewCommand creates the `rad init` command for Git workspace mode.
 func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 	runner := NewRunner(factory)
 
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialize a Git workspace for Radius",
-		Long: `Initialize a Git repository as a Radius workspace.
+		Short: "Initialize a Git repository for Radius Git workspace mode",
+		Long: `Initialize the current Git repository as a Radius Git workspace.
 
-This command sets up the directory structure and configuration files needed
-for Git workspace mode, which enables deployments without a Radius control plane.
+Git workspace mode enables decentralized deployments without a control plane, 
+using the Git repository as the system of record. This is ideal for CI/CD 
+workflows and environments where a centralized control plane is not desired.
 
-The following structure is created:
-  .radius/
-    config/           # Configuration files
-      types/          # Resource type definitions
-    model/            # Bicep model files
-    plan/             # Generated deployment plans
-    deployments/      # Deployment records
+The command will:
+  • Create the .radius/ directory structure
+  • Populate Resource Types from radius-project/resource-types-contrib  
+  • Configure environment settings (.env files)
+  • Create default recipe configurations
+  • Set the active workspace to 'git'
 
-Examples:
-  # Initialize with prompts
-  rad init --git
+To install the Radius control plane on Kubernetes, use 'rad install kubernetes'.`,
+		Example: `
+# Initialize Git workspace in current directory
+rad init
 
-  # Initialize with auto-confirmation
-  rad init --git -y
-
-  # Initialize with specific application name
-  rad init --git --application myapp`,
+# Initialize with verbose output
+rad init --verbose
+`,
 		Args: cobra.NoArgs,
 		RunE: framework.RunCommand(runner),
 	}
 
-	// Add flags
-	cmd.Flags().Bool("git", false, "Initialize Git workspace mode (required)")
-	cmd.Flags().BoolP("yes", "y", false, "Auto-confirm prompts")
-	cmd.Flags().Bool("no-auto-commit", false, "Disable auto-commit of initialization")
-	cmd.Flags().StringP("application", "a", "", "Application name")
-
 	return cmd, runner
 }
 
-// Runner implements the rad init --git command.
+// Runner implements the rad init command.
 type Runner struct {
 	factory  framework.Factory
 	Output   output.Interface
 	Prompter prompt.Interface
-
-	// GitMode indicates Git workspace mode.
-	GitMode bool
-
-	// Yes indicates to auto-confirm prompts.
-	Yes bool
-
-	// NoAutoCommit indicates to disable auto-commit.
-	NoAutoCommit bool
-
-	// ApplicationName is the application name.
-	ApplicationName string
 
 	// WorkDir is the working directory.
 	WorkDir string
@@ -113,17 +83,20 @@ type Runner struct {
 
 // Options contains initialization options.
 type Options struct {
-	// ApplicationName is the application name.
-	ApplicationName string
+	// Platform is the deployment platform (kubernetes, aws, azure).
+	Platform string
 
-	// EnvironmentName is the environment name.
-	EnvironmentName string
+	// DeploymentTool is the preferred deployment tool (terraform, bicep).
+	DeploymentTool string
 
 	// KubernetesContext is the Kubernetes context.
 	KubernetesContext string
 
 	// KubernetesNamespace is the Kubernetes namespace.
 	KubernetesNamespace string
+
+	// RecipeFile is the path to the recipes file.
+	RecipeFile string
 }
 
 // NewRunner creates a new Runner.
@@ -138,14 +111,6 @@ func NewRunner(factory framework.Factory) *Runner {
 func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	r.Output = r.factory.GetOutput()
 	r.Prompter = r.factory.GetPrompter()
-	r.GitMode, _ = cmd.Flags().GetBool("git")
-	r.Yes, _ = cmd.Flags().GetBool("yes")
-	r.NoAutoCommit, _ = cmd.Flags().GetBool("no-auto-commit")
-	r.ApplicationName, _ = cmd.Flags().GetString("application")
-
-	if !r.GitMode {
-		return clierrors.Message("Use 'rad init --git' for Git workspace mode or 'rad initialize' for control plane mode.")
-	}
 
 	// Get working directory
 	workDir, err := os.Getwd()
@@ -156,21 +121,13 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 
 	// Validate this is a Git repository
 	if _, err := os.Stat(filepath.Join(workDir, ".git")); os.IsNotExist(err) {
-		return clierrors.Message("Not a Git repository. Run 'git init' first or use 'rad initialize' for control plane mode.")
-	}
+		return clierrors.Message(`❌ Current directory is not a Git repository.
 
-	// Check if already initialized
-	radiusDir := filepath.Join(workDir, ".radius")
-	if _, err := os.Stat(radiusDir); err == nil {
-		if !r.Yes {
-			confirmed, err := prompt.YesOrNoPrompt("Radius workspace already exists. Reinitialize?", prompt.ConfirmNo, r.Prompter)
-			if err != nil {
-				return err
-			}
-			if !confirmed {
-				return &exitError{message: "Initialization cancelled"}
-			}
-		}
+Git workspace mode requires a Git repository.
+Please run 'git init' first, then retry 'rad init'.
+
+To install the Radius control plane on Kubernetes instead,
+run 'rad install kubernetes'.`)
 	}
 
 	return nil
@@ -178,113 +135,69 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 
 // Run executes the initialization.
 func (r *Runner) Run(ctx context.Context) error {
+	r.Output.LogInfo("🌟 Welcome to Radius!")
 	r.Output.LogInfo("")
-	r.Output.LogInfo("🚀 Initializing Radius Git workspace...")
+	r.Output.LogInfo("rad init sets up your Git repository to use Radius.")
+	r.Output.LogInfo("")
+	r.Output.LogInfo("")
 	r.Output.LogInfo("")
 
-	// Step 1: Gather configuration
-	if err := r.gatherConfiguration(); err != nil {
-		return err
-	}
-
-	// Step 2: Create directory structure
+	// Step 1: Create directory structure
 	if err := r.createDirectoryStructure(); err != nil {
 		return err
 	}
+	r.Output.LogInfo("  ✓ Created .radius/ directory structure")
 
-	// Step 3: Create configuration files
-	if err := r.createConfigurationFiles(); err != nil {
-		return err
-	}
-
-	// Step 4: Update .gitignore
+	// Step 2: Update .gitignore
 	if err := r.updateGitignore(); err != nil {
-		r.Output.LogInfo("Warning: Failed to update .gitignore: %v", err)
+		return fmt.Errorf("failed to update .gitignore: %w", err)
 	}
+	r.Output.LogInfo("  ✓ Updated .gitignore")
 
-	// Step 5: Create sample model
-	if err := r.createSampleModel(); err != nil {
+	// Step 3: Fetch and create resource types
+	if err := r.fetchResourceTypes(); err != nil {
 		return err
 	}
+	r.Output.LogInfo("  ✓ Fetched Resource Types")
+
+	// Step 4: Prompt for platform selection
+	if err := r.selectPlatform(); err != nil {
+		return err
+	}
+
+	// Step 5: Prompt for deployment tool if multiple available
+	if err := r.selectDeploymentTool(); err != nil {
+		return err
+	}
+
+	// Step 6: Configure Kubernetes if selected
+	if r.Options.Platform == "kubernetes" {
+		if err := r.configureKubernetes(); err != nil {
+			return err
+		}
+	}
+
+	r.Output.LogInfo("  ✓ Configured deployment platform")
+
+	// Step 7: Create default recipes
+	if err := r.createRecipes(); err != nil {
+		return err
+	}
+	r.Output.LogInfo("  ✓ Created default recipes")
+
+	// Step 8: Create environment configuration
+	if err := r.createEnvironmentConfig(); err != nil {
+		return err
+	}
+	r.Output.LogInfo("  ✓ Set up environment configuration")
 
 	r.Output.LogInfo("")
-	r.Output.LogInfo("✅ Radius workspace initialized!")
+	r.Output.LogInfo("")
+	r.Output.LogInfo("✅ Git workspace initialized successfully")
 	r.Output.LogInfo("")
 
 	// Display results
 	r.displayResults()
-
-	// Auto-commit if enabled
-	if !r.NoAutoCommit {
-		if err := r.autoCommit(ctx); err != nil {
-			r.Output.LogInfo("")
-			r.Output.LogInfo("Warning: Auto-commit failed: %v", err)
-		}
-	}
-
-	return nil
-}
-
-// gatherConfiguration prompts for configuration if not provided.
-func (r *Runner) gatherConfiguration() error {
-	// Application name
-	if r.ApplicationName == "" {
-		r.ApplicationName = filepath.Base(r.WorkDir)
-
-		if !r.Yes {
-			name, err := r.Prompter.GetTextInput(fmt.Sprintf("Application name [%s]:", r.ApplicationName), prompt.TextInputOptions{})
-			if err != nil {
-				return err
-			}
-			if name != "" {
-				r.ApplicationName = name
-			}
-		}
-	}
-	r.Options.ApplicationName = r.ApplicationName
-
-	// Environment name
-	r.Options.EnvironmentName = "default"
-	if !r.Yes {
-		options := []string{"default", "development", "staging", "production", "other"}
-		selected, err := r.Prompter.GetListInput(options, "Select environment:")
-		if err != nil {
-			return err
-		}
-		if selected == "other" {
-			name, err := r.Prompter.GetTextInput("Environment name:", prompt.TextInputOptions{})
-			if err != nil {
-				return err
-			}
-			r.Options.EnvironmentName = name
-		} else {
-			r.Options.EnvironmentName = selected
-		}
-	}
-
-	// Kubernetes context (optional)
-	if !r.Yes {
-		configure, err := prompt.YesOrNoPrompt("Configure Kubernetes context?", prompt.ConfirmNo, r.Prompter)
-		if err != nil {
-			return err
-		}
-		if configure {
-			context, err := r.Prompter.GetTextInput("Kubernetes context:", prompt.TextInputOptions{})
-			if err != nil {
-				return err
-			}
-			r.Options.KubernetesContext = context
-
-			namespace, err := r.Prompter.GetTextInput("Kubernetes namespace [default]:", prompt.TextInputOptions{})
-			if err != nil {
-				return err
-			}
-			if namespace == "" {
-				namespace = "default"
-			}
-			r.Options.KubernetesNamespace = namespace
-		}
-	}
 
 	return nil
 }
@@ -292,11 +205,11 @@ func (r *Runner) gatherConfiguration() error {
 // createDirectoryStructure creates the .radius directory structure.
 func (r *Runner) createDirectoryStructure() error {
 	dirs := []string{
-		".radius/config",
 		".radius/config/types",
+		".radius/config/recipes",
+		".radius/deploy",
 		".radius/model",
 		".radius/plan",
-		".radius/deployments",
 	}
 
 	for _, dir := range dirs {
@@ -306,201 +219,269 @@ func (r *Runner) createDirectoryStructure() error {
 		}
 	}
 
-	r.Output.LogInfo("   Created .radius/ directory structure")
 	return nil
 }
 
-// createConfigurationFiles creates configuration files.
-func (r *Runner) createConfigurationFiles() error {
-	// Create radius.yaml config file
-	config := map[string]any{
-		"application": r.Options.ApplicationName,
-		"environment": map[string]any{
-			"name": r.Options.EnvironmentName,
-			"file": r.getEnvironmentFileName(),
-		},
-	}
-
-	if r.Options.KubernetesContext != "" {
-		config["kubernetes"] = map[string]any{
-			"context":   r.Options.KubernetesContext,
-			"namespace": r.Options.KubernetesNamespace,
-		}
-	}
-
-	configPath := filepath.Join(r.WorkDir, ".radius", "config", "radius.yaml")
-	configYAML, err := yaml.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	if err := os.WriteFile(configPath, configYAML, 0644); err != nil {
-		return fmt.Errorf("failed to write config: %w", err)
-	}
-
-	// Create environment file
-	envFileName := r.getEnvironmentFileName()
-	envPath := filepath.Join(r.WorkDir, envFileName)
-	if _, err := os.Stat(envPath); os.IsNotExist(err) {
-		envContent := fmt.Sprintf("# Environment: %s\n# Add environment-specific variables here\n", r.Options.EnvironmentName)
-		if err := os.WriteFile(envPath, []byte(envContent), 0644); err != nil {
-			return fmt.Errorf("failed to write environment file: %w", err)
-		}
-	}
-
-	r.Output.LogInfo("   Created configuration files")
-	return nil
-}
-
-// getEnvironmentFileName returns the environment file name.
-func (r *Runner) getEnvironmentFileName() string {
-	if r.Options.EnvironmentName == "default" {
-		return ".env"
-	}
-	return fmt.Sprintf(".env.%s", r.Options.EnvironmentName)
-}
-
-// updateGitignore updates .gitignore with Radius patterns.
+// updateGitignore updates .gitignore with Radius/Terraform patterns.
 func (r *Runner) updateGitignore() error {
 	gitignorePath := filepath.Join(r.WorkDir, ".gitignore")
 
-	var existingContent string
+	patterns := `# Radius / Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl
+`
+
+	// Check if file exists and contains our patterns
 	if content, err := os.ReadFile(gitignorePath); err == nil {
-		existingContent = string(content)
+		if strings.Contains(string(content), "# Radius / Terraform") {
+			return nil // Already has patterns
+		}
+		// Append to existing file
+		f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		if !strings.HasSuffix(string(content), "\n") {
+			f.WriteString("\n")
+		}
+		_, err = f.WriteString(patterns)
+		return err
 	}
 
-	// Check which patterns are missing
-	var missingPatterns []string
-	for _, pattern := range radiusGitignorePatterns {
-		if !strings.Contains(existingContent, pattern) {
-			missingPatterns = append(missingPatterns, pattern)
+	// Create new file
+	return os.WriteFile(gitignorePath, []byte(patterns), 0644)
+}
+
+// fetchResourceTypes fetches resource types from embedded data.
+func (r *Runner) fetchResourceTypes() error {
+	// Define the resource types to create
+	resourceTypes := getEmbeddedResourceTypes()
+
+	for filename, content := range resourceTypes {
+		path := filepath.Join(r.WorkDir, ".radius", "config", "types", filename)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to write resource type %s: %w", filename, err)
 		}
 	}
 
-	if len(missingPatterns) == 0 {
-		return nil // All patterns already present
-	}
+	return nil
+}
 
-	// Append missing patterns
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+// selectPlatform prompts for deployment platform selection.
+func (r *Runner) selectPlatform() error {
+	options := []string{"Kubernetes", "AWS", "Azure"}
+	promptText := "Which platform should Radius deploy resources (databases, caches, etc.) to?"
+
+	selected, err := r.Prompter.GetListInput(options, promptText)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
-	// Add newlines if file doesn't end with one
-	if existingContent != "" && !strings.HasSuffix(existingContent, "\n") {
-		f.WriteString("\n")
+	switch selected {
+	case "Kubernetes":
+		r.Options.Platform = "kubernetes"
+	case "AWS":
+		r.Options.Platform = "aws"
+	case "Azure":
+		r.Options.Platform = "azure"
 	}
 
-	// Add blank line before our patterns
-	if existingContent != "" {
-		f.WriteString("\n")
-	}
-
-	for _, pattern := range missingPatterns {
-		f.WriteString(pattern + "\n")
-	}
-
-	r.Output.LogInfo("   Updated .gitignore")
 	return nil
 }
 
-// createSampleModel creates a sample Bicep model file.
-func (r *Runner) createSampleModel() error {
-	modelPath := filepath.Join(r.WorkDir, ".radius", "model", "app.bicep")
-	if _, err := os.Stat(modelPath); err == nil {
-		return nil // Model already exists
+// selectDeploymentTool prompts for deployment tool selection.
+func (r *Runner) selectDeploymentTool() error {
+	// Check which tools are available
+	hasTerraform := commandExists("terraform")
+	hasBicep := commandExists("az") // bicep usually comes with az cli
+
+	// Default to terraform
+	r.Options.DeploymentTool = "terraform"
+
+	if hasTerraform && hasBicep {
+		options := []string{"Terraform", "Bicep"}
+		selected, err := r.Prompter.GetListInput(options, "Multiple deployment tools found. Select preferred tool:")
+		if err != nil {
+			return err
+		}
+
+		if selected == "Bicep" {
+			r.Options.DeploymentTool = "bicep"
+		}
+	} else if hasBicep && !hasTerraform {
+		r.Options.DeploymentTool = "bicep"
 	}
 
-	sampleModel := fmt.Sprintf(`// Sample Radius application model
-// Edit this file to define your application resources
-
-extension radius
-
-@description('The application resource')
-resource app 'Applications.Core/applications@2023-10-01-preview' = {
-  name: '%s'
-  properties: {
-    environment: environment().id
-  }
+	return nil
 }
 
-// Add your resources here
-// Example:
-// resource container 'Applications.Core/containers@2023-10-01-preview' = {
-//   name: 'frontend'
-//   properties: {
-//     application: app.id
-//     container: {
-//       image: 'nginx:latest'
-//     }
-//   }
-// }
-`, r.Options.ApplicationName)
+// configureKubernetes prompts for Kubernetes configuration.
+func (r *Runner) configureKubernetes() error {
+	// Get current context
+	currentContext := getCurrentKubeContext()
 
-	if err := os.WriteFile(modelPath, []byte(sampleModel), 0644); err != nil {
-		return fmt.Errorf("failed to write sample model: %w", err)
+	// Get list of contexts
+	contexts := getKubeContexts()
+	if len(contexts) == 0 {
+		// No contexts found, will configure later
+		r.Options.KubernetesContext = ""
+		return nil
 	}
 
-	r.Output.LogInfo("   Created sample model: .radius/model/app.bicep")
+	// Build options list - just the context names
+	options := make([]string, len(contexts))
+	copy(options, contexts)
+	options = append(options, "(Configure later)")
+
+	promptText := fmt.Sprintf("Select Kubernetes context (current: %s):", currentContext)
+	selected, err := r.Prompter.GetListInput(options, promptText)
+	if err != nil {
+		return err
+	}
+
+	// Parse selection
+	if selected == "(Configure later)" {
+		return nil
+	}
+
+	r.Options.KubernetesContext = selected
+
+	// Get namespaces
+	namespaces := getKubeNamespaces(r.Options.KubernetesContext)
+	if len(namespaces) == 0 {
+		r.Options.KubernetesNamespace = "default"
+		return nil
+	}
+
+	// Build namespace options - just the namespace names
+	selected, err = r.Prompter.GetListInput(namespaces, "Select Kubernetes namespace:")
+	if err != nil {
+		return err
+	}
+
+	r.Options.KubernetesNamespace = selected
 	return nil
+}
+
+// createRecipes creates the default recipes file.
+func (r *Runner) createRecipes() error {
+	recipeFile := fmt.Sprintf("recipes-%s-%s.yaml", r.Options.Platform, r.Options.DeploymentTool)
+	r.Options.RecipeFile = filepath.Join(".radius", "config", "recipes", recipeFile)
+
+	content := getRecipesContent(r.Options.Platform, r.Options.DeploymentTool)
+	path := filepath.Join(r.WorkDir, r.Options.RecipeFile)
+
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+// createEnvironmentConfig creates the .env file.
+func (r *Runner) createEnvironmentConfig() error {
+	envContent := "# Radius Environment Configuration\n"
+	envContent += "# Generated by 'rad init'\n\n"
+
+	if r.Options.KubernetesContext != "" {
+		envContent += "# Kubernetes Configuration\n"
+		envContent += fmt.Sprintf("KUBERNETES_CONTEXT=%s\n", r.Options.KubernetesContext)
+		envContent += fmt.Sprintf("KUBERNETES_NAMESPACE=%s\n", r.Options.KubernetesNamespace)
+		envContent += "\n"
+	}
+
+	envContent += "# Recipe Configuration\n"
+	envContent += fmt.Sprintf("RECIPES=%s\n", r.Options.RecipeFile)
+
+	return os.WriteFile(filepath.Join(r.WorkDir, ".env"), []byte(envContent), 0644)
 }
 
 // displayResults displays the initialization results.
 func (r *Runner) displayResults() {
-	r.Output.LogInfo("📊 Configuration:")
-	r.Output.LogInfo("   Application: %s", r.Options.ApplicationName)
-	r.Output.LogInfo("   Environment: %s", r.Options.EnvironmentName)
+	// Get resource types
+	types := getResourceTypeNames()
+
+	r.Output.LogInfo("📦 Resource Types:")
+	for _, t := range types {
+		r.Output.LogInfo("   • %s", t)
+	}
+
+	r.Output.LogInfo("")
+	r.Output.LogInfo("🌍 Environments:")
+	r.Output.LogInfo("   • default (.env):")
 	if r.Options.KubernetesContext != "" {
-		r.Output.LogInfo("   Kubernetes Context: %s", r.Options.KubernetesContext)
-		r.Output.LogInfo("   Kubernetes Namespace: %s", r.Options.KubernetesNamespace)
+		r.Output.LogInfo("       Kubernetes: context=%s, namespace=%s", r.Options.KubernetesContext, r.Options.KubernetesNamespace)
 	}
+	r.Output.LogInfo("       Recipes:    %s", r.Options.RecipeFile)
 
 	r.Output.LogInfo("")
-	r.Output.LogInfo("📁 Directory structure:")
-	r.Output.LogInfo("   .radius/")
-	r.Output.LogInfo("   ├── config/       # Configuration")
-	r.Output.LogInfo("   ├── model/        # Bicep models")
-	r.Output.LogInfo("   ├── plan/         # Generated plans")
-	r.Output.LogInfo("   └── deployments/  # Deployment records")
-
+	r.Output.LogInfo("🚀 Next steps:")
+	r.Output.LogInfo("   1. Commit the initialized configuration:")
+	r.Output.LogInfo("      git add .radius && git commit -m \"Initialize Radius\"")
+	r.Output.LogInfo("   2. Model your application:")
+	r.Output.LogInfo("      rad model")
 	r.Output.LogInfo("")
-	r.Output.LogInfo("Next steps:")
-	r.Output.LogInfo("   git add .radius && git commit -m \"Initialize Radius\"")
-	r.Output.LogInfo("   # Edit .radius/model/app.bicep to define your resources")
-	r.Output.LogInfo("   rad plan")
-	r.Output.LogInfo("   rad deploy")
+	r.Output.LogInfo("💡 Run 'rad --help' for more commands and options")
 }
 
-// autoCommit commits the initialization.
-func (r *Runner) autoCommit(ctx context.Context) error {
-	files := []string{".radius", ".gitignore"}
-	
-	// Add environment file if created
-	envFile := r.getEnvironmentFileName()
-	if _, err := os.Stat(filepath.Join(r.WorkDir, envFile)); err == nil {
-		files = append(files, envFile)
+// Helper functions
+
+func commandExists(cmd string) bool {
+	_, err := exec.LookPath(cmd)
+	return err == nil
+}
+
+func getCurrentKubeContext() string {
+	cmd := exec.Command("kubectl", "config", "current-context")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func getKubeContexts() []string {
+	cmd := exec.Command("kubectl", "config", "get-contexts", "-o", "name")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
 	}
 
-	return commit.AutoCommit(&commit.CommitOptions{
-		RepoRoot:    r.WorkDir,
-		FilesToAdd:  files,
-		Action:      commit.ActionInit,
-		Application: r.Options.ApplicationName,
-		Environment: r.Options.EnvironmentName,
-	})
+	var contexts []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			contexts = append(contexts, line)
+		}
+	}
+	return contexts
 }
 
-// exitError is a friendly error that doesn't print TraceId.
-type exitError struct {
-	message string
+func getKubeNamespaces(context string) []string {
+	cmd := exec.Command("kubectl", "--context", context, "get", "namespaces", "-o", "jsonpath={.items[*].metadata.name}")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	var namespaces []string
+	for _, ns := range strings.Split(string(out), " ") {
+		if ns != "" {
+			namespaces = append(namespaces, ns)
+		}
+	}
+	sort.Strings(namespaces)
+	return namespaces
 }
 
-func (e *exitError) Error() string {
-	return e.message
-}
-
-func (e *exitError) IsFriendlyError() bool {
-	return true
+func getResourceTypeNames() []string {
+	return []string{
+		"Radius.Compute/containers",
+		"Radius.Compute/persistentVolumes",
+		"Radius.Compute/routes",
+		"Radius.Data/mySqlDatabases",
+		"Radius.Data/postgreSqlDatabases",
+		"Radius.Security/secrets",
+	}
 }

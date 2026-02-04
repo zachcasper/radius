@@ -27,7 +27,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/radius-project/radius/pkg/cli/clierrors"
-	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	gitdiff "github.com/radius-project/radius/pkg/cli/git/diff"
 	"github.com/radius-project/radius/pkg/cli/output"
@@ -38,46 +37,66 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 	runner := NewRunner(factory)
 
 	cmd := &cobra.Command{
-		Use:   "diff [source...target]",
-		Short: "Show differences between commits, deployments, or live state",
-		Long: `Show differences between commits, deployments, or live cloud state.
+		Use:   "diff [commit1...commit2]",
+		Short: "Compare infrastructure states between commits or with live state",
+		Long: `The diff command compares infrastructure definitions and deployment states.
 
-This command compares Radius artifacts (plans, deployments, manifests) between
-different points in time or against live cloud state for drift detection.
+By default (no arguments), diff shows changes in the current working directory
+compared to the last commit (uncommitted changes).
 
-Comparison modes:
-  rad diff                    Compare uncommitted changes against HEAD
-  rad diff <commit>           Compare <commit> against HEAD
-  rad diff <source>...<target>  Compare two commits or "live" for drift detection
+With a single commit reference, diff compares that commit against live infrastructure.
 
-Exit codes:
-  0  No differences found
-  1  Differences found
-  2  Validation error
-  3  Authentication error
+With two commits separated by '...', diff compares those two commits.
+
+Use --live to compare any state against currently deployed infrastructure.
 
 Examples:
   # Show uncommitted changes
   rad diff
 
+  # Compare a commit against live infrastructure
+  rad diff abc123 --live
+
   # Compare two commits
   rad diff abc123...def456
 
-  # Drift detection - compare deployment to live state
-  rad diff abc123...live -a myapp -e production
+  # Show diff in JSON format
+  rad diff --output json
 
-  # JSON output
-  rad diff --output json`,
+  # Show diff for all environments
+  rad diff --all-environments`,
+		Example: `# Show uncommitted changes in the current directory
+rad diff
+
+# Compare HEAD against live infrastructure
+rad diff HEAD --live
+
+# Compare two specific commits
+rad diff abc123...def456
+
+# Compare with previous commit
+rad diff HEAD~1...HEAD
+
+# Show diff as JSON
+rad diff --output json
+
+# Compare all environments
+rad diff --all-environments`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: framework.RunCommand(runner),
 	}
 
 	// Add flags
-	commonflags.AddApplicationNameFlag(cmd)
-	cmd.Flags().StringP("environment", "e", "", "Environment name")
-	cmd.Flags().BoolP("all-environments", "A", false, "Diff all environments")
-	cmd.Flags().Bool("plan-only", false, "Only diff plan.yaml files")
-	commonflags.AddOutputFlag(cmd)
+	cmd.Flags().BoolP("all-environments", "a", false, "Show diff for all environments")
+	cmd.Flags().StringP("commit", "c", "", "Commit to compare (defaults to HEAD)")
+	cmd.Flags().StringP("environment", "e", "", "The environment name")
+	cmd.Flags().BoolP("live", "l", false, "Compare against live deployed infrastructure")
+	cmd.Flags().StringP("output", "o", "text", "Output format (text, json)")
+	cmd.Flags().StringSliceP("resource-type", "r", nil, "Filter by resource type(s)")
+	cmd.Flags().BoolP("show-details", "d", false, "Show detailed property-level diffs")
+	cmd.Flags().Bool("show-unchanged", false, "Include unchanged resources in output")
+	cmd.Flags().StringP("target", "t", "", "Target commit to compare against")
+	cmd.Flags().StringP("workspace", "w", "", "The workspace name")
 
 	return cmd, runner
 }
@@ -93,8 +112,8 @@ type Runner struct {
 	// Target is the target commit or "live".
 	Target string
 
-	// Application is the application name.
-	Application string
+	// Commit is the commit to compare.
+	Commit string
 
 	// Environment is the environment name.
 	Environment string
@@ -102,11 +121,23 @@ type Runner struct {
 	// AllEnvironments indicates to diff all environments.
 	AllEnvironments bool
 
-	// PlanOnly indicates to only diff plan files.
-	PlanOnly bool
+	// Live indicates to compare against live infrastructure.
+	Live bool
 
 	// OutputFormat is the output format.
 	OutputFormat string
+
+	// ResourceTypes is the list of resource types to filter by.
+	ResourceTypes []string
+
+	// ShowDetails indicates to show detailed diffs.
+	ShowDetails bool
+
+	// ShowUnchanged indicates to show unchanged resources.
+	ShowUnchanged bool
+
+	// TargetCommit is the target commit to compare against.
+	TargetCommit string
 
 	// WorkDir is the working directory.
 	WorkDir string
@@ -122,11 +153,15 @@ func NewRunner(factory framework.Factory) *Runner {
 // Validate validates the command arguments and flags.
 func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	r.Output = r.factory.GetOutput()
-	r.Application, _ = cmd.Flags().GetString("application")
-	r.Environment, _ = cmd.Flags().GetString("environment")
 	r.AllEnvironments, _ = cmd.Flags().GetBool("all-environments")
-	r.PlanOnly, _ = cmd.Flags().GetBool("plan-only")
+	r.Commit, _ = cmd.Flags().GetString("commit")
+	r.Environment, _ = cmd.Flags().GetString("environment")
+	r.Live, _ = cmd.Flags().GetBool("live")
 	r.OutputFormat, _ = cmd.Flags().GetString("output")
+	r.ResourceTypes, _ = cmd.Flags().GetStringSlice("resource-type")
+	r.ShowDetails, _ = cmd.Flags().GetBool("show-details")
+	r.ShowUnchanged, _ = cmd.Flags().GetBool("show-unchanged")
+	r.TargetCommit, _ = cmd.Flags().GetString("target")
 
 	// Get working directory
 	workDir, err := os.Getwd()
@@ -167,29 +202,9 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 // Run executes the diff command.
 func (r *Runner) Run(ctx context.Context) error {
 	differ := gitdiff.NewDiffer(r.WorkDir).
-		WithApplication(r.Application).
 		WithEnvironment(r.Environment)
 
-	// Auto-discover application and environment if not provided
-	if r.Application == "" || r.Environment == "" {
-		sourceCommit := r.Source
-		if sourceCommit == "" || sourceCommit == "HEAD" {
-			sourceCommit = "HEAD"
-		}
-
-		app, env, err := differ.DiscoverAppAndEnv(ctx, sourceCommit)
-		if err == nil {
-			if r.Application == "" {
-				r.Application = app
-				differ.WithApplication(app)
-			}
-			if r.Environment == "" {
-				r.Environment = env
-				differ.WithEnvironment(env)
-			}
-		}
-	}
-
+	// Handle source and target comparison
 	var result *gitdiff.DiffResult
 	var err error
 

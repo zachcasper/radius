@@ -28,7 +28,6 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/radius-project/radius/pkg/cli/clierrors"
-	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/git/config"
 	"github.com/radius-project/radius/pkg/cli/git/plan"
@@ -42,32 +41,42 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 	runner := NewRunner(factory)
 
 	cmd := &cobra.Command{
-		Use:   "plan [model-file]",
-		Short: "Generate deployment plan from Bicep model",
-		Long: `Generate a deployment plan from a Bicep model file for Git workspace mode.
+		Use:   "plan [model.bicep]",
+		Short: "Generate deployment artifacts from an application model",
+		Long: `Generate deployment artifacts from a Radius application model.
 
-This command parses the Bicep model, resolves recipes, and generates Terraform
-artifacts for each resource. The plan and artifacts are stored in .radius/plan/.
+This command analyzes the application model (Bicep file), looks up recipes for 
+each resource type, and generates ready-to-deploy artifacts (Terraform or Bicep).
 
-If no model file is specified, rad plan will look for .bicep files in .radius/model/
-and use the file if only one exists, or prompt you to select if multiple exist.
+If no model file is specified, rad plan will automatically use the model file
+in .radius/model/ if there is only one. If multiple model files exist, you must
+specify which one to use.
 
-Examples:
-  # Generate plan from a specific model file
-  rad plan .radius/model/app.bicep
+Use 'rad deploy' after committing the generated artifacts to execute the deployment.`,
+		Example: `
+# Generate deployment plan (auto-detects model if only one exists)
+rad plan
 
-  # Auto-detect model file in .radius/model/
-  rad plan
+# Generate deployment plan for a specific model file
+rad plan .radius/model/myapp.bicep
 
-  # Generate plan with auto-confirm (skip prompts)
-  rad plan -y`,
+# Generate plan for a specific environment
+rad plan -e production
+
+# Overwrite existing plan files without prompting
+rad plan -y
+
+# Allow recipes without pinned versions
+rad plan --allow-unpinned-recipes
+`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: framework.RunCommand(runner),
 	}
 
 	// Add flags
-	cmd.Flags().BoolP("yes", "y", false, "Auto-confirm prompts (overwrite existing files)")
-	commonflags.AddOutputFlag(cmd)
+	cmd.Flags().BoolP("yes", "y", false, "Overwrite existing plan files without prompting")
+	cmd.Flags().StringP("environment", "e", "", "Target environment")
+	cmd.Flags().Bool("allow-unpinned-recipes", false, "Allow recipes without pinned versions")
 
 	return cmd, runner
 }
@@ -84,8 +93,11 @@ type Runner struct {
 	// Yes indicates to auto-confirm prompts.
 	Yes bool
 
-	// OutputFormat is the output format (table, json).
-	OutputFormat string
+	// Environment is the target environment.
+	Environment string
+
+	// AllowUnpinnedRecipes allows recipes without pinned versions.
+	AllowUnpinnedRecipes bool
 
 	// Options contains parsed options.
 	Options *Options
@@ -137,7 +149,8 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	r.Output = r.factory.GetOutput()
 	r.Prompter = r.factory.GetPrompter()
 	r.Yes, _ = cmd.Flags().GetBool("yes")
-	r.OutputFormat, _ = cmd.Flags().GetString("output")
+	r.Environment, _ = cmd.Flags().GetString("environment")
+	r.AllowUnpinnedRecipes, _ = cmd.Flags().GetBool("allow-unpinned-recipes")
 
 	// Get working directory
 	workDir, err := os.Getwd()

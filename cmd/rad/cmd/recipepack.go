@@ -21,6 +21,7 @@ import (
 )
 
 func init() {
+	recipePackCmd.GroupID = groupControlPlane
 	RootCmd.AddCommand(recipePackCmd)
 	recipePackCmd.PersistentFlags().StringP("workspace", "w", "", "The workspace name")
 }

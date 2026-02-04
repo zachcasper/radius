@@ -21,6 +21,7 @@ import (
 )
 
 func init() {
+	applicationCmd.GroupID = groupControlPlane
 	RootCmd.AddCommand(applicationCmd)
 }
 

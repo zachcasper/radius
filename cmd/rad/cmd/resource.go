@@ -21,6 +21,7 @@ import (
 )
 
 func init() {
+	resourceCmd.GroupID = groupControlPlane
 	RootCmd.AddCommand(resourceCmd)
 	resourceCmd.PersistentFlags().StringP("application", "a", "", "The application name")
 	resourceCmd.PersistentFlags().StringP("workspace", "w", "", "The workspace name")

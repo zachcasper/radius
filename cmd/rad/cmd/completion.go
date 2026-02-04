@@ -97,6 +97,7 @@ var completionPowershellCommand = &cobra.Command{
 }
 
 func init() {
+	completionCommand.GroupID = groupAdditional
 	RootCmd.AddCommand(completionCommand)
 	completionCommand.AddCommand(completionZshCommand)
 	completionCommand.AddCommand(completionBashCommand)

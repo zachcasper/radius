@@ -60,9 +60,7 @@ import (
 	group "github.com/radius-project/radius/pkg/cli/cmd/group"
 	"github.com/radius-project/radius/pkg/cli/cmd/install"
 	install_kubernetes "github.com/radius-project/radius/pkg/cli/cmd/install/kubernetes"
-	cmd_log "github.com/radius-project/radius/pkg/cli/cmd/log"
 	cmd_plan "github.com/radius-project/radius/pkg/cli/cmd/plan"
-	"github.com/radius-project/radius/pkg/cli/cmd/radinit"
 	recipe_list "github.com/radius-project/radius/pkg/cli/cmd/recipe/list"
 	recipe_register "github.com/radius-project/radius/pkg/cli/cmd/recipe/register"
 	recipe_show "github.com/radius-project/radius/pkg/cli/cmd/recipe/show"
@@ -128,6 +126,14 @@ var RootCmd = &cobra.Command{
 	SilenceUsage:      true,
 	DisableAutoGenTag: true,
 }
+
+// Command group IDs
+const (
+	groupGitWorkspace  = "git-workspace"
+	groupControlPlane  = "control-plane"
+	groupManagement    = "management"
+	groupAdditional    = "additional"
+)
 
 const (
 	serviceName string = "cli"
@@ -249,6 +255,16 @@ func init() {
 
 	outputDescription := fmt.Sprintf("output format (supported formats are %s)", strings.Join(output.SupportedFormats(), ", "))
 	RootCmd.PersistentFlags().StringP("output", "o", output.DefaultFormat, outputDescription)
+
+	// Add command groups
+	RootCmd.AddGroup(&cobra.Group{ID: groupGitWorkspace, Title: "Git Workspace Commands:"})
+	RootCmd.AddGroup(&cobra.Group{ID: groupControlPlane, Title: "Control Plane Commands:"})
+	RootCmd.AddGroup(&cobra.Group{ID: groupManagement, Title: "Management Commands:"})
+	RootCmd.AddGroup(&cobra.Group{ID: groupAdditional, Title: "Additional Commands:"})
+
+	// Set help command to the Additional group
+	RootCmd.SetHelpCommandGroupID(groupAdditional)
+
 	initSubCommands()
 }
 
@@ -278,25 +294,30 @@ func initSubCommands() {
 		AzureClient:        azure.NewClient(),
 	}
 
+	// Git Workspace Commands
 	deployCmd, _ := cmd_deploy.NewCommand(framework)
+	deployCmd.GroupID = groupGitWorkspace
 	RootCmd.AddCommand(deployCmd)
 
-	logCmd, _ := cmd_log.NewCommand(framework)
-	RootCmd.AddCommand(logCmd)
-
 	planCmd, _ := cmd_plan.NewCommand(framework)
+	planCmd.GroupID = groupGitWorkspace
 	RootCmd.AddCommand(planCmd)
 
 	diffCmd, _ := cmd_diff.NewCommand(framework)
+	diffCmd.GroupID = groupGitWorkspace
 	RootCmd.AddCommand(diffCmd)
 
 	deleteCmd, _ := cmd_delete.NewCommand(framework)
+	deleteCmd.GroupID = groupGitWorkspace
 	RootCmd.AddCommand(deleteCmd)
 
 	initGitCmd, _ := cmd_initialize.NewCommand(framework)
+	initGitCmd.GroupID = groupGitWorkspace
 	RootCmd.AddCommand(initGitCmd)
 
+	// Control Plane Commands
 	runCmd, _ := run.NewCommand(framework)
+	runCmd.GroupID = groupControlPlane
 	RootCmd.AddCommand(runCmd)
 
 	resourceShowCmd, _ := resource_show.NewCommand(framework)
@@ -357,13 +378,12 @@ func initSubCommands() {
 	recipePackCmd.AddCommand(showRecipePackCmd)
 
 	providerCmd := credential.NewCommand(framework)
+	providerCmd.GroupID = groupControlPlane
 	RootCmd.AddCommand(providerCmd)
 
 	groupCmd := group.NewCommand(framework)
+	groupCmd.GroupID = groupControlPlane
 	RootCmd.AddCommand(groupCmd)
-
-	initCmd, _ := radinit.NewCommand(framework)
-	RootCmd.AddCommand(initCmd)
 
 	envCreateCmd, _ := env_create.NewCommand(framework)
 	previewCreateCmd, _ := env_create_preview.NewCommand(framework)
@@ -447,30 +467,35 @@ func initSubCommands() {
 	bicepCmd.AddCommand(bicepPublishExtensionCmd)
 
 	installCmd := install.NewCommand()
+	installCmd.GroupID = groupManagement
 	RootCmd.AddCommand(installCmd)
 
 	installKubernetesCmd, _ := install_kubernetes.NewCommand(framework)
 	installCmd.AddCommand(installKubernetesCmd)
 
 	uninstallCmd := uninstall.NewCommand()
+	uninstallCmd.GroupID = groupManagement
 	RootCmd.AddCommand(uninstallCmd)
 
 	uninstallKubernetesCmd, _ := uninstall_kubernetes.NewCommand(framework)
 	uninstallCmd.AddCommand(uninstallKubernetesCmd)
 
 	upgradeCmd := upgrade.NewCommand()
+	upgradeCmd.GroupID = groupManagement
 	RootCmd.AddCommand(upgradeCmd)
 
 	upgradeKubernetesCmd, _ := upgrade_kubernetes.NewCommand(framework)
 	upgradeCmd.AddCommand(upgradeKubernetesCmd)
 
 	rollbackCmd := rollback.NewCommand()
+	rollbackCmd.GroupID = groupManagement
 	RootCmd.AddCommand(rollbackCmd)
 
 	rollbackKubernetesCmd, _ := rollback_kubernetes.NewCommand(framework)
 	rollbackCmd.AddCommand(rollbackKubernetesCmd)
 
 	versionCmd, _ := version.NewCommand(framework)
+	versionCmd.GroupID = groupManagement
 	RootCmd.AddCommand(versionCmd)
 }
 

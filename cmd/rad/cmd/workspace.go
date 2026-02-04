@@ -21,6 +21,7 @@ import (
 )
 
 func init() {
+	workspaceCmd.GroupID = groupManagement
 	RootCmd.AddCommand(workspaceCmd)
 	workspaceCmd.PersistentFlags().StringP("workspace", "w", "", "The workspace name")
 }

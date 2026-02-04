@@ -30,6 +30,7 @@ func NewRecipeCommand() *cobra.Command {
 }
 
 func init() {
+	recipeCmd.GroupID = groupControlPlane
 	RootCmd.AddCommand(recipeCmd)
 	recipeCmd.PersistentFlags().StringP("environment", "e", "", "The environment name")
 	recipeCmd.PersistentFlags().StringP("workspace", "w", "", "The workspace name")

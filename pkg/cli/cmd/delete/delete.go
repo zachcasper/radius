@@ -29,7 +29,6 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/radius-project/radius/pkg/cli/clierrors"
-	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/git/commit"
 	"github.com/radius-project/radius/pkg/cli/git/deploy"
@@ -47,29 +46,36 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 	cmd := &cobra.Command{
 		Use:   "delete",
 		Short: "Delete deployed resources",
-		Long: `Delete resources that were deployed with rad deploy.
+		Long: `Delete resources that were deployed using rad deploy.
 
-This command runs terraform destroy in reverse order for all steps in the plan,
-removing resources from the cloud. A deletion record is saved to track the operation.
+This command destroys the infrastructure that was created by 'rad deploy',
+executing terraform destroy (or az deployment delete) for each resource
+in reverse order of deployment.
 
-Examples:
-  # Delete with confirmation prompt
-  rad delete
+The delete operation uses the deployment plan to determine what resources
+to destroy and in what order.`,
+		Example: `
+# Delete all resources for the default environment
+rad delete
 
-  # Delete without prompts
-  rad delete -y
+# Delete resources for a specific environment
+rad delete -e production
 
-  # Delete and auto-commit the deletion record
-  rad delete --no-auto-commit=false`,
+# Delete without confirmation prompt
+rad delete -y
+
+# Delete a specific application
+rad delete -a myapp
+`,
 		Args: cobra.NoArgs,
 		RunE: framework.RunCommand(runner),
 	}
 
 	// Add flags
-	cmd.Flags().BoolP("yes", "y", false, "Auto-confirm deletion")
-	cmd.Flags().Bool("no-auto-commit", false, "Disable auto-commit of deletion record")
-	cmd.Flags().StringP("environment", "e", "", "Environment to delete (default: auto-detect)")
-	commonflags.AddOutputFlag(cmd)
+	cmd.Flags().StringP("application", "a", "", "Application to delete")
+	cmd.Flags().StringP("environment", "e", "", "Target environment")
+	cmd.Flags().Bool("quiet", false, "Minimal output")
+	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 
 	return cmd, runner
 }
@@ -80,17 +86,17 @@ type Runner struct {
 	Output   output.Interface
 	Prompter prompt.Interface
 
+	// Application is the application to delete.
+	Application string
+
 	// Yes indicates to auto-confirm prompts.
 	Yes bool
 
-	// NoAutoCommit indicates to disable auto-commit.
-	NoAutoCommit bool
+	// Quiet indicates minimal output.
+	Quiet bool
 
 	// Environment is the environment to delete.
 	Environment string
-
-	// OutputFormat is the output format.
-	OutputFormat string
 
 	// WorkDir is the working directory.
 	WorkDir string
@@ -128,10 +134,10 @@ func NewRunner(factory framework.Factory) *Runner {
 func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	r.Output = r.factory.GetOutput()
 	r.Prompter = r.factory.GetPrompter()
-	r.Yes, _ = cmd.Flags().GetBool("yes")
-	r.NoAutoCommit, _ = cmd.Flags().GetBool("no-auto-commit")
+	r.Application, _ = cmd.Flags().GetString("application")
 	r.Environment, _ = cmd.Flags().GetString("environment")
-	r.OutputFormat, _ = cmd.Flags().GetString("output")
+	r.Quiet, _ = cmd.Flags().GetBool("quiet")
+	r.Yes, _ = cmd.Flags().GetBool("yes")
 
 	// Get working directory
 	workDir, err := os.Getwd()
@@ -265,15 +271,6 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Display results
 	r.displayResults(record, recordPath)
-
-	// Auto-commit if enabled
-	if !r.NoAutoCommit {
-		if err := r.autoCommit(ctx, recordPath); err != nil {
-			r.Output.LogInfo("")
-			r.Output.LogInfo("⚠️ Auto-commit failed: %v", err)
-			r.Output.LogInfo("   Run manually: git add %s && git commit", recordPath)
-		}
-	}
 
 	return nil
 }

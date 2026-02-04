@@ -51,6 +51,7 @@ WARNING Please inspect all logs before sending feedback to confirm no private in
 }
 
 func init() {
+	debugLogsCmd.GroupID = groupManagement
 	RootCmd.AddCommand(debugLogsCmd)
 	debugLogsCmd.PersistentFlags().StringP("workspace", "w", "", "The workspace name")
 }
