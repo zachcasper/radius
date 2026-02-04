@@ -361,10 +361,16 @@ func (r *GitRunner) checkUncommittedChanges(ctx context.Context) error {
 	}
 
 	if hasUncommitted {
+		relPlanDir, _ := filepath.Rel(r.WorkDir, r.Options.PlanDir)
+		commitMsg := fmt.Sprintf("Generate plan for %s (%s)", r.Options.Application, r.Options.Environment)
+		if r.Options.GitInfo != nil && r.Options.GitInfo.ShortSHA != "" {
+			commitMsg = fmt.Sprintf("Plan %s@%s", r.Options.Application, r.Options.GitInfo.ShortSHA)
+		}
+
 		r.Output.LogInfo("")
 		r.Output.LogInfo("⚠️ Warning: You have uncommitted changes in the plan directory.")
 		r.Output.LogInfo("   Consider committing your changes first:")
-		r.Output.LogInfo("   git add .radius/plan && git commit -m \"Update plan\"")
+		r.Output.LogInfo("   git add %s && git commit -m \"%s\"", relPlanDir, commitMsg)
 		r.Output.LogInfo("")
 
 		confirmed, err := prompt.YesOrNoPrompt("Continue with deployment anyway?", prompt.ConfirmNo, r.Prompter)
