@@ -211,8 +211,33 @@ func (d *Differ) DiffCommitToLive(ctx context.Context, commit string) (*DiffResu
 				continue
 			}
 
-			// Compare manifests
-			diffs, dyffOutput, err := DiffStrings(captured.RawManifest, liveManifest)
+			// Compare manifests - convert captured manifest to YAML string for comparison
+			var capturedYAML string
+			switch v := captured.RawManifest.(type) {
+			case string:
+				capturedYAML = v
+			case map[string]any, []any:
+				yamlBytes, err := yaml.Marshal(v)
+				if err != nil {
+					continue
+				}
+				capturedYAML = string(yamlBytes)
+			default:
+				jsonBytes, err := json.Marshal(v)
+				if err != nil {
+					continue
+				}
+				var obj any
+				if err := json.Unmarshal(jsonBytes, &obj); err != nil {
+					continue
+				}
+				yamlBytes, err := yaml.Marshal(obj)
+				if err != nil {
+					continue
+				}
+				capturedYAML = string(yamlBytes)
+			}
+			diffs, dyffOutput, err := DiffStrings(capturedYAML, liveManifest)
 			if err != nil {
 				continue
 			}

@@ -99,19 +99,14 @@ func (c *ManifestCapture) CaptureResource(ctx context.Context, kind, name, names
 	// Strip managed fields and other metadata
 	c.stripMetadata(obj)
 
-	// Convert to YAML
-	manifest, err := yaml.Marshal(obj.Object)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal manifest: %w", err)
-	}
-
+	// Store as structured object (will be serialized as JSON in deployment record)
 	return &deploy.CapturedResource{
 		ResourceID:   fmt.Sprintf("%s/%s/%s", namespace, kind, name),
 		ResourceType: kind,
 		Provider:     "kubernetes",
 		Name:         name,
 		Namespace:    namespace,
-		RawManifest:  string(manifest),
+		RawManifest:  obj.Object,
 	}, nil
 }
 
@@ -232,11 +227,23 @@ func parseKubernetesResourceType(resourceType string) string {
 	return ""
 }
 
-// GetRawManifest retrieves the raw manifest for a Kubernetes resource.
+// GetRawManifest retrieves the raw manifest for a Kubernetes resource as a YAML string.
 func (c *ManifestCapture) GetRawManifest(ctx context.Context, kind, name, namespace string) (string, error) {
 	captured, err := c.CaptureResource(ctx, kind, name, namespace)
 	if err != nil {
 		return "", err
 	}
-	return captured.RawManifest, nil
+	// Convert structured object to YAML string
+	if obj, ok := captured.RawManifest.(map[string]any); ok {
+		yamlBytes, err := yaml.Marshal(obj)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal manifest to YAML: %w", err)
+		}
+		return string(yamlBytes), nil
+	}
+	// If already a string, return as-is
+	if str, ok := captured.RawManifest.(string); ok {
+		return str, nil
+	}
+	return "", fmt.Errorf("unexpected manifest type: %T", captured.RawManifest)
 }

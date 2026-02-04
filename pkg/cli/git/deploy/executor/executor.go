@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -120,6 +121,47 @@ func (e *TerraformExecutor) Execute(ctx context.Context) (*deploy.StepResult, er
 		return result, fmt.Errorf("terraform init failed in %s: %w", e.StepDir, err)
 	}
 
+	// Run terraform plan to get change counts
+	hasChanges, err := tf.Plan(ctx)
+	if err != nil {
+		result.Status = deploy.StatusFailed
+		result.Error = fmt.Sprintf("terraform plan failed: %v", err)
+		result.CompletedAt = time.Now()
+		result.Duration = time.Since(startTime).Nanoseconds()
+		return result, fmt.Errorf("terraform plan failed in %s: %w", e.StepDir, err)
+	}
+
+	// Parse plan output for change counts
+	result.Changes = &deploy.ChangesSummary{
+		Add:     0,
+		Change:  0,
+		Destroy: 0,
+	}
+	if hasChanges {
+		// Show the plan to get detailed change info
+		planFile := filepath.Join(e.StepDir, "tfplan")
+		_, err = tf.Plan(ctx, tfexec.Out(planFile))
+		if err == nil {
+			plan, err := tf.ShowPlanFile(ctx, planFile)
+			if err == nil && plan != nil && plan.ResourceChanges != nil {
+				for _, change := range plan.ResourceChanges {
+					if change.Change != nil {
+						for _, action := range change.Change.Actions {
+							switch action {
+							case tfjson.ActionCreate:
+								result.Changes.Add++
+							case tfjson.ActionUpdate:
+								result.Changes.Change++
+							case tfjson.ActionDelete:
+								result.Changes.Destroy++
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Run terraform apply
 	if err := tf.Apply(ctx); err != nil {
 		result.Status = deploy.StatusFailed
@@ -162,13 +204,6 @@ func (e *TerraformExecutor) Execute(ctx context.Context) (*deploy.StepResult, er
 		}
 	}
 
-	// Get change summary (resources are already applied, so changes are 0)
-	result.Changes = &deploy.ChangesSummary{
-		Add:     0,
-		Change:  0,
-		Destroy: 0,
-	}
-
 	result.Status = deploy.StatusSucceeded
 	result.CompletedAt = time.Now()
 	result.Duration = time.Since(startTime).Nanoseconds()
@@ -196,8 +231,8 @@ func (e *TerraformExecutor) captureKubernetesResource(ctx context.Context, resou
 		return nil
 	}
 
-	// Build kubectl command to get resource
-	args := []string{"get", resourceType, name, "-n", namespace, "-o", "yaml"}
+	// Build kubectl command to get resource as JSON
+	args := []string{"get", resourceType, name, "-n", namespace, "-o", "json"}
 	if e.KubeContext != "" {
 		args = append([]string{"--context", e.KubeContext}, args...)
 	}
@@ -205,6 +240,12 @@ func (e *TerraformExecutor) captureKubernetesResource(ctx context.Context, resou
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	output, err := cmd.Output()
 	if err != nil {
+		return nil
+	}
+
+	// Parse JSON output into structured object
+	var manifest any
+	if err := json.Unmarshal(output, &manifest); err != nil {
 		return nil
 	}
 
@@ -216,7 +257,7 @@ func (e *TerraformExecutor) captureKubernetesResource(ctx context.Context, resou
 		Namespace:          namespace,
 		RadiusResourceType: e.ResourceType,
 		DeploymentStep:     e.Sequence,
-		RawManifest:        string(output),
+		RawManifest:        manifest,
 	}
 }
 

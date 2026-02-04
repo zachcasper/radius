@@ -173,8 +173,8 @@ type CapturedResource struct {
 	// DeploymentStep is the step number that created this resource.
 	DeploymentStep int `json:"deploymentStep"`
 
-	// RawManifest is the captured YAML manifest.
-	RawManifest string `json:"rawManifest"`
+	// RawManifest is the captured manifest as a structured JSON object.
+	RawManifest any `json:"rawManifest"`
 }
 
 // DeploymentSummary contains summary statistics for the deployment.
