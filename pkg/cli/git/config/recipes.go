@@ -228,7 +228,14 @@ func (r *Recipe) ExtractVersion() (string, bool) {
 }
 
 // LookupRecipe finds a recipe for the given resource type.
+// The resourceType can include an API version (e.g., "Radius.Compute/containers@2025-08-01-preview")
+// which will be stripped for the lookup.
 func LookupRecipe(recipes map[string]Recipe, resourceType string) (*Recipe, bool) {
+	// Strip API version if present (e.g., "Radius.Compute/containers@2025-08-01-preview" -> "Radius.Compute/containers")
+	if idx := strings.Index(resourceType, "@"); idx != -1 {
+		resourceType = resourceType[:idx]
+	}
+
 	recipe, found := recipes[resourceType]
 	if !found {
 		return nil, false

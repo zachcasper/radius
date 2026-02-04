@@ -133,6 +133,9 @@ type Options struct {
 
 	// ResourceTypes is the loaded resource type registry.
 	ResourceTypes *config.ResourceTypeRegistry
+
+	// Recipes is the loaded recipe map.
+	Recipes map[string]config.Recipe
 }
 
 // NewRunner creates a new Runner.
@@ -207,6 +210,12 @@ func (r *Runner) Run(ctx context.Context) error {
 	configDir := filepath.Join(r.Options.WorkDir, ".radius", "config")
 	r.Options.ResourceTypes, _ = config.LoadResourceTypes(configDir)
 
+	// Load recipes
+	recipesDir := filepath.Join(configDir, "recipes")
+	if recipeFiles, err := filepath.Glob(filepath.Join(recipesDir, "*.yaml")); err == nil && len(recipeFiles) > 0 {
+		r.Options.Recipes, _ = config.LoadRecipes(recipeFiles)
+	}
+
 	// Validate resources against schemas
 	if r.Options.ResourceTypes != nil {
 		for _, resource := range model.Resources {
@@ -242,12 +251,36 @@ func (r *Runner) Run(ctx context.Context) error {
 			},
 		}
 
+		// Look up recipe source from recipes config based on resource type
+		var recipeSource string
+		var recipeKind string
+		if r.Options.Recipes != nil {
+			if recipe, found := config.LookupRecipe(r.Options.Recipes, resource.Type); found {
+				recipeSource = recipe.RecipeLocation
+				recipeKind = recipe.RecipeKind
+			}
+		}
+
 		// Add recipe info if available
 		if resource.Recipe != nil {
 			step.Recipe = plan.RecipeReference{
 				Name:   resource.Recipe.Name,
 				Kind:   resource.Recipe.Kind,
 				Source: resource.Recipe.Source,
+			}
+			// Override source from recipes config if set
+			if recipeSource != "" {
+				step.Recipe.Source = recipeSource
+			}
+			if recipeKind != "" {
+				step.Recipe.Kind = recipeKind
+			}
+		} else if recipeSource != "" {
+			// No explicit recipe in bicep, but we have one from config
+			step.Recipe = plan.RecipeReference{
+				Name:   "default",
+				Kind:   recipeKind,
+				Source: recipeSource,
 			}
 		}
 
@@ -262,7 +295,10 @@ func (r *Runner) Run(ctx context.Context) error {
 			WithEnvironment(r.Options.Environment).
 			WithKubernetes(r.Options.KubernetesNamespace, r.Options.KubernetesContext)
 
-		if resource.Recipe != nil {
+		// Set recipe source (prefer config lookup over bicep definition)
+		if recipeSource != "" {
+			generator.WithRecipeSource(recipeSource)
+		} else if resource.Recipe != nil {
 			generator.WithRecipeSource(resource.Recipe.Source)
 		}
 
