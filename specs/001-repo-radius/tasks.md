@@ -58,7 +58,7 @@ Based on plan.md, the source structure is:
 - [X] T013 Implement GitWorkspace struct in pkg/cli/workspaces/git.go
 - [X] T014 Implement GitConnection and workspace interface methods in pkg/cli/workspaces/git.go
 - [X] T015 Implement IsGitWorkspace detection function in pkg/cli/git/repo/state.go
-- [ ] T016 [P] Update workspace registry to include built-in `git` workspace in pkg/cli/workspaces/workspace.go
+- [X] T016 [P] Update workspace registry to include built-in `git` workspace in pkg/cli/workspaces/workspace.go
 
 ### Git Operations
 
@@ -78,20 +78,20 @@ Based on plan.md, the source structure is:
 
 ### Implementation for User Story 1
 
-- [ ] T020 [US1] Create rad init command skeleton in pkg/cli/cmd/rad/init_git.go
-- [ ] T021 [US1] Implement Git repository verification in rad init (check .git/ or git rev-parse)
-- [ ] T022 [US1] Implement directory structure creation (.radius/, .radius/config/, .radius/model/, .radius/plan/, .radius/deploy/)
-- [ ] T023 [US1] Implement Resource Types population via sparse-checkout from resource-types-contrib
-- [ ] T024 [US1] Implement existing .env file detection and validation
-- [ ] T025 [US1] Implement interactive prompts for container platform selection (Kubernetes/ACI) using Bubble Tea
-- [ ] T026 [US1] Implement interactive prompts for other resources platform selection (K8s/AWS/Azure)
-- [ ] T027 [US1] Implement deployment tool detection (terraform CLI, bicep CLI)
-- [ ] T028 [US1] Implement .env file creation/update with collected configuration
-- [ ] T029 [US1] Implement default recipes.yaml generation in .radius/config/recipes/
-- [ ] T030 [US1] Implement workspace switch to `git` in ~/.rad/config.yaml
-- [ ] T031 [US1] Implement re-initialization warning when .radius/ exists
-- [ ] T032 [US1] Implement success summary output with next steps
-- [ ] T033 [US1] Implement error handling for network/auth failures during Resource Types fetch
+- [X] T020 [US1] Create rad init command skeleton in pkg/cli/cmd/rad/init_git.go
+- [X] T021 [US1] Implement Git repository verification in rad init (check .git/ or git rev-parse)
+- [X] T022 [US1] Implement directory structure creation (.radius/, .radius/config/, .radius/model/, .radius/plan/, .radius/deploy/)
+- [X] T023 [US1] Implement Resource Types population via sparse-checkout from resource-types-contrib
+- [X] T024 [US1] Implement existing .env file detection and validation
+- [X] T025 [US1] Implement interactive prompts for container platform selection (Kubernetes/ACI) using Bubble Tea
+- [X] T026 [US1] Implement interactive prompts for other resources platform selection (K8s/AWS/Azure)
+- [X] T027 [US1] Implement deployment tool detection (terraform CLI, bicep CLI)
+- [X] T028 [US1] Implement .env file creation/update with collected configuration
+- [X] T029 [US1] Implement default recipes.yaml generation in .radius/config/recipes/
+- [X] T030 [US1] Implement workspace switch to `git` in ~/.rad/config.yaml
+- [X] T031 [US1] Implement re-initialization warning when .radius/ exists
+- [X] T032 [US1] Implement success summary output with next steps
+- [X] T033 [US1] Implement error handling for network/auth failures during Resource Types fetch
 
 **Checkpoint**: User Story 1 complete - `rad init` fully functional
 
@@ -105,25 +105,25 @@ Based on plan.md, the source structure is:
 
 ### Implementation for User Story 2
 
-- [ ] T034 [US2] Create Plan and DeploymentStep structs in pkg/cli/git/plan/types.go
-- [ ] T035 [P] [US2] Create RecipeVersion struct for change detection in pkg/cli/git/plan/types.go
-- [ ] T036 [US2] Create rad plan command skeleton in pkg/cli/cmd/rad/plan.go
-- [ ] T037 [US2] Implement Bicep file parsing to extract Application resource name
-- [ ] T038 [US2] Implement environment auto-selection (single env) vs required flag (multiple envs)
-- [ ] T039 [US2] Implement recipe lookup for each Application Resource type
-- [ ] T040 [US2] Implement recipe version pinning validation (--allow-unpinned-recipes flag)
-- [ ] T041 [US2] Implement Terraform artifact generation (main.tf, terraform.tfvars) in pkg/cli/git/plan/terraform.go
-- [ ] T042 [US2] Implement terraform init execution using terraform-exec in pkg/cli/git/plan/terraform.go
-- [ ] T043 [US2] Implement terraform plan execution and output capture in pkg/cli/git/plan/terraform.go
-- [ ] T044 [US2] Implement terraform-context.log generation in pkg/cli/git/plan/terraform.go
+- [X] T034 [US2] Create Plan and DeploymentStep structs in pkg/cli/git/plan/types.go
+- [X] T035 [P] [US2] Create RecipeVersion struct for change detection in pkg/cli/git/plan/types.go
+- [X] T036 [US2] Create rad plan command skeleton in pkg/cli/cmd/rad/plan.go
+- [X] T037 [US2] Implement Bicep file parsing to extract Application resource name
+- [X] T038 [US2] Implement environment auto-selection (single env) vs required flag (multiple envs)
+- [X] T039 [US2] Implement recipe lookup for each Application Resource type
+- [X] T040 [US2] Implement recipe version pinning validation (--allow-unpinned-recipes flag)
+- [X] T041 [US2] Implement Terraform artifact generation (main.tf, terraform.tfvars) in pkg/cli/git/plan/terraform.go
+- [X] T042 [US2] Implement terraform init execution using terraform-exec in pkg/cli/git/plan/terraform.go
+- [X] T043 [US2] Implement terraform plan execution and output capture in pkg/cli/git/plan/terraform.go
+- [X] T044 [US2] Implement terraform-context.log generation in pkg/cli/git/plan/terraform.go
 - [ ] T045 [P] [US2] Implement Bicep artifact generation (.bicep, .bicepparam) in pkg/cli/git/plan/bicep.go
 - [ ] T046 [P] [US2] Implement bicep build validation in pkg/cli/git/plan/bicep.go
 - [ ] T047 [P] [US2] Implement az deployment group what-if execution in pkg/cli/git/plan/bicep.go
 - [ ] T048 [P] [US2] Implement bicep-context.log generation in pkg/cli/git/plan/bicep.go
-- [ ] T049 [US2] Implement plan.yaml manifest generation in pkg/cli/git/plan/manifest.go
-- [ ] T050 [US2] Implement recipe version change detection and warning
-- [ ] T051 [US2] Implement plan output directory structure (.radius/plan/<app>/<env>/<seq>-<name>-<tool>/)
-- [ ] T052 [US2] Implement success summary output with next steps
+- [X] T049 [US2] Implement plan.yaml manifest generation in pkg/cli/git/plan/manifest.go
+- [X] T050 [US2] Implement recipe version change detection and warning
+- [X] T051 [US2] Implement plan output directory structure (.radius/plan/<app>/<env>/<seq>-<name>-<tool>/)
+- [X] T052 [US2] Implement success summary output with next steps
 
 **Checkpoint**: User Story 2 complete - `rad plan` fully functional
 
@@ -137,31 +137,31 @@ Based on plan.md, the source structure is:
 
 ### Implementation for User Story 3
 
-- [ ] T053 [US3] Create DeploymentRecord and related structs in pkg/cli/git/deploy/types.go
-- [ ] T054 [P] [US3] Create ApplicationResourceResult and CloudResource structs in pkg/cli/git/deploy/types.go
-- [ ] T055 [US3] Create rad deploy command skeleton in pkg/cli/cmd/rad/deploy_git.go
-- [ ] T056 [US3] Implement environment variable validation (AWS_ACCOUNT_ID, AZURE_CLIENT_ID, etc.)
-- [ ] T057 [US3] Implement Kubernetes configuration validation (kubeconfig, context, connectivity)
-- [ ] T058 [US3] Implement uncommitted changes detection in .radius/plan/
-- [ ] T059 [US3] Implement commit/tag argument parsing and validation
-- [ ] T060 [US3] Implement GitHub Actions detection (GITHUB_ACTIONS=true, GITHUB_SHA)
-- [ ] T061 [US3] Implement deployment confirmation prompt with environment details
-- [ ] T062 [US3] Implement -y flag for non-interactive deployment
-- [ ] T063 [US3] Implement Terraform deployment execution using terraform-exec in pkg/cli/git/deploy/executor.go
+- [X] T053 [US3] Create DeploymentRecord and related structs in pkg/cli/git/deploy/types.go
+- [X] T054 [P] [US3] Create ApplicationResourceResult and CloudResource structs in pkg/cli/git/deploy/types.go
+- [X] T055 [US3] Create rad deploy command skeleton in pkg/cli/cmd/rad/deploy_git.go
+- [X] T056 [US3] Implement environment variable validation (AWS_ACCOUNT_ID, AZURE_CLIENT_ID, etc.)
+- [X] T057 [US3] Implement Kubernetes configuration validation (kubeconfig, context, connectivity)
+- [X] T058 [US3] Implement uncommitted changes detection in .radius/plan/
+- [X] T059 [US3] Implement commit/tag argument parsing and validation
+- [X] T060 [US3] Implement GitHub Actions detection (GITHUB_ACTIONS=true, GITHUB_SHA)
+- [X] T061 [US3] Implement deployment confirmation prompt with environment details
+- [X] T062 [US3] Implement -y flag for non-interactive deployment
+- [X] T063 [US3] Implement Terraform deployment execution using terraform-exec in pkg/cli/git/deploy/executor.go
 - [ ] T064 [US3] Implement Bicep deployment execution (az deployment group create) in pkg/cli/git/deploy/executor.go
-- [ ] T065 [US3] Implement deployment progress display with spinner
-- [ ] T066 [US3] Implement stop-on-failure semantics (no auto-rollback)
+- [X] T065 [US3] Implement deployment progress display with spinner
+- [X] T066 [US3] Implement stop-on-failure semantics (no auto-rollback)
 - [ ] T067 [US3] Implement Azure resource capture (az resource show) in pkg/cli/git/deploy/capture.go
 - [ ] T068 [P] [US3] Implement AWS resource capture from Terraform state in pkg/cli/git/deploy/capture.go
-- [ ] T069 [P] [US3] Implement Kubernetes resource capture via K8s API in pkg/cli/git/deploy/capture.go
-- [ ] T070 [US3] Implement DeploymentRecord JSON generation in pkg/cli/git/deploy/record.go
-- [ ] T071 [US3] Implement deployment record storage (.radius/deploy/<app>/<env>/deployment-<commit>.json)
-- [ ] T072 [US3] Implement auto-staging of deployment records (git add .radius/deploy/)
+- [X] T069 [P] [US3] Implement Kubernetes resource capture via K8s API in pkg/cli/git/deploy/capture.go
+- [X] T070 [US3] Implement DeploymentRecord JSON generation in pkg/cli/git/deploy/record.go
+- [X] T071 [US3] Implement deployment record storage (.radius/deploy/<app>/<env>/deployment-<commit>.json)
+- [X] T072 [US3] Implement auto-staging of deployment records (git add .radius/deploy/)
 - [ ] T073 [US3] Implement --commit flag for automatic commit after deployment
 - [ ] T074 [US3] Implement --message/-m flag for custom commit message
 - [ ] T075 [US3] Implement --quiet flag for suppressed progress output
-- [ ] T076 [US3] Implement success summary output with next steps
-- [ ] T077 [US3] Implement detailed error output for deployment failures
+- [X] T076 [US3] Implement success summary output with next steps
+- [X] T077 [US3] Implement detailed error output for deployment failures
 
 **Checkpoint**: User Story 3 complete - `rad deploy` fully functional
 
