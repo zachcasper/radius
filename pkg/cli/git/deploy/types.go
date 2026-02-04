@@ -150,31 +150,14 @@ type ChangesSummary struct {
 	Destroy int `json:"destroy"`
 }
 
-// CapturedResource represents a Kubernetes resource captured after deployment.
+// CapturedResource represents a reference to a Kubernetes resource captured after deployment.
+// The actual manifest is stored in a separate YAML file.
 type CapturedResource struct {
 	// ResourceID is the unique identifier for this resource (namespace/type/name).
 	ResourceID string `json:"resourceId"`
 
-	// ResourceType is the Kubernetes resource type (deployment, service, etc.).
-	ResourceType string `json:"resourceType"`
-
-	// Provider is the cloud provider (kubernetes, azure, aws, gcp).
-	Provider string `json:"provider"`
-
-	// Name is the resource name.
-	Name string `json:"name"`
-
-	// Namespace is the Kubernetes namespace.
-	Namespace string `json:"namespace"`
-
-	// RadiusResourceType is the Radius resource type that created this.
-	RadiusResourceType string `json:"radiusResourceType"`
-
-	// DeploymentStep is the step number that created this resource.
-	DeploymentStep int `json:"deploymentStep"`
-
-	// RawManifest is the captured manifest as a structured JSON object.
-	RawManifest any `json:"rawManifest"`
+	// ResourceDefinitionFile is the path to the YAML file containing the resource manifest.
+	ResourceDefinitionFile string `json:"resourceDefinitionFile"`
 }
 
 // DeploymentSummary contains summary statistics for the deployment.

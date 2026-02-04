@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,7 @@ type TerraformExecutor struct {
 	// ResourceName is the name of the resource being deployed.
 	ResourceName string
 
-	// ResourceType is the type of the resource being deployed.
+	// ResourceType is the type of the resource being deployed (with API version).
 	ResourceType string
 
 	// RecipeName is the name of the recipe.
@@ -55,6 +56,9 @@ type TerraformExecutor struct {
 
 	// Sequence is the step sequence number.
 	Sequence int
+
+	// DeployDir is the directory where deployment artifacts are saved.
+	DeployDir string
 }
 
 // NewTerraformExecutor creates a new TerraformExecutor.
@@ -88,6 +92,12 @@ func (e *TerraformExecutor) WithKubernetes(namespace, kubeContext string) *Terra
 // WithSequence sets the step sequence number.
 func (e *TerraformExecutor) WithSequence(seq int) *TerraformExecutor {
 	e.Sequence = seq
+	return e
+}
+
+// WithDeployDir sets the deployment directory for saving resource manifests.
+func (e *TerraformExecutor) WithDeployDir(dir string) *TerraformExecutor {
+	e.DeployDir = dir
 	return e
 }
 
@@ -211,7 +221,7 @@ func (e *TerraformExecutor) Execute(ctx context.Context) (*deploy.StepResult, er
 	return result, nil
 }
 
-// captureKubernetesResource captures a Kubernetes resource from the cluster.
+// captureKubernetesResource captures a Kubernetes resource from the cluster and saves it to a YAML file.
 func (e *TerraformExecutor) captureKubernetesResource(ctx context.Context, resource *tfjson.StateResource) *deploy.CapturedResource {
 	// Extract resource type from terraform type (e.g., kubernetes_deployment -> deployment)
 	resourceType := strings.TrimPrefix(resource.Type, "kubernetes_")
@@ -231,33 +241,34 @@ func (e *TerraformExecutor) captureKubernetesResource(ctx context.Context, resou
 		return nil
 	}
 
-	// Build kubectl command to get resource as JSON
-	args := []string{"get", resourceType, name, "-n", namespace, "-o", "json"}
+	// Build kubectl command to get resource as YAML
+	args := []string{"get", resourceType, name, "-n", namespace, "-o", "yaml"}
 	if e.KubeContext != "" {
 		args = append([]string{"--context", e.KubeContext}, args...)
 	}
 
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
-	output, err := cmd.Output()
+	yamlOutput, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
 
-	// Parse JSON output into structured object
-	var manifest any
-	if err := json.Unmarshal(output, &manifest); err != nil {
-		return nil
+	// Generate filename: <resource-type>-<name>.yaml
+	filename := fmt.Sprintf("%s-%s.yaml", resourceType, name)
+
+	// Save YAML to file in deploy directory if specified
+	if e.DeployDir != "" {
+		filePath := filepath.Join(e.DeployDir, filename)
+		if err := os.WriteFile(filePath, yamlOutput, 0644); err != nil {
+			return nil
+		}
 	}
 
+	resourceID := fmt.Sprintf("%s/%s/%s", namespace, resourceType, name)
+
 	return &deploy.CapturedResource{
-		ResourceID:         fmt.Sprintf("%s/%s/%s", namespace, resourceType, name),
-		ResourceType:       resourceType,
-		Provider:           "kubernetes",
-		Name:               name,
-		Namespace:          namespace,
-		RadiusResourceType: e.ResourceType,
-		DeploymentStep:     e.Sequence,
-		RawManifest:        manifest,
+		ResourceID:             resourceID,
+		ResourceDefinitionFile: filename,
 	}
 }
 

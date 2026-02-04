@@ -290,27 +290,36 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Generate artifacts for each deployable resource
 	for i, resource := range deployableResources {
-		// Strip API version from resource type (e.g., "Applications.Compute/containers@2023-10-01-preview" -> "Radius.Compute/containers")
+		// Preserve full resource type with API version (e.g., "Applications.Compute/containers@2023-10-01-preview")
+		// Convert Applications.* to Radius.* for consistency
 		resourceType := resource.Type
+		resourceTypeWithoutVersion := resourceType
+		apiVersion := ""
 		if idx := strings.Index(resourceType, "@"); idx > 0 {
-			resourceType = resourceType[:idx]
+			resourceTypeWithoutVersion = resourceType[:idx]
+			apiVersion = resourceType[idx+1:]
 		}
 		// Convert Applications.* to Radius.* for display
-		if strings.HasPrefix(resourceType, "Applications.") {
-			resourceType = "Radius." + strings.TrimPrefix(resourceType, "Applications.")
+		if strings.HasPrefix(resourceTypeWithoutVersion, "Applications.") {
+			resourceTypeWithoutVersion = "Radius." + strings.TrimPrefix(resourceTypeWithoutVersion, "Applications.")
+		}
+		// Reconstruct full type with API version
+		fullResourceType := resourceTypeWithoutVersion
+		if apiVersion != "" {
+			fullResourceType = resourceTypeWithoutVersion + "@" + apiVersion
 		}
 
 		step := plan.DeploymentStep{
 			Sequence: i + 1,
 			Resource: plan.ResourceInfo{
 				Name:       resource.SymbolicName,
-				Type:       resourceType,
+				Type:       fullResourceType,
 				Properties: resource.Properties,
 			},
 			Status: "planned",
 		}
 
-		// Look up recipe source from recipes config based on resource type
+		// Look up recipe source from recipes config based on resource type (without version)
 		var recipeLocation string
 		var recipeKind string
 		if r.Options.Recipes != nil {
@@ -320,16 +329,16 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		}
 
-		// Set recipe info - name is the resource type, not "default"
+		// Set recipe info - name is the resource type without version, not "default"
 		if recipeLocation != "" {
 			step.Recipe = plan.RecipeReference{
-				Name:     resourceType,
+				Name:     resourceTypeWithoutVersion,
 				Kind:     recipeKind,
 				Location: recipeLocation,
 			}
 		} else if resource.Recipe != nil {
 			step.Recipe = plan.RecipeReference{
-				Name:     resourceType,
+				Name:     resourceTypeWithoutVersion,
 				Kind:     resource.Recipe.Kind,
 				Location: resource.Recipe.Source,
 			}
@@ -363,7 +372,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		r.restoreStateFile(resource.SymbolicName, outputDir)
 
 		// Run terraform init and plan
-		r.Output.LogInfo("   📦 %s (%s)", resource.SymbolicName, resourceType)
+		r.Output.LogInfo("   📦 %s (%s)", resource.SymbolicName, resourceTypeWithoutVersion)
 
 		planResult, err := generator.InitAndPlan(ctx)
 		if err != nil {

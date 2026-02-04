@@ -194,49 +194,38 @@ func (d *Differ) DiffCommitToLive(ctx context.Context, commit string) (*DiffResu
 		return nil, fmt.Errorf("failed to create manifest capture: %w", err)
 	}
 
+	// Get deployment directory for reading YAML files
+	deployDir := filepath.Dir(deploymentPath)
+
 	// Compare each captured resource against live state
 	for _, step := range record.Steps {
 		for _, captured := range step.CapturedResources {
+			// Parse resource ID (format: namespace/kind/name)
+			namespace, kind, name, err := kubernetes.ParseResourceID(captured.ResourceID)
+			if err != nil {
+				continue
+			}
+
 			// Get live manifest
-			liveManifest, err := capture.GetRawManifest(ctx, captured.ResourceType, captured.Name, captured.Namespace)
+			liveManifest, err := capture.GetRawManifest(ctx, kind, name, namespace)
 			if err != nil {
 				// Resource may have been deleted
 				result.ManifestDiffs = append(result.ManifestDiffs, ManifestDiff{
-					Kind:      captured.ResourceType,
-					Name:      captured.Name,
-					Namespace: captured.Namespace,
+					Kind:      kind,
+					Name:      name,
+					Namespace: namespace,
 					Change:    ChangeRemoved,
 				})
 				result.HasDiff = true
 				continue
 			}
 
-			// Compare manifests - convert captured manifest to YAML string for comparison
-			var capturedYAML string
-			switch v := captured.RawManifest.(type) {
-			case string:
-				capturedYAML = v
-			case map[string]any, []any:
-				yamlBytes, err := yaml.Marshal(v)
-				if err != nil {
-					continue
-				}
-				capturedYAML = string(yamlBytes)
-			default:
-				jsonBytes, err := json.Marshal(v)
-				if err != nil {
-					continue
-				}
-				var obj any
-				if err := json.Unmarshal(jsonBytes, &obj); err != nil {
-					continue
-				}
-				yamlBytes, err := yaml.Marshal(obj)
-				if err != nil {
-					continue
-				}
-				capturedYAML = string(yamlBytes)
+			// Read captured YAML from the resource definition file
+			capturedYAML, err := d.getFileAtCommit(ctx, commit, filepath.Join(deployDir, captured.ResourceDefinitionFile))
+			if err != nil {
+				continue
 			}
+
 			diffs, dyffOutput, err := DiffStrings(capturedYAML, liveManifest)
 			if err != nil {
 				continue
@@ -244,9 +233,9 @@ func (d *Differ) DiffCommitToLive(ctx context.Context, commit string) (*DiffResu
 
 			if len(diffs) > 0 {
 				result.ManifestDiffs = append(result.ManifestDiffs, ManifestDiff{
-					Kind:          captured.ResourceType,
-					Name:          captured.Name,
-					Namespace:     captured.Namespace,
+					Kind:          kind,
+					Name:          name,
+					Namespace:     namespace,
 					Change:        ChangeModified,
 					PropertyDiffs: diffs,
 					DyffOutput:    dyffOutput,

@@ -237,10 +237,16 @@ func (r *GitRunner) RunGit(ctx context.Context) error {
 	}
 	r.Output.LogInfo("")
 
-	// Create deployment record
+	// Create deployment record and deploy directory
 	record := r.createDeploymentRecord()
 	startTime := time.Now()
 	totalSteps := len(r.Options.Plan.Steps)
+
+	// Create deploy directory for captured resource manifests
+	deployDir := filepath.Join(r.WorkDir, ".radius", "deploy", r.Options.Application, r.Options.Environment)
+	if err := os.MkdirAll(deployDir, 0755); err != nil {
+		return &gitExitError{message: fmt.Sprintf("failed to create deploy directory: %v", err)}
+	}
 
 	// Execute each step
 	for i, step := range r.Options.Plan.Steps {
@@ -254,7 +260,8 @@ func (r *GitRunner) RunGit(ctx context.Context) error {
 		exec := executor.NewTerraformExecutor(stepPath).
 			WithResource(step.Resource.Name, step.Resource.Type).
 			WithSequence(step.Sequence).
-			WithKubernetes(r.Options.KubernetesNamespace, r.Options.KubernetesContext)
+			WithKubernetes(r.Options.KubernetesNamespace, r.Options.KubernetesContext).
+			WithDeployDir(deployDir)
 
 		if step.Recipe.Name != "" {
 			exec.WithRecipe(step.Recipe.Name, step.Recipe.Location)
