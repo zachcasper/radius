@@ -140,6 +140,7 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 // Run executes the initialization.
 func (r *Runner) Run(ctx context.Context) error {
 	// Always show welcome message first
+	r.Output.LogInfo("")
 	r.Output.LogInfo("🌟 Welcome to Radius!")
 	r.Output.LogInfo("")
 	r.Output.LogInfo("rad init sets up your Git repository to use Radius.")
