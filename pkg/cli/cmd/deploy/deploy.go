@@ -36,6 +36,7 @@ import (
 	"github.com/radius-project/radius/pkg/cli/filesystem"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/output"
+	"github.com/radius-project/radius/pkg/cli/prompt"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
 	"github.com/radius-project/radius/pkg/corerp/api/v20231001preview"
 	"github.com/radius-project/radius/pkg/corerp/api/v20250801preview"
@@ -158,6 +159,7 @@ type Runner struct {
 	RadiusCoreClientFactory *v20250801preview.ClientFactory
 	Deploy                  deploy.Interface
 	Output                  output.Interface
+	Prompter                prompt.Interface
 
 	ApplicationName     string
 	EnvironmentNameOrID string
@@ -167,6 +169,9 @@ type Runner struct {
 	Workspace           *workspaces.Workspace
 	Providers           *clients.Providers
 	EnvResult           *EnvironmentCheckResult
+
+	// GitModeComplete indicates that Git workspace mode was executed and Run() should be skipped.
+	GitModeComplete bool
 }
 
 // NewRunner creates a new instance of the `rad deploy` runner.
@@ -177,6 +182,7 @@ func NewRunner(factory framework.Factory) *Runner {
 		ConfigHolder:      factory.GetConfigHolder(),
 		Deploy:            factory.GetDeploy(),
 		Output:            factory.GetOutput(),
+		Prompter:          factory.GetPrompter(),
 		Providers:         &clients.Providers{},
 	}
 }
@@ -283,6 +289,11 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 // Run deploys a Bicep template into an environment from a workspace, optionally creating an application if
 // specified, and displays progress and completion messages. It returns an error if any of the operations fail.
 func (r *Runner) Run(ctx context.Context) error {
+	// Skip if Git workspace mode was already executed
+	if r.GitModeComplete {
+		return nil
+	}
+
 	// Use the template that was prepared during validation
 	template := r.Template
 
@@ -718,7 +729,7 @@ func (r *Runner) configureProviders() error {
 	return nil
 }
 
-// validateGitWorkspaceMode validates Git workspace mode deploy requirements
+// validateGitWorkspaceMode validates Git workspace mode deploy requirements and runs the deployment
 func (r *Runner) validateGitWorkspaceMode(cmd *cobra.Command) error {
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -733,36 +744,56 @@ func (r *Runner) validateGitWorkspaceMode(cmd *cobra.Command) error {
 
 	// Auto-detect environment
 	environment, _ := cmd.Flags().GetString("environment")
-	if environment == "" {
-		environment = detectEnvironment(workDir)
+
+	// Create GitRunner
+	gitRunner := NewGitRunner(r.Output, r.Prompter, workDir)
+
+	// Parse flags
+	gitRunner.Yes, _ = cmd.Flags().GetBool("yes")
+	gitRunner.NoAutoCommit, _ = cmd.Flags().GetBool("auto-commit")
+	gitRunner.NoAutoCommit = !gitRunner.NoAutoCommit // Invert: --auto-commit flag enables commit
+
+	// Load plan
+	if err := gitRunner.LoadPlan(environment); err != nil {
+		return &deployExitError{message: fmt.Sprintf("❌ %s", err.Error())}
 	}
 
-	// Check for plan
-	planDir := filepath.Join(workDir, ".radius", "plan", environment)
-	planPath := filepath.Join(planDir, "plan.yaml")
-
-	if _, err := os.Stat(planPath); os.IsNotExist(err) {
-		return &deployExitError{message: "❌ No deployment plan found\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan."}
+	// Run deployment
+	ctx := cmd.Context()
+	if err := gitRunner.RunGit(ctx); err != nil {
+		return err
 	}
 
-	// Git workspace mode validation passed but actual execution not implemented
-	// Return a friendly error indicating the plan exists but deploy is not implemented yet
-	return &deployExitError{message: "❌ No deployment plan found\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan."}
+	// Mark Git mode as complete so Run() knows to skip
+	r.GitModeComplete = true
+	return nil
 }
 
 // detectEnvironment auto-detects the environment from existing plans
+// Plan structure: .radius/plan/<app>/<environment>/plan.yaml
 func detectEnvironment(workDir string) string {
 	planBaseDir := filepath.Join(workDir, ".radius", "plan")
-	entries, err := os.ReadDir(planBaseDir)
+	appDirs, err := os.ReadDir(planBaseDir)
 	if err != nil {
 		return "default"
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			planPath := filepath.Join(planBaseDir, entry.Name(), "plan.yaml")
+	for _, appEntry := range appDirs {
+		if !appEntry.IsDir() {
+			continue
+		}
+		appPath := filepath.Join(planBaseDir, appEntry.Name())
+		envDirs, err := os.ReadDir(appPath)
+		if err != nil {
+			continue
+		}
+		for _, envEntry := range envDirs {
+			if !envEntry.IsDir() {
+				continue
+			}
+			planPath := filepath.Join(appPath, envEntry.Name(), "plan.yaml")
 			if _, err := os.Stat(planPath); err == nil {
-				return entry.Name()
+				return envEntry.Name()
 			}
 		}
 	}
