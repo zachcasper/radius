@@ -39,32 +39,32 @@ func getRecipesContent(platform, tool string) string {
 #   - recipeKind: Either "terraform" or "bicep"
 #   - recipeLocation: Git URL, OCI ref, or file path to the recipe module
 
-# TODO: Add git tags (?ref=v1.0.0)
+# TODO: Add OCI label (?v1.0.0)
 
 recipes:
   - resourceType: Radius.Compute/containers
-    recipeKind: terraform
-    recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git//Compute/containers/recipes/kubernetes/terraform
+    recipeKind: ` + tool + `
+    recipeLocation: TODO
   
   - resourceType: Radius.Compute/persistentVolumes
-    recipeKind: terraform
-    recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git//Compute/persistentVolumes/recipes/kubernetes/terraform
+    recipeKind: ` + tool + `
+    recipeLocation: TODO
   
   - resourceType: Radius.Compute/routes
-    recipeKind: terraform
-    recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git/Compute/routes/recipes/kubernetes/terraform
+    recipeKind: ` + tool + `
+    recipeLocation: TODO
 
   - resourceType: Radius.Data/mySqlDatabases
-    recipeKind: terraform
-    recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git//Data/mySqlDatabases/recipes/kubernetes/terraform
+    recipeKind: ` + tool + `
+    recipeLocation: TODO
 
   - resourceType: Radius.Data/postgreSqlDatabases
-    recipeKind: terraform
-    recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git//Data/postgreSqlDatabases/recipes/kubernetes/terraform
+    recipeKind: ` + tool + `
+    recipeLocation: TODO
     
   - resourceType: Radius.Security/secrets
-    recipeKind: terraform
-    recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git//Security/secrets/recipes/kubernetes/terraform
+    recipeKind: ` + tool + `
+    recipeLocation: TODO
 `
 }
 

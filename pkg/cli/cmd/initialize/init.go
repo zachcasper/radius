@@ -18,6 +18,7 @@ package initialize
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,7 +28,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/radius-project/radius/pkg/cli/clierrors"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/prompt"
@@ -97,6 +97,21 @@ type Options struct {
 
 	// RecipeFile is the path to the recipes file.
 	RecipeFile string
+
+	// AWSAccountID is the AWS account ID.
+	AWSAccountID string
+
+	// AWSRegion is the AWS region.
+	AWSRegion string
+
+	// AzureSubscriptionID is the Azure subscription ID.
+	AzureSubscriptionID string
+
+	// AzureSubscriptionName is the Azure subscription display name.
+	AzureSubscriptionName string
+
+	// AzureResourceGroup is the Azure resource group.
+	AzureResourceGroup string
 }
 
 // NewRunner creates a new Runner.
@@ -119,28 +134,47 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.WorkDir = workDir
 
-	// Validate this is a Git repository
-	if _, err := os.Stat(filepath.Join(workDir, ".git")); os.IsNotExist(err) {
-		return clierrors.Message(`❌ Current directory is not a Git repository.
-
-Git workspace mode requires a Git repository.
-Please run 'git init' first, then retry 'rad init'.
-
-To install the Radius control plane on Kubernetes instead,
-run 'rad install kubernetes'.`)
-	}
-
 	return nil
 }
 
 // Run executes the initialization.
 func (r *Runner) Run(ctx context.Context) error {
+	// Always show welcome message first
 	r.Output.LogInfo("🌟 Welcome to Radius!")
 	r.Output.LogInfo("")
 	r.Output.LogInfo("rad init sets up your Git repository to use Radius.")
 	r.Output.LogInfo("")
 	r.Output.LogInfo("")
 	r.Output.LogInfo("")
+	r.Output.LogInfo("")
+
+	// Check if this is a Git repository
+	if _, err := os.Stat(filepath.Join(r.WorkDir, ".git")); os.IsNotExist(err) {
+		r.Output.LogInfo("❌ Current directory is not a Git repository.")
+		r.Output.LogInfo("")
+		r.Output.LogInfo("Git workspace mode requires a Git repository.")
+		r.Output.LogInfo("Please run 'git init' first, then retry 'rad init'.")
+		r.Output.LogInfo("")
+		r.Output.LogInfo("To install the Radius control plane on Kubernetes instead,")
+		r.Output.LogInfo("run 'rad install kubernetes'.")
+		return &initExitError{message: ""}
+	}
+
+	// Check if already initialized
+	radiusDir := filepath.Join(r.WorkDir, ".radius")
+	if _, err := os.Stat(radiusDir); err == nil {
+		r.Output.LogInfo("⚠️  Radius is already configured in this Git repository.")
+		r.Output.LogInfo("")
+
+		options := []string{"No", "Yes"}
+		selected, err := r.Prompter.GetListInput(options, "Re-running init may overwrite existing configuration. Continue?")
+		if err != nil {
+			return err
+		}
+		if selected == "No" {
+			return &initExitError{message: ""}
+		}
+	}
 
 	// Step 1: Create directory structure
 	if err := r.createDirectoryStructure(); err != nil {
@@ -165,27 +199,30 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 
-	// Step 5: Prompt for deployment tool if multiple available
+	// Step 5: Configure platform-specific settings (AWS account, Azure subscription, etc.)
+	if err := r.configurePlatform(); err != nil {
+		return err
+	}
+
+	// Step 6: Prompt for deployment tool if multiple available
 	if err := r.selectDeploymentTool(); err != nil {
 		return err
 	}
 
-	// Step 6: Configure Kubernetes if selected
-	if r.Options.Platform == "kubernetes" {
-		if err := r.configureKubernetes(); err != nil {
-			return err
-		}
+	// Step 7: Configure Kubernetes
+	if err := r.configureKubernetes(); err != nil {
+		return err
 	}
 
 	r.Output.LogInfo("  ✓ Configured deployment platform")
 
-	// Step 7: Create default recipes
+	// Step 8: Create default recipes
 	if err := r.createRecipes(); err != nil {
 		return err
 	}
 	r.Output.LogInfo("  ✓ Created default recipes")
 
-	// Step 8: Create environment configuration
+	// Step 9: Create environment configuration
 	if err := r.createEnvironmentConfig(); err != nil {
 		return err
 	}
@@ -295,14 +332,121 @@ func (r *Runner) selectPlatform() error {
 	return nil
 }
 
+// configurePlatform configures platform-specific settings.
+func (r *Runner) configurePlatform() error {
+	switch r.Options.Platform {
+	case "aws":
+		return r.configureAWS()
+	case "azure":
+		return r.configureAzure()
+	}
+	return nil
+}
+
+// configureAWS prompts for AWS configuration.
+func (r *Runner) configureAWS() error {
+	// Prompt for AWS Account ID configuration method
+	options := []string{
+		"Get account ID from AWS CLI (aws sts get-caller-identity)",
+		"Enter account ID manually",
+		"Configure later",
+	}
+	selected, err := r.Prompter.GetListInput(options, "How would you like to configure the AWS Account ID?")
+	if err != nil {
+		return err
+	}
+
+	switch selected {
+	case "Get account ID from AWS CLI (aws sts get-caller-identity)":
+		accountID := getAWSAccountID()
+		if accountID != "" {
+			r.Options.AWSAccountID = accountID
+		}
+	case "Enter account ID manually":
+		accountID, err := r.Prompter.GetTextInput("Enter AWS Account ID:", prompt.TextInputOptions{})
+		if err != nil {
+			return err
+		}
+		r.Options.AWSAccountID = accountID
+	}
+
+	// Prompt for AWS Region
+	detectedRegion := getAWSRegion()
+	if detectedRegion != "" {
+		options = []string{
+			fmt.Sprintf("Use detected region: %s", detectedRegion),
+			"Enter region manually",
+		}
+		selected, err = r.Prompter.GetListInput(options, "AWS Region:")
+		if err != nil {
+			return err
+		}
+
+		if strings.HasPrefix(selected, "Use detected region:") {
+			r.Options.AWSRegion = detectedRegion
+		} else {
+			region, err := r.Prompter.GetTextInput("Enter AWS Region:", prompt.TextInputOptions{})
+			if err != nil {
+				return err
+			}
+			r.Options.AWSRegion = region
+		}
+	} else {
+		region, err := r.Prompter.GetTextInput("Enter AWS Region:", prompt.TextInputOptions{})
+		if err != nil {
+			return err
+		}
+		r.Options.AWSRegion = region
+	}
+
+	return nil
+}
+
+// configureAzure prompts for Azure configuration.
+func (r *Runner) configureAzure() error {
+	// Get subscriptions from az account list
+	subscriptions := getAzureSubscriptions()
+
+	if len(subscriptions) > 0 {
+		selected, err := r.Prompter.GetListInput(subscriptions, "Select Azure subscription:")
+		if err != nil {
+			return err
+		}
+
+		// Parse selection to extract subscription ID
+		// Format: "Name (id) [default]" or "Name (id)"
+		r.Options.AzureSubscriptionName = selected
+		if start := strings.LastIndex(selected, "("); start != -1 {
+			if end := strings.LastIndex(selected, ")"); end != -1 && end > start {
+				r.Options.AzureSubscriptionID = selected[start+1 : end]
+			}
+		}
+	}
+
+	// Prompt for resource group
+	resourceGroup, err := r.Prompter.GetTextInput("Azure Resource Group (leave empty to configure later):", prompt.TextInputOptions{})
+	if err != nil {
+		return err
+	}
+	r.Options.AzureResourceGroup = resourceGroup
+
+	return nil
+}
+
 // selectDeploymentTool prompts for deployment tool selection.
 func (r *Runner) selectDeploymentTool() error {
 	// Check which tools are available
 	hasTerraform := commandExists("terraform")
-	hasBicep := commandExists("az") // bicep usually comes with az cli
+	hasBicep := commandExists("bicep")
 
-	// Default to terraform
-	r.Options.DeploymentTool = "terraform"
+	// Default based on what's available
+	if hasTerraform {
+		r.Options.DeploymentTool = "terraform"
+	} else if hasBicep {
+		r.Options.DeploymentTool = "bicep"
+	} else {
+		r.Options.DeploymentTool = "terraform" // Default
+	}
 
 	if hasTerraform && hasBicep {
 		options := []string{"Terraform", "Bicep"}
@@ -313,9 +457,9 @@ func (r *Runner) selectDeploymentTool() error {
 
 		if selected == "Bicep" {
 			r.Options.DeploymentTool = "bicep"
+		} else {
+			r.Options.DeploymentTool = "terraform"
 		}
-	} else if hasBicep && !hasTerraform {
-		r.Options.DeploymentTool = "bicep"
 	}
 
 	return nil
@@ -484,4 +628,69 @@ func getResourceTypeNames() []string {
 		"Radius.Data/postgreSqlDatabases",
 		"Radius.Security/secrets",
 	}
+}
+
+// getAWSAccountID gets the AWS account ID from aws sts get-caller-identity
+func getAWSAccountID() string {
+	cmd := exec.Command("aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// getAWSRegion gets the AWS region from the config file
+func getAWSRegion() string {
+	cmd := exec.Command("aws", "configure", "get", "region")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// getAzureSubscriptions gets the list of Azure subscriptions
+func getAzureSubscriptions() []string {
+	cmd := exec.Command("az", "account", "list", "--query", "[].{name:name, id:id, isDefault:isDefault}", "-o", "json")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	// Parse JSON output
+	type subscription struct {
+		Name      string `json:"name"`
+		ID        string `json:"id"`
+		IsDefault bool   `json:"isDefault"`
+	}
+
+	var subs []subscription
+	if err := json.Unmarshal(out, &subs); err != nil {
+		return nil
+	}
+
+	var options []string
+	for _, sub := range subs {
+		label := fmt.Sprintf("%s (%s)", sub.Name, sub.ID)
+		if sub.IsDefault {
+			label += " [default]"
+		}
+		options = append(options, label)
+	}
+
+	return options
+}
+
+// initExitError is a friendly error that doesn't print TraceId.
+type initExitError struct {
+	message string
+}
+
+func (e *initExitError) Error() string {
+	return e.message
+}
+
+func (e *initExitError) IsFriendlyError() bool {
+	return true
 }
