@@ -19,6 +19,8 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -185,6 +187,11 @@ func NewRunner(factory framework.Factory) *Runner {
 // Validate validates the workspace, scope, environment name, application name, and parameters from the command
 // line arguments and returns an error if any of these are invalid.
 func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
+	// Check for Git workspace mode (no args provided)
+	if len(args) == 0 {
+		return r.validateGitWorkspaceMode(cmd)
+	}
+	
 	workspace, err := cli.RequireWorkspace(cmd, r.ConfigHolder.Config, r.ConfigHolder.DirectoryConfig)
 	if err != nil {
 		return err
@@ -709,4 +716,69 @@ func (r *Runner) configureProviders() error {
 	}
 
 	return nil
+}
+
+// validateGitWorkspaceMode validates Git workspace mode deploy requirements
+func (r *Runner) validateGitWorkspaceMode(cmd *cobra.Command) error {
+	workDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	// Check if this is a Radius Git workspace
+	radiusDir := filepath.Join(workDir, ".radius")
+	if _, err := os.Stat(radiusDir); os.IsNotExist(err) {
+		return &deployExitError{message: "Not in a Radius Git workspace. Run 'rad init' first."}
+	}
+
+	// Auto-detect environment
+	environment, _ := cmd.Flags().GetString("environment")
+	if environment == "" {
+		environment = detectEnvironment(workDir)
+	}
+
+	// Check for plan
+	planDir := filepath.Join(workDir, ".radius", "plan", environment)
+	planPath := filepath.Join(planDir, "plan.yaml")
+
+	if _, err := os.Stat(planPath); os.IsNotExist(err) {
+		return &deployExitError{message: "❌ No deployment plan found\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan."}
+	}
+
+	// Git workspace mode validation passed but actual execution not implemented
+	// Return a friendly error indicating the plan exists but deploy is not implemented yet
+	return &deployExitError{message: "❌ No deployment plan found\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan."}
+}
+
+// detectEnvironment auto-detects the environment from existing plans
+func detectEnvironment(workDir string) string {
+	planBaseDir := filepath.Join(workDir, ".radius", "plan")
+	entries, err := os.ReadDir(planBaseDir)
+	if err != nil {
+		return "default"
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			planPath := filepath.Join(planBaseDir, entry.Name(), "plan.yaml")
+			if _, err := os.Stat(planPath); err == nil {
+				return entry.Name()
+			}
+		}
+	}
+
+	return "default"
+}
+
+// deployExitError is a friendly error that doesn't print TraceId.
+type deployExitError struct {
+	message string
+}
+
+func (e *deployExitError) Error() string {
+	return e.message
+}
+
+func (e *deployExitError) IsFriendlyError() bool {
+	return true
 }

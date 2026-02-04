@@ -26,7 +26,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/radius-project/radius/pkg/cli/clierrors"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	gitdiff "github.com/radius-project/radius/pkg/cli/git/diff"
 	"github.com/radius-project/radius/pkg/cli/output"
@@ -170,9 +169,13 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.WorkDir = workDir
 
-	// Validate this is a Git repository
-	if _, err := os.Stat(filepath.Join(workDir, ".git")); os.IsNotExist(err) {
-		return clierrors.Message("This command must be run from a Git repository root.")
+	// Check if this is a Radius Git workspace
+	radiusDir := filepath.Join(workDir, ".radius")
+	if _, err := os.Stat(radiusDir); os.IsNotExist(err) {
+		return &diffExitError{
+			message:  "Not in a Radius Git workspace. Run 'rad init' first.",
+			exitCode: gitdiff.ExitCodeValidationError,
+		}
 	}
 
 	// Parse arguments
@@ -185,7 +188,10 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 		if strings.Contains(arg, "...") {
 			parts := strings.Split(arg, "...")
 			if len(parts) != 2 {
-				return clierrors.Message("Invalid comparison format. Use: <source>...<target>")
+				return &diffExitError{
+					message:  "Invalid comparison format. Use: <source>...<target>",
+					exitCode: gitdiff.ExitCodeValidationError,
+				}
 			}
 			r.Source = parts[0]
 			r.Target = parts[1]
@@ -208,15 +214,18 @@ func (r *Runner) Run(ctx context.Context) error {
 	var result *gitdiff.DiffResult
 	var err error
 
-	// Determine diff mode
+	// Determine diff mode and print header
 	if r.Target == "" {
 		// Uncommitted changes
+		r.Output.LogInfo("Comparing uncommitted changes against HEAD...")
 		result, err = differ.DiffUncommitted(ctx)
 	} else if r.Target == "live" {
 		// Drift detection
+		r.Output.LogInfo("Comparing %s against live infrastructure...", r.Source)
 		result, err = differ.DiffCommitToLive(ctx, r.Source)
 	} else {
 		// Two commits
+		r.Output.LogInfo("Comparing %s against %s...", r.Source, r.Target)
 		result, err = differ.DiffTwoCommits(ctx, r.Source, r.Target)
 	}
 
@@ -252,21 +261,21 @@ func (r *Runner) outputJSON(result *gitdiff.DiffResult) error {
 
 // outputHuman outputs the result in human-readable format.
 func (r *Runner) outputHuman(result *gitdiff.DiffResult) error {
+	// Print comparison header
+	source := result.Source
+	target := result.Target
+	if target == "working directory" {
+		source = "commit"
+		target = "uncommitted"
+	}
+	r.Output.LogInfo("Diff: %s -> %s", source, target)
+	r.Output.LogInfo("Application: %s, Environment: %s", result.Application, result.Environment)
+	r.Output.LogInfo("")
+
 	if !result.HasDiff {
-		r.Output.LogInfo("")
-		r.Output.LogInfo("✅ No differences found")
-		r.Output.LogInfo("   Application: %s", result.Application)
-		r.Output.LogInfo("   Environment: %s", result.Environment)
+		r.Output.LogInfo("No changes detected.")
 		return nil
 	}
-
-	r.Output.LogInfo("")
-	r.Output.LogInfo("⚠️ Differences detected")
-	r.Output.LogInfo("")
-	r.Output.LogInfo("Comparing: %s → %s", result.Source, result.Target)
-	r.Output.LogInfo("Application: %s", result.Application)
-	r.Output.LogInfo("Environment: %s", result.Environment)
-	r.Output.LogInfo("")
 
 	// Show plan differences
 	if len(result.PlanDiffs) > 0 {

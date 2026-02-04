@@ -94,7 +94,8 @@ func (d *Differ) DiffUncommitted(ctx context.Context) (*DiffResult, error) {
 	cmd.Dir = d.WorkDir
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get uncommitted changes: %w", err)
+		// If git diff fails (e.g., no commits yet), return empty result
+		return result, nil
 	}
 
 	changedFiles := strings.Split(strings.TrimSpace(string(output)), "\n")

@@ -27,7 +27,6 @@ import (
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 
-	"github.com/radius-project/radius/pkg/cli/clierrors"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/git/config"
 	"github.com/radius-project/radius/pkg/cli/git/plan"
@@ -158,9 +157,10 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	// Validate this is a Git workspace
-	if _, err := os.Stat(filepath.Join(workDir, ".git")); os.IsNotExist(err) {
-		return clierrors.Message("This command must be run from a Git repository root.")
+	// Check if this is a Radius Git workspace
+	radiusDir := filepath.Join(workDir, ".radius")
+	if _, err := os.Stat(radiusDir); os.IsNotExist(err) {
+		return &exitError{message: "Not in a Radius Git workspace. Run 'rad init' first."}
 	}
 
 	// Resolve model path
@@ -177,7 +177,7 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 
 	// Validate model file exists
 	if _, err := os.Stat(r.ModelPath); os.IsNotExist(err) {
-		return clierrors.Message("Model file not found: %s", r.ModelPath)
+		return &exitError{message: fmt.Sprintf("Model file not found: %s", r.ModelPath)}
 	}
 
 	r.Options = &Options{
@@ -342,11 +342,11 @@ func (r *Runner) resolveModelPath(workDir string) (string, error) {
 
 	files, err := plan.FindBicepFiles(modelDir)
 	if err != nil {
-		return "", clierrors.Message("No model files found. Specify a model file path or create .radius/model/*.bicep")
+		return "", &exitError{message: "❌ No model files found in .radius/model/\n\n   Create a Bicep model file or specify one explicitly:\n     rad plan path/to/model.bicep"}
 	}
 
 	if len(files) == 0 {
-		return "", clierrors.Message("No .bicep files found in .radius/model/. Specify a model file path.")
+		return "", &exitError{message: "❌ No model files found in .radius/model/\n\n   Create a Bicep model file or specify one explicitly:\n     rad plan path/to/model.bicep"}
 	}
 
 	if len(files) == 1 {

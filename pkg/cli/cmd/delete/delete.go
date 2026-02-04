@@ -28,7 +28,6 @@ import (
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
 
-	"github.com/radius-project/radius/pkg/cli/clierrors"
 	"github.com/radius-project/radius/pkg/cli/framework"
 	"github.com/radius-project/radius/pkg/cli/git/commit"
 	"github.com/radius-project/radius/pkg/cli/git/deploy"
@@ -146,9 +145,10 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.WorkDir = workDir
 
-	// Validate this is a Git repository
-	if _, err := os.Stat(filepath.Join(workDir, ".git")); os.IsNotExist(err) {
-		return clierrors.Message("This command must be run from a Git repository root.")
+	// Check if this is a Radius Git workspace
+	radiusDir := filepath.Join(workDir, ".radius")
+	if _, err := os.Stat(radiusDir); os.IsNotExist(err) {
+		return &deleteExitError{message: "Not in a Radius Git workspace. Run 'rad init' first."}
 	}
 
 	// Auto-detect environment if not specified
@@ -161,7 +161,7 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	planPath := filepath.Join(planDir, "plan.yaml")
 
 	if _, err := os.Stat(planPath); os.IsNotExist(err) {
-		return clierrors.Message("No plan found for environment '%s'. Run 'rad plan' first.", r.Environment)
+		return &deleteExitError{message: "❌ No deployment plan found\n\n   Run 'rad plan <model.bicep>' first to generate a deployment plan."}
 	}
 
 	planContent, err := os.ReadFile(planPath)
@@ -380,4 +380,17 @@ func (r *Runner) autoCommit(ctx context.Context, recordPath string) error {
 		Application: r.Options.Application,
 		Environment: r.Options.Environment,
 	})
+}
+
+// deleteExitError is a friendly error that doesn't print TraceId.
+type deleteExitError struct {
+	message string
+}
+
+func (e *deleteExitError) Error() string {
+	return e.message
+}
+
+func (e *deleteExitError) IsFriendlyError() bool {
+	return true
 }
