@@ -1,0 +1,495 @@
+/*
+Copyright 2023 The Radius Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package plan
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"sigs.k8s.io/yaml"
+
+	"github.com/radius-project/radius/pkg/cli/clierrors"
+	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
+	"github.com/radius-project/radius/pkg/cli/framework"
+	"github.com/radius-project/radius/pkg/cli/git/config"
+	"github.com/radius-project/radius/pkg/cli/git/plan"
+	"github.com/radius-project/radius/pkg/cli/git/repo"
+	"github.com/radius-project/radius/pkg/cli/output"
+	"github.com/radius-project/radius/pkg/cli/prompt"
+)
+
+// NewCommand creates the `rad plan` command.
+func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
+	runner := NewRunner(factory)
+
+	cmd := &cobra.Command{
+		Use:   "plan [model-file]",
+		Short: "Generate deployment plan from Bicep model",
+		Long: `Generate a deployment plan from a Bicep model file for Git workspace mode.
+
+This command parses the Bicep model, resolves recipes, and generates Terraform
+artifacts for each resource. The plan and artifacts are stored in .radius/plan/.
+
+If no model file is specified, rad plan will look for .bicep files in .radius/model/
+and use the file if only one exists, or prompt you to select if multiple exist.
+
+Examples:
+  # Generate plan from a specific model file
+  rad plan .radius/model/app.bicep
+
+  # Auto-detect model file in .radius/model/
+  rad plan
+
+  # Generate plan with auto-confirm (skip prompts)
+  rad plan -y`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: framework.RunCommand(runner),
+	}
+
+	// Add flags
+	cmd.Flags().BoolP("yes", "y", false, "Auto-confirm prompts (overwrite existing files)")
+	commonflags.AddOutputFlag(cmd)
+
+	return cmd, runner
+}
+
+// Runner implements the rad plan command.
+type Runner struct {
+	factory  framework.Factory
+	Output   output.Interface
+	Prompter prompt.Interface
+
+	// ModelPath is the path to the Bicep model file.
+	ModelPath string
+
+	// Yes indicates to auto-confirm prompts.
+	Yes bool
+
+	// OutputFormat is the output format (table, json).
+	OutputFormat string
+
+	// Options contains parsed options.
+	Options *Options
+
+	// preservedStateFiles contains terraform state files preserved during cleanup.
+	preservedStateFiles map[string][]byte
+}
+
+// Options contains parsed options for the plan command.
+type Options struct {
+	// WorkDir is the Git workspace directory.
+	WorkDir string
+
+	// BicepModel is the parsed Bicep model.
+	BicepModel *plan.BicepModel
+
+	// Application is the application name.
+	Application string
+
+	// Environment is the environment name.
+	Environment string
+
+	// EnvironmentFile is the path to the environment file.
+	EnvironmentFile string
+
+	// PlanDir is the directory for plan artifacts.
+	PlanDir string
+
+	// KubernetesNamespace is the Kubernetes namespace.
+	KubernetesNamespace string
+
+	// KubernetesContext is the Kubernetes context.
+	KubernetesContext string
+
+	// ResourceTypes is the loaded resource type registry.
+	ResourceTypes *config.ResourceTypeRegistry
+}
+
+// NewRunner creates a new Runner.
+func NewRunner(factory framework.Factory) *Runner {
+	return &Runner{
+		factory:             factory,
+		preservedStateFiles: make(map[string][]byte),
+	}
+}
+
+// Validate validates the command arguments and flags.
+func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
+	r.Output = r.factory.GetOutput()
+	r.Prompter = r.factory.GetPrompter()
+	r.Yes, _ = cmd.Flags().GetBool("yes")
+	r.OutputFormat, _ = cmd.Flags().GetString("output")
+
+	// Get working directory
+	workDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+
+	// Validate this is a Git workspace
+	if _, err := os.Stat(filepath.Join(workDir, ".git")); os.IsNotExist(err) {
+		return clierrors.Message("This command must be run from a Git repository root.")
+	}
+
+	// Resolve model path
+	if len(args) > 0 {
+		r.ModelPath = args[0]
+	} else {
+		// Auto-detect model file
+		modelPath, err := r.resolveModelPath(workDir)
+		if err != nil {
+			return err
+		}
+		r.ModelPath = modelPath
+	}
+
+	// Validate model file exists
+	if _, err := os.Stat(r.ModelPath); os.IsNotExist(err) {
+		return clierrors.Message("Model file not found: %s", r.ModelPath)
+	}
+
+	r.Options = &Options{
+		WorkDir: workDir,
+	}
+
+	return nil
+}
+
+// Run executes the plan command.
+func (r *Runner) Run(ctx context.Context) error {
+	r.Output.LogInfo("")
+	r.Output.LogInfo("📋 Generating deployment plan...")
+	r.Output.LogInfo("")
+
+	// Parse Bicep model
+	model, err := plan.ParseBicepFile(r.ModelPath)
+	if err != nil {
+		return &exitError{message: fmt.Sprintf("Failed to parse Bicep model: %v", err)}
+	}
+	r.Options.BicepModel = model
+
+	// Resolve all connections
+	model.ResolveAllConnections()
+
+	// Load resource types for validation
+	configDir := filepath.Join(r.Options.WorkDir, ".radius", "config")
+	r.Options.ResourceTypes, _ = config.LoadResourceTypes(configDir)
+
+	// Validate resources against schemas
+	if r.Options.ResourceTypes != nil {
+		for _, resource := range model.Resources {
+			errors := r.Options.ResourceTypes.ValidateResourceProperties(resource.Type, resource.Properties)
+			for _, err := range errors {
+				r.Output.LogInfo("⚠️  Validation warning: %s", err.Error())
+			}
+		}
+	}
+
+	// Determine application and environment
+	r.Options.Application = r.extractApplication(model)
+	r.Options.Environment, r.Options.EnvironmentFile = r.extractEnvironment()
+	r.Options.PlanDir = filepath.Join(r.Options.WorkDir, ".radius", "plan", r.Options.Environment)
+
+	// Check for existing plan files
+	if err := r.checkExistingPlanFiles(); err != nil {
+		return err
+	}
+
+	// Create plan
+	p := plan.NewPlan(r.Options.Application, r.Options.EnvironmentFile)
+
+	// Generate artifacts for each resource
+	resources := model.GetOrderedResources()
+	for i, resource := range resources {
+		step := plan.DeploymentStep{
+			Sequence: i + 1,
+			Resource: plan.ResourceInfo{
+				Name:       resource.SymbolicName,
+				Type:       resource.Type,
+				Properties: resource.Properties,
+			},
+		}
+
+		// Add recipe info if available
+		if resource.Recipe != nil {
+			step.Recipe = plan.RecipeReference{
+				Name:   resource.Recipe.Name,
+				Kind:   resource.Recipe.Kind,
+				Source: resource.Recipe.Source,
+			}
+		}
+
+		p.AddStep(step)
+
+		// Generate Terraform artifacts
+		stepDir := fmt.Sprintf("%03d-%s-terraform", i+1, resource.SymbolicName)
+		outputDir := filepath.Join(r.Options.PlanDir, stepDir)
+
+		generator := plan.NewTerraformGenerator(resource, model, outputDir).
+			WithApplication(r.Options.Application).
+			WithEnvironment(r.Options.Environment).
+			WithKubernetes(r.Options.KubernetesNamespace, r.Options.KubernetesContext)
+
+		if resource.Recipe != nil {
+			generator.WithRecipeSource(resource.Recipe.Source)
+		}
+
+		if err := generator.Generate(); err != nil {
+			return &exitError{message: fmt.Sprintf("Failed to generate artifacts for %s: %v", resource.SymbolicName, err)}
+		}
+
+		// Restore preserved state file if available
+		r.restoreStateFile(resource.SymbolicName, outputDir)
+
+		// Run terraform init and plan
+		r.Output.LogInfo("   📦 %s (%s)", resource.SymbolicName, resource.Type)
+
+		planResult, err := generator.InitAndPlan(ctx)
+		if err != nil {
+			return &exitError{message: fmt.Sprintf("Terraform plan failed for %s: %v", resource.SymbolicName, err)}
+		}
+
+		if planResult.HasChanges {
+			r.Output.LogInfo("      Changes: +%d ~%d -%d", planResult.Add, planResult.Change, planResult.Destroy)
+		} else {
+			r.Output.LogInfo("      No changes")
+		}
+	}
+
+	// Update plan summary
+	p.UpdateSummary()
+
+	// Write plan.yaml
+	planPath := filepath.Join(r.Options.PlanDir, "plan.yaml")
+	planYAML, err := yaml.Marshal(p)
+	if err != nil {
+		return &exitError{message: fmt.Sprintf("Failed to marshal plan: %v", err)}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(planPath), 0755); err != nil {
+		return &exitError{message: fmt.Sprintf("Failed to create plan directory: %v", err)}
+	}
+
+	if err := os.WriteFile(planPath, planYAML, 0644); err != nil {
+		return &exitError{message: fmt.Sprintf("Failed to write plan.yaml: %v", err)}
+	}
+
+	// Output results
+	r.Output.LogInfo("")
+	r.Output.LogInfo("✅ Plan generated successfully!")
+	r.Output.LogInfo("")
+	r.Output.LogInfo("📊 Summary:")
+	r.Output.LogInfo("   Application: %s", r.Options.Application)
+	r.Output.LogInfo("   Environment: %s", r.Options.Environment)
+	r.Output.LogInfo("   Steps: %d", len(p.Steps))
+
+	// Show relative paths
+	relPlanDir, _ := filepath.Rel(r.Options.WorkDir, r.Options.PlanDir)
+
+	r.Output.LogInfo("")
+	r.Output.LogInfo("📁 Artifacts written to: %s", relPlanDir)
+	r.Output.LogInfo("")
+	r.Output.LogInfo("Next steps:")
+
+	// Get current git commit for commit message
+	gitInfo, _ := repo.GetGitInfo(r.Options.WorkDir)
+	commitMsg := fmt.Sprintf("Generate plan for %s (%s)", r.Options.Application, r.Options.Environment)
+	if gitInfo != nil && gitInfo.ShortSHA != "" {
+		commitMsg = fmt.Sprintf("Plan %s@%s", r.Options.Application, gitInfo.ShortSHA)
+	}
+
+	r.Output.LogInfo("   git add %s && git commit -m \"%s\"", relPlanDir, commitMsg)
+	r.Output.LogInfo("   rad deploy")
+
+	return nil
+}
+
+// resolveModelPath finds the model file automatically.
+func (r *Runner) resolveModelPath(workDir string) (string, error) {
+	modelDir := filepath.Join(workDir, ".radius", "model")
+
+	files, err := plan.FindBicepFiles(modelDir)
+	if err != nil {
+		return "", clierrors.Message("No model files found. Specify a model file path or create .radius/model/*.bicep")
+	}
+
+	if len(files) == 0 {
+		return "", clierrors.Message("No .bicep files found in .radius/model/. Specify a model file path.")
+	}
+
+	if len(files) == 1 {
+		return files[0], nil
+	}
+
+	// Multiple files - prompt user to select
+	var options []string
+	for _, f := range files {
+		rel, _ := filepath.Rel(workDir, f)
+		options = append(options, rel)
+	}
+
+	selected, err := r.Prompter.GetListInput(options, "Multiple model files found. Select one:")
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(workDir, selected), nil
+}
+
+// extractApplication extracts the application name from the model.
+func (r *Runner) extractApplication(model *plan.BicepModel) string {
+	// Look for application resource or use directory name
+	for _, resource := range model.Resources {
+		if strings.Contains(resource.Type, "Application") {
+			if resource.Name != "" {
+				return resource.Name
+			}
+		}
+	}
+
+	// Default to directory name
+	return filepath.Base(r.Options.WorkDir)
+}
+
+// extractEnvironment extracts the environment from .env files.
+func (r *Runner) extractEnvironment() (string, string) {
+	// Check for .env files
+	envFiles := []string{".env", ".env.local", ".env.development", ".env.production"}
+
+	for _, envFile := range envFiles {
+		envPath := filepath.Join(r.Options.WorkDir, envFile)
+		if _, err := os.Stat(envPath); err == nil {
+			env := r.getEnvironmentNameFromPath(envFile)
+			return env, envFile
+		}
+	}
+
+	return "default", ".env"
+}
+
+// getEnvironmentNameFromPath extracts environment name from env file path.
+func (r *Runner) getEnvironmentNameFromPath(envFile string) string {
+	if envFile == ".env" {
+		return "default"
+	}
+	if strings.HasPrefix(envFile, ".env.") {
+		return strings.TrimPrefix(envFile, ".env.")
+	}
+	if strings.HasSuffix(envFile, ".env") {
+		return strings.TrimSuffix(filepath.Base(envFile), ".env")
+	}
+	return "default"
+}
+
+// checkExistingPlanFiles checks for existing plan files and prompts for overwrite.
+func (r *Runner) checkExistingPlanFiles() error {
+	if _, err := os.Stat(r.Options.PlanDir); os.IsNotExist(err) {
+		return nil // No existing plan
+	}
+
+	if r.Yes {
+		// Preserve state files before cleaning
+		r.preserveStateFiles()
+		return r.cleanPlanDirectory()
+	}
+
+	// Prompt for overwrite
+	confirmed, err := prompt.YesOrNoPrompt("Existing plan files found. Overwrite?", prompt.ConfirmNo, r.Prompter)
+	if err != nil {
+		return err
+	}
+
+	if !confirmed {
+		return &exitError{message: "Operation cancelled"}
+	}
+
+	// Preserve state files before cleaning
+	r.preserveStateFiles()
+	return r.cleanPlanDirectory()
+}
+
+// preserveStateFiles preserves terraform state files before cleanup.
+func (r *Runner) preserveStateFiles() {
+	entries, err := os.ReadDir(r.Options.PlanDir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		stateFile := filepath.Join(r.Options.PlanDir, entry.Name(), "terraform.tfstate")
+		if content, err := os.ReadFile(stateFile); err == nil {
+			// Extract symbolic name from directory name (e.g., "001-frontend-terraform" -> "frontend")
+			parts := strings.Split(entry.Name(), "-")
+			if len(parts) >= 2 {
+				symbolicName := parts[1]
+				r.preservedStateFiles[symbolicName] = content
+			}
+		}
+	}
+}
+
+// restoreStateFile restores a preserved state file for a resource.
+func (r *Runner) restoreStateFile(symbolicName, outputDir string) {
+	if content, ok := r.preservedStateFiles[symbolicName]; ok {
+		stateFile := filepath.Join(outputDir, "terraform.tfstate")
+		os.WriteFile(stateFile, content, 0644)
+	}
+}
+
+// cleanPlanDirectory removes existing plan files.
+func (r *Runner) cleanPlanDirectory() error {
+	entries, err := os.ReadDir(r.Options.PlanDir)
+	if err != nil {
+		return nil
+	}
+
+	for _, entry := range entries {
+		path := filepath.Join(r.Options.PlanDir, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("failed to remove %s: %w", path, err)
+		}
+	}
+
+	return nil
+}
+
+// exitError is a friendly error that doesn't print TraceId.
+type exitError struct {
+	message string
+}
+
+func (e *exitError) Error() string {
+	return e.message
+}
+
+func (e *exitError) IsFriendlyError() bool {
+	return true
+}
+
+// MarshalJSON implements json.Marshaler for output formatting.
+func (r *Runner) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Options)
+}

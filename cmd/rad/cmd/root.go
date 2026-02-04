@@ -40,7 +40,10 @@ import (
 	bicep_publish "github.com/radius-project/radius/pkg/cli/cmd/bicep/publish"
 	bicep_publishextension "github.com/radius-project/radius/pkg/cli/cmd/bicep/publishextension"
 	credential "github.com/radius-project/radius/pkg/cli/cmd/credential"
+	cmd_delete "github.com/radius-project/radius/pkg/cli/cmd/delete"
 	cmd_deploy "github.com/radius-project/radius/pkg/cli/cmd/deploy"
+	cmd_diff "github.com/radius-project/radius/pkg/cli/cmd/diff"
+	cmd_initialize "github.com/radius-project/radius/pkg/cli/cmd/initialize"
 	env_create "github.com/radius-project/radius/pkg/cli/cmd/env/create"
 	env_create_preview "github.com/radius-project/radius/pkg/cli/cmd/env/create/preview"
 	env_delete "github.com/radius-project/radius/pkg/cli/cmd/env/delete"
@@ -57,6 +60,8 @@ import (
 	group "github.com/radius-project/radius/pkg/cli/cmd/group"
 	"github.com/radius-project/radius/pkg/cli/cmd/install"
 	install_kubernetes "github.com/radius-project/radius/pkg/cli/cmd/install/kubernetes"
+	cmd_log "github.com/radius-project/radius/pkg/cli/cmd/log"
+	cmd_plan "github.com/radius-project/radius/pkg/cli/cmd/plan"
 	"github.com/radius-project/radius/pkg/cli/cmd/radinit"
 	recipe_list "github.com/radius-project/radius/pkg/cli/cmd/recipe/list"
 	recipe_register "github.com/radius-project/radius/pkg/cli/cmd/recipe/register"
@@ -275,6 +280,21 @@ func initSubCommands() {
 
 	deployCmd, _ := cmd_deploy.NewCommand(framework)
 	RootCmd.AddCommand(deployCmd)
+
+	logCmd, _ := cmd_log.NewCommand(framework)
+	RootCmd.AddCommand(logCmd)
+
+	planCmd, _ := cmd_plan.NewCommand(framework)
+	RootCmd.AddCommand(planCmd)
+
+	diffCmd, _ := cmd_diff.NewCommand(framework)
+	RootCmd.AddCommand(diffCmd)
+
+	deleteCmd, _ := cmd_delete.NewCommand(framework)
+	RootCmd.AddCommand(deleteCmd)
+
+	initGitCmd, _ := cmd_initialize.NewCommand(framework)
+	RootCmd.AddCommand(initGitCmd)
 
 	runCmd, _ := run.NewCommand(framework)
 	RootCmd.AddCommand(runCmd)
