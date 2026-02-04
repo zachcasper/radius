@@ -154,7 +154,7 @@ func (d *Differ) DiffTwoCommits(ctx context.Context, sourceCommit, targetCommit 
 		}
 
 		// Check for deployment record changes
-		if strings.Contains(file, ".radius/deployments/") && strings.HasSuffix(file, ".json") {
+		if strings.Contains(file, ".radius/deploy/") && strings.HasSuffix(file, "deployment.json") {
 			diffs, err := d.diffDeploymentRecord(ctx, sourceCommit, targetCommit, file)
 			if err != nil {
 				continue
@@ -303,7 +303,7 @@ func (d *Differ) detectArtifactType(ctx context.Context, commit string) (Artifac
 
 	for _, file := range files {
 		file = strings.TrimSpace(file)
-		if strings.Contains(file, ".radius/deployments/") && strings.HasSuffix(file, ".json") {
+		if strings.Contains(file, ".radius/deploy/") && strings.HasSuffix(file, "deployment.json") {
 			hasDeployment = true
 		}
 		if strings.HasSuffix(file, "plan.yaml") {
@@ -389,6 +389,7 @@ func (d *Differ) getFileAtCommit(ctx context.Context, commit, filePath string) (
 }
 
 // findLatestDeploymentRecord finds the latest deployment record at a commit.
+// Structure: .radius/deploy/<app>/<env>/<commit>/deployment.json
 func (d *Differ) findLatestDeploymentRecord(ctx context.Context, commit string) (string, error) {
 	// List deployment records at commit
 	cmd := exec.CommandContext(ctx, "git", "ls-tree", "-r", "--name-only", commit)
@@ -402,7 +403,12 @@ func (d *Differ) findLatestDeploymentRecord(ctx context.Context, commit string) 
 	files := strings.Split(string(output), "\n")
 	for _, file := range files {
 		file = strings.TrimSpace(file)
-		if !strings.Contains(file, ".radius/deployments/") || !strings.HasSuffix(file, ".json") {
+		if !strings.Contains(file, ".radius/deploy/") || !strings.HasSuffix(file, "deployment.json") {
+			continue
+		}
+
+		// Filter by application if set
+		if d.Application != "" && !strings.Contains(file, "/"+d.Application+"/") {
 			continue
 		}
 
@@ -411,7 +417,7 @@ func (d *Differ) findLatestDeploymentRecord(ctx context.Context, commit string) 
 			continue
 		}
 
-		// Take the last one (they're sorted by name which includes timestamp)
+		// Take the last one (they're sorted by name which includes commit hash)
 		latestPath = file
 	}
 

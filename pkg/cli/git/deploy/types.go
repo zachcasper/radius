@@ -21,7 +21,7 @@ import (
 )
 
 // DeploymentRecord captures the result of a deployment for Git workspace mode.
-// This record is stored in .radius/deploy/{app}/{env}/deployment-{commit}.json
+// This record is stored in .radius/deploy/{app}/{env}/{commit}/deployment.json
 type DeploymentRecord struct {
 	// Application is the name of the application that was deployed.
 	Application string `json:"application"`

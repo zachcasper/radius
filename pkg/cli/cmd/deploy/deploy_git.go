@@ -243,7 +243,12 @@ func (r *GitRunner) RunGit(ctx context.Context) error {
 	totalSteps := len(r.Options.Plan.Steps)
 
 	// Create deploy directory for captured resource manifests
-	deployDir := filepath.Join(r.WorkDir, ".radius", "deploy", r.Options.Application, r.Options.Environment)
+	// Structure: .radius/deploy/<app>/<env>/<commit>/
+	commitID := r.shortCommit()
+	if commitID == "" {
+		commitID = time.Now().Format("20060102-150405")
+	}
+	deployDir := filepath.Join(r.WorkDir, ".radius", "deploy", r.Options.Application, r.Options.Environment, commitID)
 	if err := os.MkdirAll(deployDir, 0755); err != nil {
 		return &gitExitError{message: fmt.Sprintf("failed to create deploy directory: %v", err)}
 	}
@@ -451,20 +456,21 @@ func (r *GitRunner) buildGitInfo() *deploy.GitInfo {
 }
 
 // saveDeploymentRecord saves the deployment record to disk.
-// Path: .radius/deploy/{app}/{env}/deployment-{commit}.json
+// Path: .radius/deploy/{app}/{env}/{commit}/deployment.json
 func (r *GitRunner) saveDeploymentRecord(record *deploy.DeploymentRecord) (string, error) {
-	recordDir := filepath.Join(r.WorkDir, ".radius", "deploy", r.Options.Application, r.Options.Environment)
-	if err := os.MkdirAll(recordDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create record directory: %w", err)
-	}
-
-	// Use short commit for filename
+	// Use short commit for directory name
 	commitID := r.shortCommit()
 	if commitID == "" {
 		commitID = time.Now().Format("20060102-150405")
 	}
-	filename := fmt.Sprintf("deployment-%s.json", commitID)
-	recordPath := filepath.Join(recordDir, filename)
+
+	// Directory already created before deployment execution
+	recordDir := filepath.Join(r.WorkDir, ".radius", "deploy", r.Options.Application, r.Options.Environment, commitID)
+	if err := os.MkdirAll(recordDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create record directory: %w", err)
+	}
+
+	recordPath := filepath.Join(recordDir, "deployment.json")
 
 	jsonBytes, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
