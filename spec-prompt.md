@@ -54,7 +54,7 @@ The command:
 4. Creates `.radius/types.yaml` using the structure in the configuration data model below. The system populates types.yaml with Resource Types from the Radius resource-types-contrib repository using git sparse-checkout to clone/fetch only the .yaml files in non-hidden directories.
 
 1. Creates `.radius/recipes.yaml` using correct manifest from the configuration data model section below based on the --provider and --deployment-tool flag.
-2. Creates `.radius/env.<ENVIRONMENT_NAME>.yaml`. If the --env-name flag was omitted, use 'default' for the environment name. The environment file is fully populated with the `rad environment connect` command next.
+2. Creates `.radius/env.<ENVIRONMENT_NAME>.yaml`. If the --environment flag was omitted, use 'default' for the environment name. The environment file is fully populated with the `rad environment connect` command next.
 3. Performs a `git add` and `git commit` with an appropriate message and a trailer:
 
 ```
@@ -113,7 +113,7 @@ Flags:
 If the environment kind is AWS, this command:
 
 * Guides the user through connecting AWS to GitHub via OIDC.
-* Operated on the `default` environment unless the env-name flag is set.
+* Operated on the `default` environment unless the environment flag is set.
 * Checks that the current directory is a GitHub workspace and provides an error message if not.
 * Confirms that the environment exists if specified, or default environment exists if not.
 * Prompts the user to use their default AWS account ID (captured via `aws sts get-caller-identity --query Account --output text`) or provide an alternative account ID
@@ -128,8 +128,8 @@ If the environment kind is AWS, this command:
 
 If the environment kind is Azure, this command:
 
-* Guides the user through connecting AWS to GitHub via OIDC.
-* Operated on the `default` environment unless the env-name flag is set.
+* Guides the user through connecting Azure to GitHub via OIDC.
+* Operated on the `default` environment unless the environment flag is set.
 * Checks that the current directory is a GitHub workspace and provides an error message if not.
 * Confirms that the environment exists if specified, or default environment exists if not.
 * Prompts the user which subscription to use (captured from `az account list`)
@@ -206,11 +206,7 @@ The command initiates a remote workflow in GitHub which:
 
 * In a GitHub Action runner:
 
-  * Install k3d
-  * Install Radius CLI
-  * Install Kubectl
-  * Create k3d cluster with a hostPath volume mapping `/github_workspace` in all containers to `${GITHUB_WORKSPACE}`
-  * Install Radius control plane which uses Resource Types, Recipes, and Environments defined in the repo
+  * Sets up Radius in a k3d cluster as before
   * Runs a modified `rad deploy /github_workspace/.radius/plan/plan.yaml --environment <ENVIRONMENT_NAME>` which takes the plan and deployment artifacts and deploys to the environment
 
   * `rad deploy` generates the deployment record as specified in the application model section below stored in `/github_workspace/.radius/deploy`
@@ -220,77 +216,54 @@ The command initiates a remote workflow in GitHub which:
     * Deletes the branch
   * If the deployment has an error, update the PR with the deployment logs and error outputs
 
-  ## Step 7: Destroy the app
+## Step 7: Destroy the app
 
-  The user runs:
+The user runs:
 
-  ```bash
-  $ rad pr destroy --environment dev
-  
-  Usage:
-    rad pr destroy --environment <name>|-e <name>|--env <name> [--application <name>|-a <name>|--app <name>] [--commit <commit>] [--yes]
-  
-  Flags:
-    --environment, -e, --env
-                         Name of the environment to delete resources from (required)
-    --application, -a, --app
-                         Optional application name; if omitted, deletes all applications in the environment
-    --commit             Optional deployment commit hash; defaults to the latest deployment
-    --yes                Automatically merge the destruction PR without review
-  ```
-  
-  The command initiates a remote workflow in GitHub which:
+```bash
+$ rad pr destroy --environment dev
 
-  * In a GitHub Action runner:
+Usage:
+  rad pr destroy --environment <name>|-e <name>|--env <name> [--application <name>|-a <name>|--app <name>] [--commit <commit>] [--yes]
 
-    * Create a branch in the GitHub repository for this deployment called `destroy/<APPLICATION_NAME>/<ENVIRONMENT_NAME>-<timestamp>` 
-    * Install k3d
-    * Install Radius CLI
-    * Install Kubectl
-    * Create k3d cluster with a hostPath volume mapping `/github_workspace` in all containers to `${GITHUB_WORKSPACE}`
-    * Install Radius control plane which uses Resource Types, Recipes, and Environments defined in the repo
-    * If an application was not specified, for each application in `.radius/model` run the new command `rad plan destroy /github_workspace/.radius/model/app.bicep --enviornment <ENVIRONMENT_NAME>`
-      * If an application was specified, run `rad plan destroy` for only that application
-    * `rad plan destroy` generates the plan.yaml file and deployment step directories as specified in the application model section below stored in `/github_workspace/.radius/plan`
-    * Creates a GitHub PR with the new plan.yaml and deployment steps.
+Flags:
+  --environment, -e, --env
+                        Name of the environment to delete resources from (required)
+  --application, -a, --app
+                        Optional application name; if omitted, deletes all applications in the environment
+  --commit             Optional deployment commit hash; defaults to the latest deployment
+  --yes                Automatically merge the destruction PR without review
+```
 
-  Then the user:
+The command initiates a remote workflow in GitHub which:
 
-  ```bash
-  $ rad pr merge
-  
-  Usage:
-    rad pr merge [--pr <number>] [--yes]
-  
-  Flags:
-    --pr                  Optional GitHub Pull Request number to merge; if omitted, merges the latest PR created by the CLI
-    --yes                 Automatically merge the PR without review (use with caution)
-  ```
+* In a GitHub Action runner:
 
-  The command initiates a remote workflow in GitHub which:
-  
-  * In a GitHub Action runner:
-  
-    * Install k3d
-  
-    * Install Radius CLI
-  
-    * Install Kubectl
-  
-    * Create k3d cluster with a hostPath volume mapping `/github_workspace` in all containers to `${GITHUB_WORKSPACE}`
-  
-    * Install Radius control plane which uses Resource Types, Recipes, and Environments defined in the repo
-  
-    * Runs a new  `rad destroy /github_workspace/.radius/plan/plan.yaml --environment <ENVIRONMENT_NAME>` which takes the plan and deployment artifacts and deletes the resources in the environment 
-  
-  
-    * `rad destroy` generates the deployment record as specified in the application model section below stored in `/github_workspace/.radius/deploy`
-      * If the destroy is successful,
-        * Merges the PR
-        * Deletes the branch
-  
-  
-    * If the destroy has an error, update the PR with the deployment logs and error outputs
+  * Create a branch in the GitHub repository for this deployment called `destroy/<APPLICATION_NAME>/<ENVIRONMENT_NAME>-<timestamp>` 
+  * Sets up Radius in a k3d cluster as before
+  * If an application was not specified, for each application in `.radius/model` run the new command `rad plan destroy /github_workspace/.radius/model/app.bicep --environment <ENVIRONMENT_NAME>`
+    * If an application was specified, run `rad plan destroy` for only that application
+  * `rad plan destroy` generates the plan.yaml file and deployment step directories as specified in the application model section below stored in `/github_workspace/.radius/plan`
+  * Creates a GitHub PR with the new plan.yaml and deployment steps.
+
+Then the user:
+
+```bash
+$ rad pr merge
+```
+
+The command initiates a remote workflow in GitHub which:
+
+* In a GitHub Action runner:
+
+  * Sets up Radius in a k3d cluster as before  
+  * Runs a new  `rad destroy /github_workspace/.radius/plan/plan.yaml --environment <ENVIRONMENT_NAME>` which takes the plan and deployment artifacts and deletes the resources in the environment
+  * `rad destroy` generates the deployment record as specified in the application model section below stored in `/github_workspace/.radius/deploy`
+    * If the destroy is successful,
+      * Merges the PR
+      * Deletes the branch
+
+  * If the destroy has an error, update the PR with the deployment logs and error outputs
 
 ## Radius Execution Model
 
@@ -378,7 +351,7 @@ Radius on GitHub configuration is stored in the GitHub repository. No data is pe
         recipeKind: terraform
         recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git//Data/mySqlDatabases/recipes/aws/terraform?ref=v0.54.0
     
-      Radius.Compute/postgreSqlDatabases:
+      Radius.Data/postgreSqlDatabases:
         recipeKind: terraform
         recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git//Data/postgreSqlDatabases/recipes/aws/terraform?ref=v0.54.0
     ```
@@ -411,7 +384,7 @@ Radius on GitHub configuration is stored in the GitHub repository. No data is pe
         recipeKind: terraform
         recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git//Data/mySqlDatabases/recipes/azure/terraform?ref=v0.54.0
     
-      Radius.Compute/postgreSqlDatabases:
+      Radius.Data/postgreSqlDatabases:
         recipeKind: terraform
         recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git//Data/postgreSqlDatabases/recipes/azure/terraform?ref=v0.54.0
       ```
@@ -444,7 +417,7 @@ Radius on GitHub configuration is stored in the GitHub repository. No data is pe
         recipeKind: bicep
         recipeLocation: https://grcr.io/radius-project/recipes/azure/mySqlDatabases:0.54.0
     
-      Radius.Compute/postgreSqlDatabases:
+      Radius.Data/postgreSqlDatabases:
         recipeKind: bicep
         recipeLocation: https://grcr.io/radius-project/recipes/azure/postgreSqlDatabases:0.54.0
       ```
