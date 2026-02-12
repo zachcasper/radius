@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://radius.dev/schemas/github-mode/environment.json",
+  "title": "Radius Environment Configuration",
+  "description": "Schema for .radius/env.<NAME>.yaml files used in Radius on GitHub mode",
+  "type": "object",
+  "required": ["name", "kind", "recipes", "provider"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Environment name (must match filename: env.<name>.yaml)",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["aws", "azure"],
+      "description": "Cloud provider for this environment"
+    },
+    "recipes": {
+      "type": "string",
+      "description": "Path to recipes manifest file",
+      "default": ".radius/recipes.yaml"
+    },
+    "recipeParameters": {
+      "type": "object",
+      "description": "Optional recipe-specific parameter overrides",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "provider": {
+      "type": "object",
+      "description": "Provider-specific configuration",
+      "properties": {
+        "aws": {
+          "$ref": "#/definitions/awsProvider"
+        },
+        "azure": {
+          "$ref": "#/definitions/azureProvider"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "awsProvider": {
+      "type": "object",
+      "required": ["accountId", "region", "oidcRoleARN"],
+      "properties": {
+        "accountId": {
+          "type": "string",
+          "description": "AWS account ID",
+          "pattern": "^[0-9]{12}$"
+        },
+        "region": {
+          "type": "string",
+          "description": "AWS region",
+          "pattern": "^[a-z]{2}-[a-z]+-[0-9]$"
+        },
+        "oidcRoleARN": {
+          "type": "string",
+          "description": "IAM role ARN for GitHub Actions OIDC",
+          "pattern": "^arn:aws:iam::[0-9]{12}:role/.+$"
+        },
+        "stateBackend": {
+          "$ref": "#/definitions/awsStateBackend"
+        }
+      }
+    },
+    "awsStateBackend": {
+      "type": "object",
+      "required": ["bucket", "region"],
+      "description": "S3 backend for Terraform state",
+      "properties": {
+        "bucket": {
+          "type": "string",
+          "description": "S3 bucket name for state storage"
+        },
+        "region": {
+          "type": "string",
+          "description": "S3 bucket region"
+        },
+        "dynamoDBTable": {
+          "type": "string",
+          "description": "DynamoDB table for state locking"
+        }
+      }
+    },
+    "azureProvider": {
+      "type": "object",
+      "required": ["subscriptionId", "tenantId", "clientId", "resourceGroupName", "oidcEnabled"],
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "description": "Azure subscription ID",
+          "format": "uuid"
+        },
+        "tenantId": {
+          "type": "string",
+          "description": "Azure AD tenant ID",
+          "format": "uuid"
+        },
+        "clientId": {
+          "type": "string",
+          "description": "Azure AD application (client) ID",
+          "format": "uuid"
+        },
+        "resourceGroupName": {
+          "type": "string",
+          "description": "Azure resource group name"
+        },
+        "oidcEnabled": {
+          "type": "boolean",
+          "description": "Whether OIDC authentication is enabled",
+          "const": true
+        },
+        "stateBackend": {
+          "$ref": "#/definitions/azureStateBackend"
+        }
+      }
+    },
+    "azureStateBackend": {
+      "type": "object",
+      "required": ["storageAccountName", "containerName"],
+      "description": "Azure Storage backend for Terraform state",
+      "properties": {
+        "storageAccountName": {
+          "type": "string",
+          "description": "Azure Storage account name"
+        },
+        "containerName": {
+          "type": "string",
+          "description": "Azure Storage container name"
+        }
+      }
+    }
+  }
+}

@@ -5,6 +5,16 @@
 **Status**: Draft  
 **Input**: User description: "Radius on GitHub - a new mode of operation where all data and processing runs in a GitHub repository, complementing the existing Radius on Kubernetes mode"
 
+## Clarifications
+
+### Session 2026-02-12
+
+- Q: Where should Terraform state be stored for deployments executed in GitHub Actions? → A: Cloud backend (S3 for AWS, Azure Storage for Azure) with OIDC authentication; future enhancement to allow custom existing backends.
+- Q: How should concurrent deployments to the same environment be handled? → A: Sequential queuing (FIFO) - second workflow waits for first to complete, then runs automatically.
+- Q: What happens when a deployment partially fails? → A: Leave successfully deployed resources in place; report which resources failed; user decides whether to fix and re-deploy or destroy.
+- Q: What scope should `rad pr destroy` target when multiple applications exist in an environment? → A: Single application only; require `--application` flag to specify which application to destroy.
+- Q: How should sensitive values (API keys, connection strings) be handled in configuration? → A: Reference GitHub Secrets by name in configuration; workflow injects values at runtime.
+
 ## Overview
 
 Radius on GitHub is a new operational mode that enables users to deploy cloud applications using Radius without requiring a centralized Kubernetes-based control plane. All configuration, plans, and deployment records are stored directly in the GitHub repository, leveraging GitHub Actions for execution and GitHub Pull Requests for review and approval workflows.
@@ -340,6 +350,41 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-091**: The `Radius.Core/applications` Resource Type MUST have an `environment` property of type string.
 - **FR-092**: Application models MUST declare an application resource using `Radius.Core/applications@2026-03-01-preview`.
 
+#### Terraform State Management
+
+- **FR-093**: Terraform state MUST be stored in a cloud backend (S3 for AWS, Azure Storage for Azure) rather than locally in the repository.
+- **FR-094**: The `rad environment connect` command MUST configure or create the state backend storage as part of OIDC setup.
+- **FR-095**: State backend credentials MUST use the same OIDC authentication configured for deployments.
+- **FR-096**: State backend MUST support state locking to prevent concurrent modification conflicts.
+- **FR-097**: State backend location MUST be recorded in the environment file `.radius/env.<NAME>.yaml`.
+
+#### Concurrent Deployment Handling
+
+- **FR-098**: When multiple deployment PRs targeting the same environment are merged concurrently, the system MUST queue them in FIFO order.
+- **FR-099**: A queued deployment workflow MUST wait for the preceding deployment to complete before starting execution.
+- **FR-100**: The deployment workflow MUST report queuing status in the GitHub Actions log when waiting for a prior deployment.
+- **FR-101**: If a preceding deployment fails, the queued deployment MUST still proceed (not auto-cancel).
+
+#### Partial Deployment Failure Handling
+
+- **FR-102**: When a deployment partially fails, successfully deployed resources MUST remain in place (no auto-rollback).
+- **FR-103**: The deployment record MUST clearly identify which resources succeeded and which failed.
+- **FR-104**: The deployment workflow MUST exit with a failure status when any resource fails to deploy.
+- **FR-105**: Users MAY re-run `rad pr create` after fixing issues to resume/retry the deployment.
+
+#### Destroy Scope
+
+- **FR-106**: The `rad pr destroy` command MUST require an `--application` flag to specify which application to destroy.
+- **FR-107**: The `rad pr destroy` command MUST only destroy resources belonging to the specified application.
+- **FR-108**: If `--application` is omitted when multiple applications exist, the command MUST error with a message listing available applications.
+
+#### Secret Management
+
+- **FR-109**: Configuration files MAY reference GitHub Secrets using the syntax `${{ secrets.SECRET_NAME }}`.
+- **FR-110**: The deployment workflow MUST inject referenced GitHub Secrets as environment variables at runtime.
+- **FR-111**: Secret references MUST NOT be expanded or logged during plan generation (`rad pr create`).
+- **FR-112**: The `rad init` command SHOULD document the GitHub Secrets reference syntax in generated configuration file comments.
+
 ### Key Entities
 
 - **Workspace**: User's working context stored in `~/.rad/config.yaml`; can be of kind `github` (URL-based connection) or `kubernetes` (context-based connection). GitHub workspaces connect to repository URLs; Kubernetes workspaces connect to cluster contexts with scope and environment references.
@@ -420,6 +465,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - Local development and on-premises deployment targets
 - Parallel deployment support for independent resources
 - Deployment approval workflows with required reviewers
+- Custom Terraform backend configuration - allow users to specify their own existing S3/Azure Storage backend instead of auto-provisioned storage
 
 ---
 

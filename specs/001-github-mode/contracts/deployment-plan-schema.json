@@ -1,0 +1,159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://radius.dev/schemas/github-mode/deployment-plan.json",
+  "title": "Radius Deployment Plan",
+  "description": "Schema for .radius/plan/<app>/<env>/plan.yaml files",
+  "type": "object",
+  "required": ["application", "applicationModelFile", "environment", "steps", "summary"],
+  "properties": {
+    "application": {
+      "type": "string",
+      "description": "Application name"
+    },
+    "applicationModelFile": {
+      "type": "string",
+      "description": "Path to application model file (.bicep)",
+      "pattern": "^.radius/model/.+\\.bicep$"
+    },
+    "environment": {
+      "type": "string",
+      "description": "Target environment name"
+    },
+    "steps": {
+      "type": "array",
+      "description": "Ordered deployment steps",
+      "items": {
+        "$ref": "#/definitions/deploymentStep"
+      }
+    },
+    "summary": {
+      "$ref": "#/definitions/planSummary"
+    }
+  },
+  "definitions": {
+    "deploymentStep": {
+      "type": "object",
+      "required": ["sequence", "resource", "recipe", "deploymentArtifacts", "expectedChanges", "status"],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Execution order (1-based)"
+        },
+        "resource": {
+          "$ref": "#/definitions/resourceReference"
+        },
+        "recipe": {
+          "$ref": "#/definitions/recipeReference"
+        },
+        "deploymentArtifacts": {
+          "type": "string",
+          "description": "Path to deployment artifact directory",
+          "pattern": "^.radius/plan/.+/.+/[0-9]{3}-.+-terraform$"
+        },
+        "expectedChanges": {
+          "$ref": "#/definitions/changeCount"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["planned", "executing", "succeeded", "failed", "skipped"],
+          "description": "Current step status"
+        }
+      }
+    },
+    "resourceReference": {
+      "type": "object",
+      "required": ["name", "type", "properties"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Resource name"
+        },
+        "type": {
+          "type": "string",
+          "description": "Resource type (e.g., Radius.Data/postgreSqlDatabases)",
+          "pattern": "^[A-Za-z]+\\.[A-Za-z]+/[a-zA-Z]+$"
+        },
+        "properties": {
+          "type": "object",
+          "description": "Resource properties",
+          "additionalProperties": true
+        }
+      }
+    },
+    "recipeReference": {
+      "type": "object",
+      "required": ["name", "kind", "location"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Recipe name (typically matches resource type)"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["terraform", "bicep"],
+          "description": "Recipe implementation type"
+        },
+        "location": {
+          "type": "string",
+          "description": "Recipe source location (git URL)"
+        }
+      }
+    },
+    "changeCount": {
+      "type": "object",
+      "required": ["add", "change", "destroy"],
+      "properties": {
+        "add": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Resources to be added"
+        },
+        "change": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Resources to be changed"
+        },
+        "destroy": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Resources to be destroyed"
+        }
+      }
+    },
+    "planSummary": {
+      "type": "object",
+      "required": ["totalSteps", "terraformSteps", "bicepSteps", "totalAdd", "totalChange", "totalDestroy", "allVersionsPinned"],
+      "properties": {
+        "totalSteps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "terraformSteps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bicepSteps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalAdd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalChange": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalDestroy": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allVersionsPinned": {
+          "type": "boolean",
+          "description": "Whether all recipe versions are pinned"
+        }
+      }
+    }
+  }
+}

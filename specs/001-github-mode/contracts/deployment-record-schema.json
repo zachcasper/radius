@@ -1,0 +1,219 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://radius.dev/schemas/github-mode/deployment-record.json",
+  "title": "Radius Deployment Record",
+  "description": "Schema for .radius/deploy/<app>/<env>/<commit>/deploy-<commit>.json files",
+  "type": "object",
+  "required": ["application", "environment", "startedAt", "completedAt", "status", "git", "plan", "steps", "summary"],
+  "properties": {
+    "application": {
+      "type": "string",
+      "description": "Application name"
+    },
+    "environment": {
+      "$ref": "#/definitions/environmentInfo"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Deployment start timestamp"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Deployment completion timestamp"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["succeeded", "failed", "partial"],
+      "description": "Overall deployment status"
+    },
+    "git": {
+      "$ref": "#/definitions/gitContext"
+    },
+    "plan": {
+      "$ref": "#/definitions/planReference"
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/executedStep"
+      }
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/resourceInfo"
+      }
+    },
+    "summary": {
+      "$ref": "#/definitions/executionSummary"
+    }
+  },
+  "definitions": {
+    "environmentInfo": {
+      "type": "object",
+      "required": ["name", "environmentFile"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "environmentFile": {
+          "type": "string"
+        },
+        "kubernetesContext": {
+          "type": "string"
+        },
+        "kubernetesNamespace": {
+          "type": "string"
+        }
+      }
+    },
+    "gitContext": {
+      "type": "object",
+      "required": ["commit", "commitShort", "branch", "isDirty"],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "description": "Full commit SHA",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "commitShort": {
+          "type": "string",
+          "description": "Short commit SHA",
+          "pattern": "^[a-f0-9]{7,8}$"
+        },
+        "branch": {
+          "type": "string",
+          "description": "Branch name"
+        },
+        "isDirty": {
+          "type": "boolean",
+          "description": "Whether working tree had uncommitted changes"
+        }
+      }
+    },
+    "planReference": {
+      "type": "object",
+      "required": ["planFile", "planCommit", "generatedAt"],
+      "properties": {
+        "planFile": {
+          "type": "string"
+        },
+        "planCommit": {
+          "type": "string"
+        },
+        "generatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "executedStep": {
+      "type": "object",
+      "required": ["sequence", "name", "resourceType", "tool", "status", "startedAt", "completedAt", "duration", "changes"],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string",
+          "enum": ["terraform", "bicep"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["succeeded", "failed", "skipped"]
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Duration in nanoseconds"
+        },
+        "changes": {
+          "type": "object",
+          "properties": {
+            "add": { "type": "integer" },
+            "change": { "type": "integer" },
+            "destroy": { "type": "integer" }
+          }
+        },
+        "outputs": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "capturedResources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/capturedResource"
+          }
+        },
+        "error": {
+          "$ref": "#/definitions/errorInfo"
+        }
+      }
+    },
+    "capturedResource": {
+      "type": "object",
+      "required": ["resourceId", "resourceDefinitionFile"],
+      "properties": {
+        "resourceId": {
+          "type": "string"
+        },
+        "resourceDefinitionFile": {
+          "type": "string"
+        }
+      }
+    },
+    "errorInfo": {
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "string"
+        },
+        "logFile": {
+          "type": "string"
+        }
+      }
+    },
+    "resourceInfo": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "name": { "type": "string" }
+      }
+    },
+    "executionSummary": {
+      "type": "object",
+      "required": ["totalSteps", "succeededSteps", "failedSteps", "skippedSteps", "totalResources", "resourcesAdded", "resourcesChanged", "resourcesDestroyed"],
+      "properties": {
+        "totalSteps": { "type": "integer" },
+        "succeededSteps": { "type": "integer" },
+        "failedSteps": { "type": "integer" },
+        "skippedSteps": { "type": "integer" },
+        "totalResources": { "type": "integer" },
+        "resourcesAdded": { "type": "integer" },
+        "resourcesChanged": { "type": "integer" },
+        "resourcesDestroyed": { "type": "integer" }
+      }
+    }
+  }
+}

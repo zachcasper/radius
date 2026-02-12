@@ -42,12 +42,18 @@ All user stories describe user actions and expected outcomes without specifying 
 
 ### Requirements Review
 
-- 92 functional requirements defined across categories:
+- 112 functional requirements defined across categories:
   - CLI Commands: rad init (14), rad environment connect (17), rad pr create (12), rad pr merge (9), rad pr destroy (9)
   - Configuration Storage (11)
   - Command Behavior Changes (5)
   - Plan/Deployment Structure (8)
   - GitHub Actions Execution (4)
+  - Resource Type Extensions (3)
+  - Terraform State Management (5)
+  - Concurrent Deployment Handling (4)
+  - Partial Deployment Failure Handling (4)
+  - Destroy Scope (3)
+  - Secret Management (4)
   - Resource Type Extensions (3)
 - All requirements use MUST/MUST NOT language for testability
 - Each requirement is specific and verifiable
