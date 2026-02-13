@@ -299,6 +299,151 @@ Each defect should include:
   4. Remove `cmd.Stderr = os.Stderr` to not pipe stderr to console
 - **Spec Impact**: None - this is a UX polish issue
 
+### D018: Spec incorrectly defined `rad plan` as a CLI command ✅ FIXED
+- **Phase/Task**: T067-T070 (rad plan command implementation)
+- **Category**: Spec gap
+- **Description**: The spec defined `rad plan deploy` and `rad plan destroy` as CLI commands, but this was incorrect. The plan generation functionality is a Radius control plane operation invoked via API, similar to how `rad deploy` works. The workflow running in k3d calls the control plane's plan API, not a separate CLI command.
+- **What was implemented incorrectly**: Created `rad plan` and `rad plan deploy` CLI commands in `pkg/cli/cmd/plan/`
+- **Resolution**: FIXED - 
+  1. Removed the `rad plan` CLI commands from the implementation
+  2. Updated FR-039, FR-040, FR-059 to clarify plan is a control plane API
+  3. Updated acceptance scenarios to use `rad deploy --plan` instead of `rad plan deploy`
+  4. Updated workflow template to call `rad deploy --plan` instead of `rad plan deploy`
+  5. Marked T067-T070 as REMOVED with clarification note
+- **Spec Impact**: Clarified that plan generation is a control plane API operation. The CLI triggers the workflow which runs `rad deploy --plan` inside k3d to invoke the control plane's plan API.
+
+### D019: Deploy and destroy workflows missing control plane installation ✅ FIXED
+- **Phase/Task**: T079 (Deploy workflow), T096 (Destroy workflow)
+- **Category**: Implementation bug
+- **Description**: The `generateDeploySteps()` and `generateDestroySteps()` functions in `pkg/cli/github/workflows.go` were missing the critical "Install Radius control plane" step that exists in `generatePlanSteps()`. Without installing the Radius control plane on the k3d cluster, `rad deploy` and `rad destroy` commands would fail with connection errors.
+- **What was missing**:
+  ```yaml
+  - name: Install Radius control plane
+    run: rad install kubernetes --set global.repositoryPath=.radius
+    env:
+      KUBECONFIG: /etc/rancher/k3d/kubeconfig-radius-ephemeral.yaml
+  ```
+- **Resolution**: FIXED - Added the "Install Radius control plane" step to both `generateDeploySteps()` and `generateDestroySteps()`, consistent with `generatePlanSteps()`
+- **Spec Impact**: Workflow generation requirements should specify that all workflows using `rad deploy` or `rad destroy` must install the control plane first
+
+### D020: rad pr create/merge missing workspace flag ✅ FIXED
+- **Phase/Task**: T060 (rad pr create), T074 (rad pr merge)
+- **Category**: Implementation bug
+- **Description**: Both `rad pr create` and `rad pr merge` commands failed with error "flag accessed but not defined: workspace" because `cli.RequireWorkspace()` expects a `--workspace` flag to be registered on the command.
+- **Root Cause**: The commands used `cli.RequireWorkspace()` to load workspace configuration, but did not call `commonflags.AddWorkspaceFlag(cmd)` to register the flag.
+- **Resolution**: FIXED - Added `commonflags.AddWorkspaceFlag(cmd)` to both commands, along with import for `commonflags` package
+- **Spec Impact**: Task templates for new commands should include a checklist item: "Register workspace flag if using RequireWorkspace()"
+
+### D021: Non-existent k3d GitHub Action ✅ FIXED
+- **Phase/Task**: Runtime (GitHub Actions execution)
+- **Category**: Implementation bug
+- **Description**: The generated workflow files referenced `abhinavsingh/setup-k3d@v1` GitHub Action which does not exist, causing workflow failures with error "Unable to resolve action abhinavsingh/setup-k3d, repository not found".
+- **Root Cause**: The action name was fabricated during implementation without verifying it exists in the GitHub Actions marketplace.
+- **Resolution**: FIXED - Replaced the non-existent action with a direct shell installation of k3d using the official installer script:
+  ```yaml
+  - name: Install k3d
+    run: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+  ```
+- **Files Changed**: `pkg/cli/github/workflows.go` - Updated `generateDeploySteps()`, `generateDestroySteps()`, and `generatePlanSteps()`
+- **Spec Impact**: Implementation should verify third-party actions exist before referencing them
+
+### D022: Non-existent Radius CLI installation URL ✅ FIXED
+- **Phase/Task**: Runtime (GitHub Actions execution)
+- **Category**: Implementation bug
+- **Description**: The generated workflow files used `curl -fsSL https://get.radapp.io/tools/rad/install.sh | bash` to install the Radius CLI, but `get.radapp.io` does not exist. The workflow failed with "Could not resolve host: get.radapp.io". Additionally, because the curl output was piped directly to bash, the failure was silent in the GitHub UI - the next step "Install Radius control plane" failed with "rad: command not found".
+- **Root Cause**: The URL `get.radapp.io` was fabricated during implementation without verifying it exists. The actual Radius install script is at GitHub.
+- **Resolution**: FIXED - Replaced with the actual Radius install script URL from GitHub:
+  ```yaml
+  - name: Install Radius CLI
+    run: curl -fsSL https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh | /bin/bash
+  ```
+- **Files Changed**: `pkg/cli/github/workflows.go` - Updated all three workflow generators
+- **Spec Impact**: Implementation should verify URLs exist before hardcoding them; consider using explicit `/bin/bash` for clarity
+
+### D023: Unnecessary empty .radius/schemas directory created ✅ FIXED
+- **Phase/Task**: T028 (Resource types fetch)
+- **Category**: Implementation bug
+- **Description**: `rad init --github` creates an empty `.radius/schemas/` directory that is not used anywhere. This directory was part of an earlier design to copy JSON schema files from resource-types-contrib, but the implementation uses `types.yaml` instead. The schemas directory adds clutter and may confuse users.
+- **Root Cause**: `fetchTypesManifest()` in github.go passes the `.radius` directory to `FetchResourceTypes()`, which then creates a `schemas` subdirectory and attempts to copy schema files (which aren't present in the source repo structure).
+- **Resolution**: FIXED - Changed the call to `FetchResourceTypes()` to pass an empty string for `targetDir` instead of `radiusDir`. This skips the schemas directory creation and file copying logic entirely since we don't need it.
+- **Files Changed**: `pkg/cli/cmd/radinit/github.go` - Changed `FetchResourceTypes(ctx, radiusDir)` to `FetchResourceTypes(ctx, "")`
+- **Spec Impact**: None - the schemas directory was never part of the spec
+
+### D024: k3d kubeconfig path does not exist ✅ FIXED
+- **Phase/Task**: Runtime (GitHub Actions execution)
+- **Category**: Implementation bug
+- **Description**: The generated workflow files set `KUBECONFIG` to `/etc/rancher/k3d/kubeconfig-radius-ephemeral.yaml`, but k3d does not create kubeconfigs at that path. This caused `rad install kubernetes` to fail with:
+  ```
+  Error: Kubernetes cluster unreachable: Get "http://localhost:8080/version": dial tcp [::1]:8080: connect: connection refused
+  ```
+- **Root Cause**: The kubeconfig path was fabricated during implementation. k3d by default merges kubeconfig to `~/.kube/config` or requires explicit export using `k3d kubeconfig get`.
+- **Resolution**: FIXED - Added an "Export kubeconfig" step after cluster creation:
+  ```yaml
+  - name: Export kubeconfig
+    run: k3d kubeconfig get radius-ephemeral > /tmp/kubeconfig.yaml
+  ```
+  And updated all `KUBECONFIG` references to use `/tmp/kubeconfig.yaml`.
+- **Files Changed**: `pkg/cli/github/workflows.go` - Updated `generateDeploySteps()`, `generateDestroySteps()`, and `generatePlanSteps()`
+- **Spec Impact**: Implementation should verify k3d kubeconfig handling; consider documenting k3d usage patterns
+
+---
+
+### D025: rad environment connect exits before workflow completes ✅ FIXED
+- **Phase/Task**: Runtime (rad environment connect)
+- **Category**: Implementation bug
+- **Description**: `rad environment connect` exits immediately after pushing changes instead of waiting for the auth test workflow to complete. The command shows "Authentication verified successfully!" even when the workflow hasn't finished or failed.
+- **Root Cause**: `GetLatestWorkflowRun()` returns the most recent workflow run for the given workflow file, which might be a **previously completed** run. Since its status is already "completed", `WatchWorkflowRun()` returns immediately. The code doesn't ensure it's watching the **newly triggered** run.
+- **Resolution**: FIXED - Modified `waitForAuthWorkflow()` to:
+  1. Filter for workflow runs with status "queued" or "in_progress"
+  2. If a completed run is found, continue polling until a new in-progress run appears
+  3. Add a timeout to prevent infinite waiting (2 minutes max)
+- **Files Changed**: `pkg/cli/cmd/env/connect/connect.go`
+- **Spec Impact**: None - workflow watching behavior was underspecified
+
+---
+
+### D026: rad model fails to stage file with "entry not found" ✅ FIXED
+- **Phase/Task**: Phase 5 (US3) - rad model
+- **Category**: Implementation bug
+- **Description**: `rad model` creates the model file successfully but fails when staging it for commit with: `Failed to stage model file: failed to add /path/to/.radius/model/todolist.bicep: entry not found`
+- **Root Cause**: The `gitHelper.Add()` function (using go-git library) expects a **relative path** from the repository root, but `model.go` passes the **absolute path** to the model file.
+- **Resolution**: FIXED - Changed `gitHelper.Add(modelFile)` to use a relative path: `filepath.Join(".radius", "model", DefaultModelName+ModelFileExtension)`
+- **Files Changed**: `pkg/cli/cmd/model/model.go`
+- **Spec Impact**: None
+
+---
+
+### D027: rad pr create fails to detect applications in .radius/model/ ✅ FIXED
+- **Phase/Task**: Phase 6 (US4) - rad pr create
+- **Category**: Implementation bug
+- **Description**: `rad pr create` reports "No applications found" even when `.radius/model/todolist.bicep` exists. The file is clearly present but the command doesn't detect it.
+- **Root Cause**: The `detectApplications()` function in `create.go` looks for **directories** inside `.radius/model/` (`entry.IsDir()`), but `rad model` creates a `.bicep` **file** not a directory. The detection logic doesn't match the model file structure.
+- **Resolution**: FIXED - Changed `detectApplications()` to look for `.bicep` files instead of directories. Extract application name from filename (e.g., `todolist.bicep` → `todolist`).
+- **Files Changed**: `pkg/cli/cmd/pr/create/create.go`
+- **Spec Impact**: None
+
+---
+
+### D028: Azure login fails - GitHub secrets not created by rad environment connect ✅ FIXED
+- **Phase/Task**: Phase 4 (US2) / Phase 6 (US4) - Azure workflow authentication
+- **Category**: Specification gap / Implementation bug
+- **Description**: The plan/deploy workflows fail with `azure/login@v2` error: "Using auth-type: SERVICE_PRINCIPAL. Not all values are present. Ensure 'client-id' and 'tenant-id' are supplied." The workflows reference `${{ secrets.AZURE_CLIENT_ID }}`, `${{ secrets.AZURE_TENANT_ID }}`, and `${{ secrets.AZURE_SUBSCRIPTION_ID }}` but these secrets are never created.
+- **Root Cause**: The spec does not require `rad environment connect` to create GitHub repository secrets. The workflows expect secrets to exist, but there's no implementation to set them. This is a missing feature.
+- **Resolution**: FIXED - Added FR-030-A/B/C to spec and implemented GitHub secret setting via `gh secret set` in both `connectAWS()` and `connectAzure()` functions.
+- **Files Changed**: `pkg/cli/cmd/env/connect/connect.go`, `specs/001-github-mode/spec.md`
+- **Spec Impact**: Added FR-030-A, FR-030-B, FR-030-C
+
+---
+
+### D029: rad deploy --plan flag does not exist ✅ FIXED
+- **Phase/Task**: Phase 6 (US4) - Plan workflow
+- **Category**: Missing implementation
+- **Description**: The plan workflow generated by `rad pr create` uses `rad deploy --plan --environment ... --application ... --output .radius/plan/` but the existing `rad deploy` command does not have a `--plan` flag. The workflow fails with "Error: unknown flag: --plan".
+- **Root Cause**: The spec references `rad deploy --plan` for plan generation (FR-039), but there's no explicit FR requiring the `--plan` flag to be added to the existing deploy command. The tasks marked this as "control plane API" but didn't implement the CLI wrapper.
+- **Resolution**: FIXED - Added `--plan` and `--output` flags to `rad deploy` command. When `--plan` is specified, the command generates a deployment plan (plan.yaml) and Terraform artifacts without executing the deployment.
+- **Files Changed**: `pkg/cli/cmd/deploy/deploy.go`
+- **Spec Impact**: Added FR-039-A
+
 ---
 
 ## Recommendations for Future Specs
@@ -310,3 +455,35 @@ Each defect should include:
 3. **Library limitations**: Document known limitations of chosen libraries in research.md
 
 4. **Test impact analysis**: When tasks change behavior, explicitly list tests that need updating
+
+---
+
+### D030: Workflow downloads upstream rad CLI which doesn't have --plan flag ✅ FIXED
+- **Phase/Task**: Phase 6 (US4) - Plan workflow
+- **Category**: Architecture issue
+- **Description**: The generated workflows download the rad CLI from `radius-project/radius` main branch using `curl ... | /bin/bash`. This public CLI doesn't have the `--plan` flag we added. The workflow fails with "Error: unknown flag: --plan".
+- **Root Cause**: The workflow assumes the upstream rad CLI has all required features, but `--plan` is a custom feature in this branch that hasn't been merged upstream.
+- **Resolution**: FIXED - Updated all workflow generators (deploy, destroy, plan) to build rad CLI from source:
+  1. Added `actions/setup-go@v5` step with Go 1.23
+  2. Added `go build -o /usr/local/bin/rad ./cmd/rad` step
+  3. Removed `curl ... | /bin/bash` install script
+  This ensures workflows use the rad CLI with all custom features from the current repository.
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: None - implementation detail
+
+---
+
+### D031: Image registry/tag need explicit workflow configuration ✅ DOCUMENTED
+- **Phase/Task**: Phase 6 (US4) - Workflow generation
+- **Category**: Configuration gap
+- **Description**: User needs custom Radius images to be used in workflows, but the current implementation relies on optional repository variables which may not be set. Need explicit configuration during `rad init`.
+- **Root Cause**: Image registry configuration added via repository variables, but no way to configure during `rad init`.
+- **Resolution**: DOCUMENTED - Current solution requires manual setup:
+  1. Run `make github-mode-publish` to build and push images to your GHCR
+  2. In GitHub repository: Settings → Secrets and variables → Actions → Variables
+  3. Add `RADIUS_IMAGE_REGISTRY` = `ghcr.io/<your-username>`
+  4. Add `RADIUS_IMAGE_TAG` = `github-mode`
+  
+  Workflows automatically use these variables when set. See plan.md "Publishing Radius Control Plane Images" section.
+- **Files Changed**: Documentation in `specs/001-github-mode/plan.md`, `build/github-mode.mk`
+- **Spec Impact**: None - documented workaround

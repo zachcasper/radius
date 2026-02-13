@@ -347,20 +347,24 @@ func DefaultEnvironment(name, provider string) *Environment {
 		env.Provider = ProviderConfig{
 			AWS: &AWSProviderConfig{
 				// Placeholders to be filled by rad environment connect
-				AccountID:   "",
-				Region:      "",
-				OIDCRoleARN: "",
+				AccountID:           "",
+				Region:              "",
+				OIDCRoleARN:         "",
+				EKSClusterName:      "<EKS_CLUSTER_NAME>",
+				KubernetesNamespace: "<KUBE_NAMESPACE>",
 			},
 		}
 	case ProviderKindAzure:
 		env.Provider = ProviderConfig{
 			Azure: &AzureProviderConfig{
 				// Placeholders to be filled by rad environment connect
-				SubscriptionID:    "",
-				TenantID:          "",
-				ClientID:          "",
-				ResourceGroupName: "",
-				OIDCEnabled:       false,
+				SubscriptionID:      "",
+				TenantID:            "",
+				ClientID:            "",
+				ResourceGroupName:   "",
+				OIDCEnabled:         false,
+				AKSClusterName:      "<AKS_CLUSTER_NAME>",
+				KubernetesNamespace: "<KUBE_NAMESPACE>",
 			},
 		}
 	}

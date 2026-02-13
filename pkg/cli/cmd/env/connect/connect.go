@@ -202,7 +202,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if env.Kind == config.ProviderKindAzure {
 		providerName = "Azure"
 	}
-	
+
 	if err := r.waitForAuthWorkflow(ctx, repoPath, providerName); err != nil {
 		return err
 	}
@@ -293,12 +293,28 @@ func (r *Runner) connectAWS(ctx context.Context, env *config.Environment, radius
 		return err
 	}
 
+	// FR-067-C: Prompt for EKS cluster selection
+	eksClusterName, err := r.promptForEKSCluster(ctx, region)
+	if err != nil {
+		return err
+	}
+
+	// FR-067-C: Prompt for Kubernetes namespace (press Enter for 'default')
+	kubernetesNamespace, err := r.InputPrompter.GetTextInput("Kubernetes namespace (press Enter for 'default')", prompt.TextInputOptions{
+		Default: "default",
+	})
+	if err != nil {
+		return err
+	}
+
 	// FR-023: Update environment file with AWS configuration
 	env.Provider.AWS = &config.AWSProviderConfig{
-		AccountID:    accountID,
-		Region:       region,
-		OIDCRoleARN:  roleARN,
-		StateBackend: stateBackend,
+		AccountID:           accountID,
+		Region:              region,
+		OIDCRoleARN:         roleARN,
+		EKSClusterName:      eksClusterName,
+		KubernetesNamespace: kubernetesNamespace,
+		StateBackend:        stateBackend,
 	}
 
 	if err := config.WriteEnvironmentWithHeader(radiusDir, env); err != nil {
@@ -306,6 +322,22 @@ func (r *Runner) connectAWS(ctx context.Context, env *config.Environment, radius
 	}
 
 	r.Output.LogInfo("AWS OIDC configuration saved to environment file.")
+
+	// FR-030-A, FR-030-B: Set GitHub secrets for AWS workflow authentication
+	r.Output.LogInfo("")
+	r.Output.LogInfo("Setting GitHub repository secrets...")
+	ghClient := github.NewClient()
+
+	if err := ghClient.SetSecret("AWS_OIDC_ROLE_ARN", roleARN); err != nil {
+		return fmt.Errorf("failed to set AWS_OIDC_ROLE_ARN secret: %w", err)
+	}
+	r.Output.LogInfo("  Set AWS_OIDC_ROLE_ARN")
+
+	if err := ghClient.SetSecret("AWS_REGION", region); err != nil {
+		return fmt.Errorf("failed to set AWS_REGION secret: %w", err)
+	}
+	r.Output.LogInfo("  Set AWS_REGION")
+
 	return nil
 }
 
@@ -374,14 +406,30 @@ func (r *Runner) connectAzure(ctx context.Context, env *config.Environment, radi
 		return err
 	}
 
+	// FR-067-C: Prompt for AKS cluster selection
+	aksClusterName, err := r.promptForAKSCluster(ctx, subscriptionID, resourceGroupName)
+	if err != nil {
+		return err
+	}
+
+	// FR-067-C: Prompt for Kubernetes namespace (press Enter for 'default')
+	kubernetesNamespace, err := r.InputPrompter.GetTextInput("Kubernetes namespace (press Enter for 'default')", prompt.TextInputOptions{
+		Default: "default",
+	})
+	if err != nil {
+		return err
+	}
+
 	// FR-029: Update environment file with Azure configuration
 	env.Provider.Azure = &config.AzureProviderConfig{
-		SubscriptionID:    subscriptionID,
-		ResourceGroupName: resourceGroupName,
-		TenantID:          tenantID,
-		ClientID:          clientID,
-		OIDCEnabled:       true,
-		StateBackend:      stateBackend,
+		SubscriptionID:      subscriptionID,
+		ResourceGroupName:   resourceGroupName,
+		TenantID:            tenantID,
+		ClientID:            clientID,
+		OIDCEnabled:         true,
+		AKSClusterName:      aksClusterName,
+		KubernetesNamespace: kubernetesNamespace,
+		StateBackend:        stateBackend,
 	}
 
 	if err := config.WriteEnvironmentWithHeader(radiusDir, env); err != nil {
@@ -389,6 +437,27 @@ func (r *Runner) connectAzure(ctx context.Context, env *config.Environment, radi
 	}
 
 	r.Output.LogInfo("Azure OIDC configuration saved to environment file.")
+
+	// FR-030-A, FR-030-C: Set GitHub secrets for Azure workflow authentication
+	r.Output.LogInfo("")
+	r.Output.LogInfo("Setting GitHub repository secrets...")
+	ghClient := github.NewClient()
+
+	if err := ghClient.SetSecret("AZURE_CLIENT_ID", clientID); err != nil {
+		return fmt.Errorf("failed to set AZURE_CLIENT_ID secret: %w", err)
+	}
+	r.Output.LogInfo("  Set AZURE_CLIENT_ID")
+
+	if err := ghClient.SetSecret("AZURE_TENANT_ID", tenantID); err != nil {
+		return fmt.Errorf("failed to set AZURE_TENANT_ID secret: %w", err)
+	}
+	r.Output.LogInfo("  Set AZURE_TENANT_ID")
+
+	if err := ghClient.SetSecret("AZURE_SUBSCRIPTION_ID", subscriptionID); err != nil {
+		return fmt.Errorf("failed to set AZURE_SUBSCRIPTION_ID secret: %w", err)
+	}
+	r.Output.LogInfo("  Set AZURE_SUBSCRIPTION_ID")
+
 	return nil
 }
 
@@ -1064,21 +1133,24 @@ func (r *Runner) waitForAuthWorkflow(ctx context.Context, repoPath string, provi
 	r.Output.LogInfo("Waiting for authentication test workflow to start...")
 	time.Sleep(5 * time.Second)
 
-	// Look for the workflow run
+	// Look for a PENDING (queued or in_progress) workflow run
+	// D025 fix: Don't use GetLatestWorkflowRun as it may return a completed run from a previous execution
 	var run *github.WorkflowRun
 	var err error
-	
-	// Try to find the workflow run (may take a few seconds to appear)
-	for i := 0; i < 10; i++ {
-		run, err = ghClient.GetLatestWorkflowRun("radius-auth-test.yaml")
+
+	// Try to find a pending workflow run (may take a few seconds to appear)
+	// Timeout after 2 minutes of waiting for a run to appear
+	timeoutAt := time.Now().Add(2 * time.Minute)
+	for time.Now().Before(timeoutAt) {
+		run, err = ghClient.GetPendingWorkflowRun("radius-auth-test.yaml")
 		if err == nil && run != nil {
 			break
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(3 * time.Second)
 	}
 
 	if run == nil {
-		r.Output.LogInfo("Warning: could not find workflow run. The workflow may not have triggered.")
+		r.Output.LogInfo("Warning: could not find pending workflow run. The workflow may not have triggered.")
 		r.Output.LogInfo("Check GitHub Actions at: https://github.com/<owner>/<repo>/actions")
 		return nil
 	}
@@ -1176,4 +1248,116 @@ func sanitizeStorageAccountName(name string) string {
 		s = s[:24]
 	}
 	return s
+}
+
+// promptForEKSCluster prompts the user to select from available EKS clusters.
+// Implements FR-067-C.
+func (r *Runner) promptForEKSCluster(ctx context.Context, region string) (string, error) {
+	r.Output.LogInfo("Fetching EKS clusters in region %s...", region)
+
+	// List EKS clusters
+	clustersJSON, err := r.CommandRunner.RunCommand(ctx, "aws", "eks", "list-clusters", "--region", region, "--output", "json")
+	if err != nil {
+		// If listing fails, fall back to manual entry
+		r.Output.LogInfo("Could not list EKS clusters, please enter cluster name manually.")
+		return r.InputPrompter.GetTextInput("EKS Cluster Name", prompt.TextInputOptions{})
+	}
+
+	// Parse clusters
+	clusters := parseEKSClusters(clustersJSON)
+	if len(clusters) == 0 {
+		r.Output.LogInfo("No EKS clusters found in region %s, please enter cluster name manually.", region)
+		return r.InputPrompter.GetTextInput("EKS Cluster Name", prompt.TextInputOptions{})
+	}
+
+	// Add "Enter manually" option
+	options := append(clusters, "Enter cluster name manually")
+
+	selection, err := r.InputPrompter.GetListInput(options, "Select EKS cluster")
+	if err != nil {
+		return "", err
+	}
+
+	if selection == "Enter cluster name manually" {
+		return r.InputPrompter.GetTextInput("EKS Cluster Name", prompt.TextInputOptions{})
+	}
+
+	return selection, nil
+}
+
+// parseEKSClusters parses EKS cluster names from AWS CLI JSON output.
+func parseEKSClusters(jsonStr string) []string {
+	var result struct {
+		Clusters []string `json:"clusters"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return nil
+	}
+	return result.Clusters
+}
+
+// promptForAKSCluster prompts the user to select from available AKS clusters.
+// Implements FR-067-C.
+func (r *Runner) promptForAKSCluster(ctx context.Context, subscriptionID, resourceGroup string) (string, error) {
+	r.Output.LogInfo("Fetching AKS clusters...")
+
+	// List AKS clusters - try resource group first, then subscription-wide
+	var clustersJSON string
+	var err error
+
+	// First try within the resource group
+	clustersJSON, err = r.CommandRunner.RunCommand(ctx, "az", "aks", "list",
+		"--resource-group", resourceGroup,
+		"--subscription", subscriptionID,
+		"--output", "json")
+
+	if err != nil || clustersJSON == "[]" {
+		// Fall back to subscription-wide listing
+		clustersJSON, err = r.CommandRunner.RunCommand(ctx, "az", "aks", "list",
+			"--subscription", subscriptionID,
+			"--output", "json")
+	}
+
+	if err != nil {
+		// If listing fails, fall back to manual entry
+		r.Output.LogInfo("Could not list AKS clusters, please enter cluster name manually.")
+		return r.InputPrompter.GetTextInput("AKS Cluster Name", prompt.TextInputOptions{})
+	}
+
+	// Parse clusters
+	clusters := parseAKSClusters(clustersJSON)
+	if len(clusters) == 0 {
+		r.Output.LogInfo("No AKS clusters found, please enter cluster name manually.")
+		return r.InputPrompter.GetTextInput("AKS Cluster Name", prompt.TextInputOptions{})
+	}
+
+	// Add "Enter manually" option
+	options := append(clusters, "Enter cluster name manually")
+
+	selection, err := r.InputPrompter.GetListInput(options, "Select AKS cluster")
+	if err != nil {
+		return "", err
+	}
+
+	if selection == "Enter cluster name manually" {
+		return r.InputPrompter.GetTextInput("AKS Cluster Name", prompt.TextInputOptions{})
+	}
+
+	return selection, nil
+}
+
+// parseAKSClusters parses AKS cluster names from Azure CLI JSON output.
+func parseAKSClusters(jsonStr string) []string {
+	var clusters []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &clusters); err != nil {
+		return nil
+	}
+
+	names := make([]string, 0, len(clusters))
+	for _, c := range clusters {
+		names = append(names, c.Name)
+	}
+	return names
 }

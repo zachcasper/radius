@@ -13,7 +13,7 @@ Implement "Radius on GitHub" mode enabling users to deploy cloud applications us
 
 **Language/Version**: Go 1.21+ (per go.mod)  
 **Primary Dependencies**: spf13/cobra (CLI), spf13/viper (config), go-git/go-git (git operations), hashicorp/terraform-exec (Terraform execution), aws-sdk-go-v2 (AWS OIDC), azure-sdk-for-go (Azure OIDC)  
-**Storage**: File-based (`.radius/*.yaml` in repository, `~/.rad/config.yaml` locally)  
+**Storage**: File-based (`.radius/*.yaml` in repository, `.radius/model/`, `.radius/plan/`, `.radius/deploy/` subdirectories, `~/.rad/config.yaml` locally)  
 **Testing**: Go testing with gomock, radcli test helpers, functional tests in test/  
 **Target Platform**: Cross-platform CLI (Linux, macOS, Windows), GitHub Actions runners (Linux)
 **Project Type**: Single monorepo with multiple command targets  
@@ -84,13 +84,6 @@ pkg/cli/
 │   │   └── destroy/
 │   │       ├── destroy.go
 │   │       └── destroy_test.go
-│   └── plan/                     # [NEW] rad plan commands
-│       ├── deploy/
-│       │   ├── deploy.go
-│       │   └── deploy_test.go
-│       └── destroy/
-│           ├── destroy.go
-│           └── destroy_test.go
 ├── workspaces/
 │   ├── connection.go             # [MODIFY] Add KindGitHub
 │   ├── github.go                 # [NEW] GitHub workspace implementation
@@ -146,3 +139,70 @@ No violations identified. All constitution principles pass without exceptions.
 
 **Post-Design Gate Result**: ✅ All principles continue to pass. Design is constitution-compliant.
 
+## Publishing Radius Control Plane Images
+
+For GitHub Mode to work, you must publish Radius control plane container images to your GitHub Container Registry (GHCR). The workflows install Radius in an ephemeral k3d cluster, which pulls images from GHCR.
+
+### Quick Start
+
+```bash
+# 1. Authenticate (ensure gh CLI is logged in)
+gh auth login
+
+# 2. Build and push images to your GHCR
+make github-mode-publish
+
+# 3. (Optional) Generate a Helm values file for manual installation
+make github-mode-generate-values
+```
+
+### Available Make Targets
+
+| Target | Description |
+|--------|-------------|
+| `make github-mode-info` | Show current configuration |
+| `make github-mode-check` | Verify prerequisites |
+| `make github-mode-publish` | Build and push all images to GHCR |
+| `make github-mode-build` | Build images locally |
+| `make github-mode-push` | Push images (after building) |
+| `make github-mode-values` | Show Helm values override |
+| `make github-mode-generate-values` | Write github-mode-values.yaml file |
+| `make github-mode-workflow-update` | Show workflow update instructions |
+
+### Configuration Variables
+
+Override via environment or command line:
+
+```bash
+# Use a different GitHub user
+make github-mode-publish GITHUB_USER=myorg
+
+# Use a custom tag
+make github-mode-publish GITHUB_MODE_TAG=v1.0.0
+
+# Full customization
+make github-mode-publish \
+  GITHUB_USER=myorg \
+  GITHUB_MODE_REGISTRY=ghcr.io/myorg \
+  GITHUB_MODE_TAG=custom-tag
+```
+
+### Images Published
+
+The following images are built and pushed:
+
+- `ghcr.io/<user>/ucpd:<tag>` - Universal Control Plane daemon
+- `ghcr.io/<user>/applications-rp:<tag>` - Applications resource provider
+- `ghcr.io/<user>/dynamic-rp:<tag>` - Dynamic resource provider
+- `ghcr.io/<user>/controller:<tag>` - Radius controller
+
+### Updating Generated Workflows
+
+After publishing images, update the `rad install kubernetes` command in workflows.go or generated workflows to use your custom images:
+
+```go
+// In pkg/cli/github/workflows.go, update the install step:
+Run: "rad install kubernetes --skip-contour-install --set global.imageRegistry=ghcr.io/<your-user> --set global.imageTag=github-mode --set dashboard.enabled=false"
+```
+
+Or modify workflows to use repository variables for flexibility.

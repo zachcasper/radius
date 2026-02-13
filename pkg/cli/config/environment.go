@@ -67,6 +67,12 @@ type AWSProviderConfig struct {
 	// OIDCRoleARN is the IAM role ARN for GitHub Actions OIDC authentication.
 	OIDCRoleARN string `yaml:"oidcRoleARN"`
 
+	// EKSClusterName is the name of the EKS cluster for Kubernetes deployments.
+	EKSClusterName string `yaml:"eksClusterName"`
+
+	// KubernetesNamespace is the Kubernetes namespace for deployments.
+	KubernetesNamespace string `yaml:"kubernetesNamespace"`
+
 	// StateBackend holds the Terraform state backend configuration.
 	StateBackend *AWSStateBackend `yaml:"stateBackend,omitempty"`
 }
@@ -99,6 +105,12 @@ type AzureProviderConfig struct {
 
 	// OIDCEnabled indicates whether OIDC authentication is configured.
 	OIDCEnabled bool `yaml:"oidcEnabled"`
+
+	// AKSClusterName is the name of the AKS cluster for Kubernetes deployments.
+	AKSClusterName string `yaml:"aksClusterName"`
+
+	// KubernetesNamespace is the Kubernetes namespace for deployments.
+	KubernetesNamespace string `yaml:"kubernetesNamespace"`
 
 	// StateBackend holds the Terraform state backend configuration.
 	StateBackend *AzureStateBackend `yaml:"stateBackend,omitempty"`

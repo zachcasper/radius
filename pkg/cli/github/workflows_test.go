@@ -166,7 +166,7 @@ func TestGeneratePlanWorkflow(t *testing.T) {
 
 	appInput, exists := inputs["application"]
 	require.True(t, exists)
-	assert.False(t, appInput.Required)
+	assert.True(t, appInput.Required)
 
 	// Check permissions
 	assert.Equal(t, "write", workflow.Permissions["pull-requests"])

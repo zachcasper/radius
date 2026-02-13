@@ -58,6 +58,9 @@ import (
 	group "github.com/radius-project/radius/pkg/cli/cmd/group"
 	"github.com/radius-project/radius/pkg/cli/cmd/install"
 	install_kubernetes "github.com/radius-project/radius/pkg/cli/cmd/install/kubernetes"
+	"github.com/radius-project/radius/pkg/cli/cmd/model"
+	pr_create "github.com/radius-project/radius/pkg/cli/cmd/pr/create"
+	pr_merge "github.com/radius-project/radius/pkg/cli/cmd/pr/merge"
 	"github.com/radius-project/radius/pkg/cli/cmd/radinit"
 	recipe_list "github.com/radius-project/radius/pkg/cli/cmd/recipe/list"
 	recipe_register "github.com/radius-project/radius/pkg/cli/cmd/recipe/register"
@@ -453,6 +456,17 @@ func initSubCommands() {
 
 	rollbackKubernetesCmd, _ := rollback_kubernetes.NewCommand(framework)
 	rollbackCmd.AddCommand(rollbackKubernetesCmd)
+
+	// PR commands
+	prCreateCmd, _ := pr_create.NewCommand(framework)
+	prCmd.AddCommand(prCreateCmd)
+
+	prMergeCmd, _ := pr_merge.NewCommand(framework)
+	prCmd.AddCommand(prMergeCmd)
+
+	// Model command
+	modelCmd, _ := model.NewCommand(framework)
+	RootCmd.AddCommand(modelCmd)
 
 	versionCmd, _ := version.NewCommand(framework)
 	RootCmd.AddCommand(versionCmd)

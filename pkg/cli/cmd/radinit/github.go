@@ -116,6 +116,7 @@ func findGitRoot(startPath string) (string, error) {
 }
 
 // initializeRadiusDirectory creates the .radius/ directory structure.
+// FR-014-A: Creates model/, plan/, deploy/ subdirectories with .gitkeep files.
 func initializeRadiusDirectory(repoPath string) error {
 	radiusDir := filepath.Join(repoPath, ".radius")
 
@@ -124,12 +125,17 @@ func initializeRadiusDirectory(repoPath string) error {
 		return fmt.Errorf("failed to create .radius directory: %w", err)
 	}
 
-	// Create subdirectories
-	subdirs := []string{"plan", "deploy"}
+	// Create subdirectories with .gitkeep files (FR-014-A)
+	subdirs := []string{"model", "plan", "deploy"}
 	for _, dir := range subdirs {
 		path := filepath.Join(radiusDir, dir)
 		if err := os.MkdirAll(path, 0755); err != nil {
 			return fmt.Errorf("failed to create %s directory: %w", dir, err)
+		}
+		// Create .gitkeep to ensure directory is tracked by Git
+		gitkeepPath := filepath.Join(path, ".gitkeep")
+		if err := os.WriteFile(gitkeepPath, []byte{}, 0644); err != nil {
+			return fmt.Errorf("failed to create .gitkeep in %s: %w", dir, err)
 		}
 	}
 
@@ -252,7 +258,7 @@ func (r *Runner) runGitHubInit(ctx context.Context) error {
 
 	// Step 2: Generate types.yaml (FR-008: fetch from resource-types-contrib)
 	r.Output.LogInfo("Fetching resource types from radius-project/resource-types-contrib...")
-	typesManifest, err := r.fetchTypesManifest(ctx, radiusDir)
+	typesManifest, err := r.fetchTypesManifest(ctx)
 	if err != nil {
 		r.Output.LogInfo("Warning: Failed to fetch resource types, using defaults: %v", err)
 		typesManifest = config.DefaultTypesManifest()
@@ -336,12 +342,13 @@ func (r *Runner) updateGitHubWorkspace(ctx context.Context, opts *githubInitOpti
 
 // fetchTypesManifest fetches resource types from radius-project/resource-types-contrib
 // per FR-008 and converts them to a types manifest.
-func (r *Runner) fetchTypesManifest(ctx context.Context, radiusDir string) (*config.ResourceTypesManifest, error) {
+func (r *Runner) fetchTypesManifest(ctx context.Context) (*config.ResourceTypesManifest, error) {
 	ghClient := github.NewClient()
 	fetcher := github.NewResourceTypeFetcher(ghClient)
 
 	// Fetch resource types using sparse checkout
-	types, err := fetcher.FetchResourceTypes(ctx, radiusDir)
+	// Pass empty string for targetDir - we don't need schema files copied
+	types, err := fetcher.FetchResourceTypes(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch resource types: %w", err)
 	}

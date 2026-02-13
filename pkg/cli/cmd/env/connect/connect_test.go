@@ -164,6 +164,18 @@ provider: {}
 	mockCommandRunner.responses["aws s3api put-bucket-versioning --bucket tfstate-testowner-testrepo --versioning-configuration Status=Enabled"] = "{}"
 	// DynamoDB table creation
 	mockCommandRunner.responses["aws dynamodb create-table --table-name tfstate-lock-testowner-testrepo --attribute-definitions AttributeName=LockID,AttributeType=S --key-schema AttributeName=LockID,KeyType=HASH --billing-mode PAY_PER_REQUEST --region us-west-2"] = "{}"
+	// EKS cluster list (FR-067-C)
+	mockCommandRunner.responses["aws eks list-clusters --region us-west-2 --output json"] = `{"clusters": ["my-eks-cluster", "other-cluster"]}`
+
+	// EKS cluster selection (FR-067-C)
+	mockPrompter.EXPECT().
+		GetListInput([]string{"my-eks-cluster", "other-cluster", "Enter cluster name manually"}, "Select EKS cluster").
+		Return("my-eks-cluster", nil).Times(1)
+
+	// Kubernetes namespace prompt (FR-067-C)
+	mockPrompter.EXPECT().
+		GetTextInput("Kubernetes namespace (press Enter for 'default')", gomock.Any()).
+		Return("default", nil).Times(1)
 
 	err = runner.Run(context.Background())
 
@@ -257,6 +269,18 @@ provider: {}
 	mockCommandRunner.responses["az storage account create --name tfstateradiustestownert --resource-group radius-rg --subscription sub-456 --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2"] = "{}"
 	// Blob container creation
 	mockCommandRunner.responses["az storage container create --name tfstate --account-name tfstateradiustestownert --auth-mode login"] = "{}"
+	// AKS cluster list in resource group (FR-067-C)
+	mockCommandRunner.responses["az aks list --resource-group radius-rg --subscription sub-456 --output json"] = `[{"name": "my-aks-cluster"}]`
+
+	// AKS cluster selection (FR-067-C)
+	mockPrompter.EXPECT().
+		GetListInput([]string{"my-aks-cluster", "Enter cluster name manually"}, "Select AKS cluster").
+		Return("my-aks-cluster", nil).Times(1)
+
+	// Kubernetes namespace prompt (FR-067-C)
+	mockPrompter.EXPECT().
+		GetTextInput("Kubernetes namespace (press Enter for 'default')", gomock.Any()).
+		Return("default", nil).Times(1)
 
 	err = runner.Run(context.Background())
 

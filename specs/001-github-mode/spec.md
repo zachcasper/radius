@@ -41,7 +41,7 @@ A developer wants to use Radius with their existing GitHub repository containing
 
 **Acceptance Scenarios**:
 
-1. **Given** a cloned GitHub repository without Radius configuration, **When** the user runs `rad init --provider aws --deployment-tool terraform`, **Then** the system creates `.radius/types.yaml`, `.radius/recipes.yaml`, and `.radius/env.default.yaml` files with AWS/Terraform configuration, updates `~/.rad/config.yaml` with a new `github` kind workspace, and commits the changes with trailer `Radius-Action: init`.
+1. **Given** a cloned GitHub repository without Radius configuration, **When** the user runs `rad init --provider aws --deployment-tool terraform`, **Then** the system creates `.radius/types.yaml`, `.radius/recipes.yaml`, and `.radius/env.default.yaml` files with AWS/Terraform configuration (including placeholder values for cluster and namespace), updates `~/.rad/config.yaml` with a new `github` kind workspace, and commits the changes with trailer `Radius-Action: init`.
 
 2. **Given** a cloned GitHub repository without Radius configuration, **When** the user runs `rad init --provider azure --deployment-tool bicep --environment production`, **Then** the system creates configuration files with Azure/Bicep configuration, the environment is named "production", and the workspace is registered.
 
@@ -67,17 +67,17 @@ After initializing the repository, a developer needs to establish secure authent
 
 **Acceptance Scenarios**:
 
-1. **Given** an AWS environment without OIDC configured, **When** the user runs `rad environment connect`, **Then** the system prompts for AWS account ID (defaulting to `aws sts get-caller-identity`), region (defaulting to `aws configure get region`), and offers to create a new IAM role or use existing ARN.
+1. **Given** an AWS environment without OIDC configured, **When** the user runs `rad environment connect`, **Then** the system prompts for AWS account ID (defaulting to `aws sts get-caller-identity`), region (defaulting to `aws configure get region`), EKS cluster (from `aws eks list-clusters`), Kubernetes namespace, and offers to create a new IAM role or use existing ARN.
 
 2. **Given** the user chooses to create a new AWS IAM role, **When** the user confirms, **Then** the system verifies AWS CLI authentication via `aws sts get-caller-identity`, summarizes the commands to execute, and creates the IAM role with OIDC trust policy for GitHub Actions.
 
-3. **Given** successful AWS OIDC configuration, **When** the command completes, **Then** the environment file `.radius/env.<ENV>.yaml` is updated with `accountId`, `region`, and `oidcRoleARN`, and changes are committed with trailer `Radius-Action: environment-connect`.
+3. **Given** successful AWS OIDC configuration, **When** the command completes, **Then** the environment file `.radius/env.<ENV>.yaml` is updated with `accountId`, `region`, `oidcRoleARN`, `eksClusterName`, and `kubernetesNamespace`, and changes are committed with trailer `Radius-Action: environment-connect`.
 
-4. **Given** an Azure environment without OIDC configured, **When** the user runs `rad environment connect`, **Then** the system prompts for subscription (from `az account list`), resource group name, and offers to create a new Azure AD application with federated credentials or use existing.
+4. **Given** an Azure environment without OIDC configured, **When** the user runs `rad environment connect`, **Then** the system prompts for subscription (from `az account list`), resource group name, AKS cluster (from `az aks list`), Kubernetes namespace, and offers to create a new Azure AD application with federated credentials or use existing.
 
 5. **Given** the user chooses to create a new Azure AD application, **When** the user confirms, **Then** the system verifies Azure CLI authentication via `az account show`, summarizes the commands, and creates the AD application with federated credential linking the GitHub repository/workflow.
 
-6. **Given** successful Azure OIDC configuration, **When** the command completes, **Then** the environment file is updated with `subscriptionId`, `tenantId`, `clientId`, `resourceGroupName`, and `oidcEnabled: true`.
+6. **Given** successful Azure OIDC configuration, **When** the command completes, **Then** the environment file is updated with `subscriptionId`, `tenantId`, `clientId`, `resourceGroupName`, `oidcEnabled: true`, `aksClusterName`, and `kubernetesNamespace`.
 
 7. **Given** AWS CLI is not installed or authenticated, **When** the user chooses to create a new IAM role, **Then** the system displays an error with instructions to install/authenticate AWS CLI.
 
@@ -91,7 +91,29 @@ After initializing the repository, a developer needs to establish secure authent
 
 ---
 
-### User Story 3 - Create Deployment Plan via Pull Request (Priority: P2)
+### User Story 3 - Create Application Model (Priority: P1)
+
+After connecting their cloud provider, a developer needs to create an application model that defines the resources their application requires. They run `rad model` to generate a starter application model file.
+
+**Why this priority**: An application model is required before any deployment can occur. This creates the foundational Bicep file that describes the application's resource requirements. The current implementation is a placeholder for future AI-assisted modeling functionality.
+
+**Independent Test**: Can be fully tested by running `rad model` in an initialized repository and verifying the application model file is created with the correct structure.
+
+**Acceptance Scenarios**:
+
+1. **Given** an initialized GitHub repository with Radius configuration, **When** the user runs `rad model`, **Then** the system creates `.radius/model/todolist.bicep` with a sample application model containing an application resource, a container resource, and a database resource.
+
+2. **Given** an initialized repository, **When** the user runs `rad model`, **Then** the generated model includes proper Bicep syntax with `extension radius`, parameter declarations, and resource definitions using the `2025-08-01-preview` API version.
+
+3. **Given** the application model is created, **When** the user inspects the file, **Then** it contains a `Radius.Core/applications` resource, a `Radius.Compute/containers` resource with container configuration and connections, and a `Radius.Data/postgreSqlDatabases` resource.
+
+4. **Given** a directory without Radius initialization, **When** the user runs `rad model`, **Then** the system displays an error message instructing the user to run `rad init` first.
+
+5. **Given** an application model already exists at `.radius/model/todolist.bicep`, **When** the user runs `rad model`, **Then** the system prompts the user to confirm overwriting the existing file or choose a different name.
+
+---
+
+### User Story 4 - Create Deployment Plan via Pull Request (Priority: P2)
 
 A developer has modeled their application and wants to deploy it to an environment. They run `rad pr create` which triggers a GitHub Action that generates a detailed deployment plan and creates a Pull Request for review.
 
@@ -101,23 +123,25 @@ A developer has modeled their application and wants to deploy it to an environme
 
 **Acceptance Scenarios**:
 
-1. **Given** a valid application model in `.radius/model/`, **When** the user runs `rad pr create --environment dev`, **Then** the CLI triggers a GitHub Action workflow that creates a deployment branch named `deploy/<app>/<env>-<timestamp>`.
+1. **Given** a valid application model in `.radius/model/`, **When** the user runs `rad pr create`, **Then** the CLI triggers a GitHub Action workflow that creates a deployment branch named `deploy/<app>/default-<timestamp>` using the "default" environment.
 
 2. **Given** the GitHub Action is running, **When** the workflow executes, **Then** it installs k3d, Radius CLI, and kubectl, creates a k3d cluster with hostPath volume mapping, and installs the Radius control plane using the repository's configuration files.
 
-3. **Given** the Radius control plane is running in the GitHub Action, **When** `rad plan deploy` executes, **Then** it generates `plan.yaml` with ordered deployment steps and creates deployment artifact directories for each resource (containing main.tf, providers.tf, variables.tf, terraform.tfvars.json, tfplan.txt, terraform-context.txt, .terraform.lock.hcl).
+3. **Given** the Radius control plane is running in the GitHub Action, **When** the workflow executes `rad deploy --plan` (inside the k3d cluster), **Then** the control plane's plan API generates `plan.yaml` with ordered deployment steps and creates deployment artifact directories for each resource (containing main.tf, providers.tf, variables.tf, terraform.tfvars.json, tfplan.txt, terraform-context.txt, .terraform.lock.hcl).
 
 4. **Given** a deployment plan is generated, **When** the GitHub Action completes, **Then** a Pull Request is created with the `plan.yaml` and all deployment artifacts in `.radius/plan/<app>/<env>/` for review.
 
-5. **Given** multiple applications exist in the repository, **When** the user runs `rad pr create --environment dev` without specifying an application, **Then** plans are generated for all applications in `.radius/model/`.
+5. **Given** multiple applications exist in the repository, **When** the user runs `rad pr create` without specifying `--application`, **Then** the command fails with an error listing available applications and prompting the user to specify one.
 
-6. **Given** the user specifies a specific application, **When** the user runs `rad pr create --environment dev --application frontend`, **Then** only that application's plan is generated.
+6. **Given** only one application exists in the repository, **When** the user runs `rad pr create` without specifying `--application`, **Then** the CLI automatically selects that application.
 
-7. **Given** the plan generation encounters an error, **When** the GitHub Action fails, **Then** error details are captured and displayed in the workflow logs and the PR (if created) includes error information.
+7. **Given** the user specifies a specific application and environment, **When** the user runs `rad pr create --environment dev --application frontend`, **Then** that application's plan is generated for the specified environment.
+
+8. **Given** the plan generation encounters an error, **When** the GitHub Action fails, **Then** error details are captured and displayed in the workflow logs and the PR (if created) includes error information.
 
 ---
 
-### User Story 4 - Deploy Application via PR Merge (Priority: P2)
+### User Story 5 - Deploy Application via PR Merge (Priority: P2)
 
 After reviewing the deployment plan in a Pull Request, a developer merges it to trigger the actual deployment. They can use `rad pr merge` to initiate this process.
 
@@ -143,7 +167,7 @@ After reviewing the deployment plan in a Pull Request, a developer merges it to 
 
 ---
 
-### User Story 5 - Destroy Application Resources (Priority: P3)
+### User Story 6 - Destroy Application Resources (Priority: P3)
 
 A developer needs to tear down deployed resources for an application. They run `rad pr destroy` to create a destruction plan PR, then merge it to execute the teardown.
 
@@ -153,7 +177,7 @@ A developer needs to tear down deployed resources for an application. They run `
 
 **Acceptance Scenarios**:
 
-1. **Given** an application is deployed, **When** the user runs `rad pr destroy --environment dev --application frontend`, **Then** a destruction plan is generated by `rad plan destroy` and a PR is created on branch `destroy/frontend/dev-<timestamp>`.
+1. **Given** an application is deployed, **When** the user runs `rad pr destroy --environment dev --application frontend`, **Then** a destruction plan is generated by the Radius control plane's plan API (with destroy=true) and a PR is created on branch `destroy/frontend/dev-<timestamp>`.
 
 2. **Given** a destruction PR exists, **When** the user runs `rad pr merge`, **Then** `rad destroy` executes using the plan, resources are destroyed, and destruction records are stored in `.radius/deploy/<app>/<env>/<commit>/destroy-<commit>.json`.
 
@@ -169,7 +193,7 @@ A developer needs to tear down deployed resources for an application. They run `
 
 ---
 
-### User Story 6 - Manage Workspaces Across Repositories (Priority: P3)
+### User Story 7 - Manage Workspaces Across Repositories (Priority: P3)
 
 A developer works with multiple repositories, some using Radius on GitHub and others using Radius on Kubernetes. The workspace configuration allows seamless switching between different contexts.
 
@@ -193,7 +217,7 @@ A developer works with multiple repositories, some using Radius on GitHub and ot
 
 ---
 
-### User Story 7 - View and Understand Deployment Plans (Priority: P3)
+### User Story 8 - View and Understand Deployment Plans (Priority: P3)
 
 A developer or reviewer needs to understand what changes a deployment will make before approving the PR. The deployment plan should be clear and auditable.
 
@@ -246,6 +270,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-012**: System MUST rename the workspace config property `default` to `current` for clarity.
 - **FR-013**: System MUST commit changes with `git add` and `git commit` including the trailer `Radius-Action: init`.
 - **FR-014**: System MUST NOT be interactive; all configuration comes from command-line flags.
+- **FR-014-A**: System MUST create empty directories `.radius/model/`, `.radius/plan/`, and `.radius/deploy/` for storing model definitions, deployment plans, and deployment artifacts respectively. Each directory MUST contain a `.gitkeep` file to ensure the directories are tracked by Git.
 
 #### CLI Command: rad environment connect
 
@@ -265,6 +290,9 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-028**: For Azure new application creation, system MUST summarize commands and request user confirmation to create federated credential.
 - **FR-029**: For Azure environments, system MUST write `subscriptionId`, `tenantId`, `clientId`, `resourceGroupName`, and `oidcEnabled: true` to environment file.
 - **FR-030**: System MUST NOT store cloud secret keys locally; only OIDC-related identifiers are stored.
+- **FR-030-A**: System MUST set GitHub repository secrets required for workflow authentication using `gh secret set`.
+- **FR-030-B**: For AWS environments, system MUST set secrets: `AWS_OIDC_ROLE_ARN` (IAM role ARN) and `AWS_REGION`.
+- **FR-030-C**: For Azure environments, system MUST set secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`.
 - **FR-031**: System MUST commit environment changes with trailer `Radius-Action: environment-connect`.
 - **FR-031-A**: System MUST create an authentication test workflow at `.github/workflows/radius-auth-test.yaml`.
 - **FR-031-B**: The authentication test workflow MUST be triggered by `push` events that modify `.radius/env.*.yaml` files.
@@ -278,14 +306,15 @@ A developer or reviewer needs to understand what changes a deployment will make 
 #### CLI Command: rad pr create
 
 - **FR-032**: System MUST provide `rad pr create` command that triggers a remote GitHub Action workflow.
-- **FR-033**: System MUST require `--environment` (or `-e` or `--env`) flag as required parameter.
-- **FR-034**: System MUST accept optional `--application` (or `-a` or `--app`) flag; if omitted, plan for all applications.
+- **FR-033**: System MUST accept optional `--environment` (or `-e` or `--env`) flag; if omitted, use environment named "default".
+- **FR-034**: System MUST accept `--application` (or `-a` or `--app`) flag. If only one application exists in `.radius/model/`, the flag is optional and defaults to that application. If multiple applications exist, the flag is required.
 - **FR-035**: The triggered GitHub Action MUST create a deployment branch named `deploy/<APPLICATION_NAME>/<ENVIRONMENT_NAME>-<timestamp>`.
 - **FR-036**: The GitHub Action MUST install k3d, Radius CLI, and kubectl on the runner.
 - **FR-037**: The GitHub Action MUST create a k3d cluster with hostPath volume mapping `/github_workspace` to `${GITHUB_WORKSPACE}`.
 - **FR-038**: The GitHub Action MUST install Radius control plane configured to use Resource Types, Recipes, and Environments from the repository.
-- **FR-039**: The GitHub Action MUST execute `rad plan deploy` for each application (or specified application).
-- **FR-040**: The `rad plan deploy` command MUST generate `plan.yaml` with ordered deployment steps.
+- **FR-039**: The GitHub Action MUST call the Radius control plane's plan API for the specified application. Note: `rad plan` is a control plane operation invoked via API, not a separate CLI command.
+- **FR-039-A**: The `rad deploy` command MUST accept a `--plan` flag that generates a deployment plan without executing the deployment. When `--plan` is specified, the command MUST also accept `--output <directory>` to specify where to write plan.yaml and deployment artifacts.
+- **FR-040**: The Radius control plane plan API MUST generate `plan.yaml` with ordered deployment steps.
 - **FR-041**: For each deployment step, system MUST generate deployment artifacts in directory `XXX-<RESOURCE_NAME>-<RECIPE_KIND>`.
 - **FR-042**: Deployment artifacts MUST include: main.tf, providers.tf, variables.tf, terraform.tfvars.json, tfplan.txt, terraform-context.txt, .terraform.lock.hcl.
 - **FR-043**: System MUST create a GitHub Pull Request containing all plan and artifact files.
@@ -310,7 +339,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-056**: System MUST accept optional `--commit` flag to target specific deployment commit; defaults to latest deployment.
 - **FR-057**: System MUST accept optional `--yes` flag to merge destruction PR without review.
 - **FR-058**: Destruction branch MUST be named `destroy/<APPLICATION_NAME>/<ENVIRONMENT_NAME>-<timestamp>`.
-- **FR-059**: The `rad plan destroy` command MUST generate destruction plan.yaml.
+- **FR-059**: The Radius control plane plan API (with destroy=true) MUST generate destruction plan.yaml.
 - **FR-060**: On destruction PR merge, `rad destroy` MUST execute destruction using the plan.
 - **FR-061**: System MUST store destruction records in `.radius/deploy/<app>/<env>/<commit>/destroy-<commit>.json`.
 
@@ -321,8 +350,12 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-064**: Recipes MUST be stored in `.radius/recipes.yaml` or files referenced from environment `recipes` property.
 - **FR-065**: Recipe entries MUST include `recipeKind` (terraform or bicep) and `recipeLocation` (git URL or OCI registry URL).
 - **FR-066**: Environments MUST be stored in `.radius/env.<NAME>.yaml` files.
-- **FR-067**: Environment files MUST include: name, kind (aws or azure), recipes reference, optional recipeParameters, and provider configuration.
+- **FR-067**: Environment files MUST include: name, kind (aws or azure), recipes reference, optional recipeParameters, provider configuration, and Kubernetes cluster configuration.
+- **FR-067-A**: Environment files MUST include provider-specific cluster configuration: `eksClusterName` and `kubernetesNamespace` for AWS, or `aksClusterName` and `kubernetesNamespace` for Azure.
+- **FR-067-B**: The `rad init` command MUST create environment files with placeholder values for cluster configuration (`<EKS_CLUSTER_NAME>` or `<AKS_CLUSTER_NAME>` and `<KUBE_NAMESPACE>`).
+- **FR-067-C**: The `rad environment connect` command MUST prompt the user to select from existing EKS/AKS clusters and enter a Kubernetes namespace (default: 'default').
 - **FR-068**: Application Models MUST be stored in `.radius/model/<APP_NAME>.bicep`.
+- **FR-068-A**: System MUST provide `rad model` command that creates a sample application model file at `.radius/model/todolist.bicep` with a `Radius.Core/applications` resource, a `Radius.Compute/containers` resource, and a `Radius.Data/postgreSqlDatabases` resource. This is a placeholder for future AI-assisted modeling functionality.
 - **FR-069**: Plans MUST be stored in `.radius/plan/<APP_NAME>/<ENVIRONMENT_NAME>/`.
 - **FR-070**: Deployments MUST be stored in `.radius/deploy/<APP_NAME>/<ENVIRONMENT_NAME>/<COMMIT>/`.
 - **FR-071**: Workspaces MUST be stored in `~/.rad/config.yaml` with `current` property (renamed from `default`).
@@ -355,7 +388,19 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-086**: GitHub Action runner MUST be capable of running k3d cluster (approximately 45 seconds startup, ~875 MiB download).
 - **FR-087**: k3d cluster MUST map `/github_workspace` in containers to `${GITHUB_WORKSPACE}` for file access.
 - **FR-088**: Radius control plane in k3d MUST be configured to use repository-based types, recipes, and environments.
+- **FR-088-A**: Radius installation on k3d MUST use `--skip-contour-install` flag (ingress not needed in ephemeral cluster) and `--set dashboard.enabled=false` (dashboard not needed in CI).
 - **FR-089**: GitHub Actions workflow MUST leverage GitHub PR Checks for deployment status reporting.
+- **FR-089-A**: All GitHub Actions workflow runs MUST be named using the following convention:
+  - Plan workflows: `Radius plan for <app_name> in <env> environment`
+  - Deploy workflows: `Radius deploy for <app_name> in <env> environment`
+  - Destroy workflows: `Radius destroy for <app_name> in <env> environment`
+  - Authentication test workflows: `Radius authentication test for <env> environment`
+- **FR-089-B**: Generated workflows MUST only use external GitHub Actions from trusted sources:
+  - GitHub official actions (e.g., `actions/checkout`)
+  - Radius Project actions (e.g., `radius-project/*`)
+  - Cloud provider official actions: AWS (`aws-actions/*`), Azure (`azure/*`), Google (`google-github-actions/*`)
+  - HashiCorp official actions (e.g., `hashicorp/setup-terraform`)
+  - Direct shell commands for tools without official actions (e.g., k3d installation via official installer script)
 
 #### Resource Type Extensions
 
@@ -417,7 +462,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 
 - **Application Model**: Bicep-based declaration of application resources and their relationships; stored in `.radius/model/<APP_NAME>.bicep`. Uses Radius resource types with environment parameter. Unchanged from current Radius application model format.
 
-- **Deployment Plan**: Ordered sequence of resource provisioning steps generated by `rad plan deploy`; stored in `.radius/plan/<APP>/<ENV>/`. Contains plan.yaml with step ordering and individual deployment artifact directories with Terraform configurations.
+- **Deployment Plan**: Ordered sequence of resource provisioning steps generated by the Radius control plane's plan API (invoked by workflow via `rad deploy --plan` inside k3d); stored in `.radius/plan/<APP>/<ENV>/`. Contains plan.yaml with step ordering and individual deployment artifact directories with Terraform configurations.
 
 - **Deployment Record**: Complete audit of a deployment execution; stored in `.radius/deploy/<APP>/<ENV>/<COMMIT>/`. Contains timing information, git context, step-by-step results, terraform outputs, and captured resource definitions.
 
@@ -627,10 +672,14 @@ provider:
     accountId: <ACCOUNT_ID>
     region: <REGION>
     oidcRoleARN: arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>
+    eksClusterName: <EKS_CLUSTER_NAME>
+    kubernetesNamespace: <KUBE_NAMESPACE>
   # OR for Azure:
   # azure:
   #   subscriptionId: <SUBSCRIPTION_ID>
   #   resourceGroupName: <RESOURCE_GROUP_NAME>
+  #   aksClusterName: <AKS_CLUSTER_NAME>
+  #   kubernetesNamespace: <KUBE_NAMESPACE>
   #   tenantId: <TENANT_ID>
   #   clientId: <CLIENT_ID>
   #   oidcEnabled: true
@@ -663,41 +712,43 @@ workspaces:
 ```bicep
 extension radius
 
-param environment string
+param environment string 
 
-resource app 'Radius.Core/applications@2026-03-01-preview' = {
+resource todolist 'Radius.Core/applications@2025-08-01-preview' = {
   name: 'todolist'
   properties: {
     environment: environment
   }
 }
 
-resource frontend 'Applications.Core/containers@2023-10-01-preview' = {
+resource frontend 'Radius.Compute/containers@2025-08-01-preview' = {
   name: 'frontend'
   properties: {
-    application: app.id
+    application: todolist.id
     environment: environment
-    container: {
-      image: 'ghcr.io/radius-project/samples/demo:latest'
-      ports: {
-        web: {
-          containerPort: 3000
+    containers: {
+      frontend: {
+        image: 'ghcr.io/radius-project/samples/demo:latest'
+        ports: {
+          web: {
+            containerPort: 3000
+          }
         }
       }
     }
     connections: {
-      postgresql: {
-        source: postgresql.id
+      postgresql:{
+        source: db.id
       }
     }
   }
 }
 
-resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
-  name: 'postgresql'
+resource db 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
+  name: 'db'
   properties: {
-    application: app.id
     environment: environment
+    application: todolist.id
     size: 'S'
   }
 }
@@ -711,7 +762,7 @@ resource postgresql 'Radius.Data/postgreSqlDatabases@2025-08-01-preview' = {
 
 ```yaml
 # Radius deployment plan
-# Generated by rad plan
+# Generated by Radius control plane
 # Generated: 2026-02-05T21:35:58Z
 
 application: todolist
@@ -778,7 +829,7 @@ Each deployment step directory (e.g., `.radius/plan/todolist/dev/001-db-terrafor
 **main.tf:**
 ```hcl
 # Radius resource deployment plan
-# Generated by rad plan
+# Generated by Radius control plane
 # Resource: db (Radius.Data/postgreSqlDatabases)
 # Generated: 2026-02-05T21:35:58Z
 
@@ -800,7 +851,7 @@ output "result" {
 **providers.tf:**
 ```hcl
 # Radius resource deployment plan
-# Generated by rad plan
+# Generated by Radius control plane
 # Resource: db (Radius.Data/postgreSqlDatabases)
 # Generated: 2026-02-05T21:35:58Z
 
@@ -822,7 +873,7 @@ provider "kubernetes" {
 **variables.tf:**
 ```hcl
 # Radius resource deployment plan
-# Generated by rad plan
+# Generated by Radius control plane
 # Variables for resource: db (Radius.Data/postgreSqlDatabases)
 # Generated: 2026-02-05T21:36:10Z
 
@@ -903,7 +954,7 @@ variable "context" {
 **terraform-context.txt:**
 ```
 # Terraform Context
-# Generated by rad plan
+# Generated by Radius control plane
 # Generated: 2026-02-05T21:35:58Z
 
 ## Terraform Version

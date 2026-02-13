@@ -64,6 +64,7 @@
 - [X] T025 [US1] Implement GitHub remote validation (parse origin URL) in pkg/cli/cmd/radinit/github.go
 - [X] T026 [US1] Implement gh auth status check in pkg/cli/cmd/radinit/github.go
 - [X] T027 [US1] Implement .radius/ directory creation in pkg/cli/cmd/radinit/github.go
+- [X] T027-A [US1] Create .radius/model/, .radius/plan/, .radius/deploy/ subdirectories with .gitkeep files (FR-014-A) in pkg/cli/cmd/radinit/github.go
 - [X] T028 [US1] Implement resource types fetch from radius-project/resource-types-contrib using sparse checkout in pkg/cli/github/resourcetypes.go
 - [X] T029 [US1] Implement .radius/types.yaml generation from fetched resource types in pkg/cli/config/writers.go
 - [X] T030 [US1] Implement .radius/recipes.yaml generation based on provider/tool selection in pkg/cli/config/writers.go
@@ -72,6 +73,7 @@
 - [X] T032 [US1] Implement ~/.rad/config.yaml update with github kind workspace in pkg/cli/cmd/radinit/github.go
 - [X] T033 [US1] Rename workspace config property "default" to "current" in pkg/cli/config.go (with backward compatibility)
 - [X] T034 [US1] Create embedded workflow templates in pkg/cli/github/workflows.go (using code generation instead of templates)
+- [X] T034-A [US1] Add --skip-contour-install and dashboard.enabled=false to rad install kubernetes in workflows (FR-088-A)
 - [X] T035 [US1] Implement .github/workflows/ directory creation and template generation in pkg/cli/cmd/radinit/github.go
 - [X] T036 [US1] Implement git add and commit with Radius-Action: init trailer in pkg/cli/cmd/radinit/github.go
 - [X] T037 [P] [US1] Add unit tests for new rad init GitHub mode in pkg/cli/cmd/radinit/github_test.go
@@ -123,68 +125,98 @@ Note: All OIDC/cloud setup logic was implemented directly in connect.go rather t
 - [X] T058-H [US2] Display animated progress message during workflow wait (FR-031-F: "Verifying access to Azure/AWS...")
 - [X] T058-I [US2] Display workflow error logs on failure (FR-031-H)
 - [ ] T058-J [P] [US2] Add unit tests for workflow watcher in pkg/cli/github/workflows_test.go
+- [X] T058-K [US2] Add eksClusterName and kubernetesNamespace fields to AWSProviderConfig in pkg/cli/config/environment.go (FR-067-A)
+- [X] T058-L [US2] Add aksClusterName and kubernetesNamespace fields to AzureProviderConfig in pkg/cli/config/environment.go (FR-067-A)
+- [X] T058-M [US2] Update rad init to create placeholder values for cluster config in env file (FR-067-B)
+- [X] T058-N [US2] Add EKS cluster selection prompt in rad environment connect (FR-067-C)
+- [X] T058-O [US2] Add AKS cluster selection prompt in rad environment connect (FR-067-C)
+- [X] T058-P [US2] Add Kubernetes namespace prompt in rad environment connect (FR-067-C)
+- [X] T058-Q [US2] Implement GitHub secret setting via gh secret set for AWS (FR-030-A, FR-030-B)
+- [X] T058-R [US2] Implement GitHub secret setting via gh secret set for Azure (FR-030-A, FR-030-C)
 
 **Checkpoint**: User Story 2 complete - OIDC authentication configured for chosen cloud provider
 
 ---
 
-## Phase 5: User Story 3 - Create Deployment Plan via Pull Request (Priority: P2)
+## Phase 5: User Story 3 - Create Application Model (Priority: P1)
+
+**Goal**: Users can run `rad model` to generate a sample application model file
+
+**Independent Test**: Run `rad model` in initialized repo, verify `.radius/model/todolist.bicep` created with correct structure
+
+### Implementation for User Story 3
+
+- [X] T073 [US3] Create rad model command scaffold in pkg/cli/cmd/model/model.go
+- [X] T073-A [US3] Implement GitHub workspace validation in pkg/cli/cmd/model/model.go
+- [X] T073-B [US3] Implement .radius/model/ directory creation in pkg/cli/cmd/model/model.go
+- [X] T073-C [US3] Implement todolist.bicep template generation in pkg/cli/cmd/model/model.go
+- [X] T073-D [US3] Implement existing file detection with overwrite prompt in pkg/cli/cmd/model/model.go
+- [X] T073-E [US3] Implement git commit with Radius-Action: model trailer in pkg/cli/cmd/model/model.go
+- [X] T073-F [P] [US3] Add unit tests for rad model in pkg/cli/cmd/model/model_test.go
+
+**Checkpoint**: User Story 3 complete - sample application model can be generated
+
+---
+
+## Phase 6: User Story 4 - Create Deployment Plan via Pull Request (Priority: P2)
 
 **Goal**: Users can run `rad pr create` to generate a deployment plan and create a PR for review
 
 **Independent Test**: Have app model in .radius/model/, run `rad pr create --environment dev`, verify PR created with plan files
 
-### Implementation for User Story 3
+### Implementation for User Story 4
 
-- [ ] T059 [US3] Create rad pr command group scaffold in pkg/cli/cmd/pr/pr.go
-- [ ] T060 [US3] Create rad pr create command in pkg/cli/cmd/pr/create/create.go
-- [ ] T061 [US3] Add --environment required flag to rad pr create in pkg/cli/cmd/pr/create/create.go
-- [ ] T062 [US3] Add --application optional flag to rad pr create in pkg/cli/cmd/pr/create/create.go
-- [ ] T063 [US3] Implement GitHub workflow trigger via gh workflow run in pkg/cli/cmd/pr/create/create.go
-- [ ] T064 [US3] Create plan workflow template in pkg/cli/github/workflows/plan.yaml.tmpl
-- [ ] T065 [US3] Implement k3d cluster setup step in workflow template in pkg/cli/github/workflows/plan.yaml.tmpl
-- [ ] T066 [US3] Implement Radius install step in workflow template in pkg/cli/github/workflows/plan.yaml.tmpl
-- [ ] T067 [US3] Create rad plan command group scaffold in pkg/cli/cmd/plan/plan.go
-- [ ] T068 [US3] Create rad plan deploy command in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T069 [US3] Implement plan.yaml generation with ordered steps in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T070 [US3] Implement deployment artifact directory creation (main.tf, providers.tf, etc.) in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T071 [US3] Implement PR creation with plan files via gh pr create in workflow template
-- [ ] T072 [P] [US3] Add unit tests for rad pr create in pkg/cli/cmd/pr/create/create_test.go
-- [ ] T073 [P] [US3] Add unit tests for rad plan deploy in pkg/cli/cmd/plan/deploy/deploy_test.go
+- [X] T059 [US4] Create rad pr command group scaffold in pkg/cli/cmd/pr/pr.go
+- [X] T060 [US4] Create rad pr create command in pkg/cli/cmd/pr/create/create.go
+- [X] T061 [US4] Add --environment required flag to rad pr create in pkg/cli/cmd/pr/create/create.go
+- [X] T062 [US4] Add --application optional flag to rad pr create in pkg/cli/cmd/pr/create/create.go
+- [X] T063 [US4] Implement GitHub workflow trigger via gh workflow run in pkg/cli/cmd/pr/create/create.go
+- [X] T064 [US4] Create plan workflow template in pkg/cli/github/workflows.go (GeneratePlanWorkflow)
+- [X] T065 [US4] Implement k3d cluster setup step in workflow template in pkg/cli/github/workflows.go
+- [X] T066 [US4] Implement Radius install step in workflow template in pkg/cli/github/workflows.go
+- [X] T067 [US4] REMOVED - Plan generation is a control plane API, not a CLI command. The workflow calls `rad deploy --dry-run` which invokes the control plane's plan API.
+- [X] T068 [US4] REMOVED - See T067. Plan API generates plan.yaml.
+- [X] T069 [US4] REMOVED - See T067. Plan API generates plan.yaml with ordered steps.
+- [X] T070 [US4] REMOVED - See T067. Plan API generates deployment artifact directories.
+- [X] T071 [US4] Implement PR creation with plan files via gh pr create in workflow template
+- [X] T072 [P] [US4] Add unit tests for rad pr create in pkg/cli/cmd/pr/create/create_test.go
+- [X] T072-A [US4] Add --plan flag to rad deploy command for plan-only mode (FR-039-A) in pkg/cli/cmd/deploy/deploy.go
+- [X] T072-B [US4] Add --output flag to rad deploy for specifying plan output directory (FR-039-A) in pkg/cli/cmd/deploy/deploy.go
+- [X] T072-C [US4] Implement plan generation via control plane API call in pkg/cli/cmd/deploy/deploy.go
 
-**Checkpoint**: User Story 3 complete - deployment plans can be created and reviewed via PRs
+**Checkpoint**: User Story 4 complete - deployment plans can be created and reviewed via PRs
 
 ---
 
-## Phase 6: User Story 4 - Deploy Application via PR Merge (Priority: P2)
+## Phase 7: User Story 5 - Deploy Application via PR Merge (Priority: P2)
 
 **Goal**: Users can run `rad pr merge` to execute deployment from an approved PR
 
 **Independent Test**: Have deployment PR, run `rad pr merge`, verify resources provisioned and deployment record created
 
-### Implementation for User Story 4
+### Implementation for User Story 5
 
-- [ ] T074 [US4] Create rad pr merge command in pkg/cli/cmd/pr/merge/merge.go
-- [ ] T075 [US4] Add --pr optional flag to specify PR number in pkg/cli/cmd/pr/merge/merge.go
-- [ ] T076 [US4] Add --yes flag for automatic merge without confirmation in pkg/cli/cmd/pr/merge/merge.go
-- [ ] T077 [US4] Implement latest PR detection when --pr not specified in pkg/cli/cmd/pr/merge/merge.go
-- [ ] T078 [US4] Implement PR merge via gh pr merge in pkg/cli/cmd/pr/merge/merge.go
-- [ ] T079 [US4] Create deploy workflow template in pkg/cli/github/workflows/deploy.yaml.tmpl
-- [ ] T080 [US4] Create rad deploy command in pkg/cli/cmd/deploy/deploy.go
-- [ ] T081 [US4] Implement plan.yaml parsing in rad deploy in pkg/cli/cmd/deploy/deploy.go
-- [ ] T082 [US4] Implement sequential Terraform execution using hashicorp/terraform-exec in pkg/cli/cmd/deploy/deploy.go
-- [ ] T083 [US4] Implement deployment record creation in .radius/deploy/<app>/<env>/<commit>/ in pkg/cli/cmd/deploy/deploy.go
-- [ ] T084 [US4] Implement captured resource definition storage (YAML/JSON) in pkg/cli/cmd/deploy/deploy.go
-- [ ] T085 [US4] Implement lock-based concurrency control (reject if locked) in pkg/cli/github/workflows/deploy.yaml.tmpl
-- [ ] T086 [US4] Implement partial failure handling (leave resources in place) in pkg/cli/cmd/deploy/deploy.go
-- [ ] T087 [P] [US4] Add unit tests for rad pr merge in pkg/cli/cmd/pr/merge/merge_test.go
-- [ ] T088 [P] [US4] Add unit tests for rad deploy in pkg/cli/cmd/deploy/deploy_test.go
+- [X] T074 [US5] Create rad pr merge command in pkg/cli/cmd/pr/merge/merge.go
+- [X] T075 [US5] Add --pr optional flag to specify PR number in pkg/cli/cmd/pr/merge/merge.go
+- [X] T076 [US5] Add --yes flag for automatic merge without confirmation in pkg/cli/cmd/pr/merge/merge.go
+- [X] T077 [US5] Implement latest PR detection when --pr not specified in pkg/cli/cmd/pr/merge/merge.go
+- [X] T078 [US5] Implement PR merge via gh pr merge in pkg/cli/cmd/pr/merge/merge.go
+- [X] T079 [US5] Create deploy workflow template in pkg/cli/github/workflows.go (GenerateDeployWorkflow - already exists)
+- [ ] T080 [US5] Create rad deploy command in pkg/cli/cmd/deploy/deploy.go
+- [ ] T081 [US5] Implement plan.yaml parsing in rad deploy in pkg/cli/cmd/deploy/deploy.go
+- [ ] T082 [US5] Implement sequential Terraform execution using hashicorp/terraform-exec in pkg/cli/cmd/deploy/deploy.go
+- [ ] T083 [US5] Implement deployment record creation in .radius/deploy/<app>/<env>/<commit>/ in pkg/cli/cmd/deploy/deploy.go
+- [ ] T084 [US5] Implement captured resource definition storage (YAML/JSON) in pkg/cli/cmd/deploy/deploy.go
+- [ ] T085 [US5] Implement lock-based concurrency control (reject if locked) in pkg/cli/github/workflows/deploy.yaml.tmpl
+- [ ] T086 [US5] Implement partial failure handling (leave resources in place) in pkg/cli/cmd/deploy/deploy.go
+- [X] T087 [P] [US5] Add unit tests for rad pr merge in pkg/cli/cmd/pr/merge/merge_test.go
+- [ ] T088 [P] [US5] Add unit tests for rad deploy in pkg/cli/cmd/deploy/deploy_test.go
 
-**Checkpoint**: User Story 4 complete - deployments execute on PR merge with audit records
+**Checkpoint**: User Story 5 complete - deployments execute on PR merge with audit records
 
 ---
 
-## Phase 7: User Story 5 - Destroy Application Resources (Priority: P3)
+## Phase 8: User Story 6 - Destroy Application Resources (Priority: P3)
 
 **Goal**: Users can run `rad pr destroy` to tear down deployed resources
 
@@ -192,62 +224,62 @@ Note: All OIDC/cloud setup logic was implemented directly in connect.go rather t
 
 ### Implementation for User Story 5
 
-- [ ] T089 [US5] Create rad pr destroy command in pkg/cli/cmd/pr/destroy/destroy.go
-- [ ] T090 [US5] Add --environment required flag in pkg/cli/cmd/pr/destroy/destroy.go
-- [ ] T091 [US5] Add --application required flag (per clarification) in pkg/cli/cmd/pr/destroy/destroy.go
-- [ ] T092 [US5] Add --commit optional flag to target specific deployment in pkg/cli/cmd/pr/destroy/destroy.go
-- [ ] T093 [US5] Add --yes flag for automatic merge in pkg/cli/cmd/pr/destroy/destroy.go
-- [ ] T094 [US5] Create rad plan destroy command in pkg/cli/cmd/plan/destroy/destroy.go
-- [ ] T095 [US5] Implement destruction plan.yaml generation in pkg/cli/cmd/plan/destroy/destroy.go
-- [ ] T096 [US5] Create destroy workflow template in pkg/cli/github/workflows/destroy.yaml.tmpl
-- [ ] T097 [US5] Create rad destroy command in pkg/cli/cmd/destroy/destroy.go
-- [ ] T098 [US5] Implement Terraform destroy execution in pkg/cli/cmd/destroy/destroy.go
-- [ ] T099 [US5] Implement destruction record creation in .radius/deploy/<app>/<env>/<commit>/ in pkg/cli/cmd/destroy/destroy.go
-- [ ] T100 [P] [US5] Add unit tests for rad pr destroy in pkg/cli/cmd/pr/destroy/destroy_test.go
-- [ ] T101 [P] [US5] Add unit tests for rad destroy in pkg/cli/cmd/destroy/destroy_test.go
+- [ ] T089 [US6] Create rad pr destroy command in pkg/cli/cmd/pr/destroy/destroy.go
+- [ ] T090 [US6] Add --environment required flag in pkg/cli/cmd/pr/destroy/destroy.go
+- [ ] T091 [US6] Add --application required flag (per clarification) in pkg/cli/cmd/pr/destroy/destroy.go
+- [ ] T092 [US6] Add --commit optional flag to target specific deployment in pkg/cli/cmd/pr/destroy/destroy.go
+- [ ] T093 [US6] Add --yes flag for automatic merge in pkg/cli/cmd/pr/destroy/destroy.go
+- [ ] T094 [US6] Create rad plan destroy command in pkg/cli/cmd/plan/destroy/destroy.go
+- [ ] T095 [US6] Implement destruction plan.yaml generation in pkg/cli/cmd/plan/destroy/destroy.go
+- [ ] T096 [US6] Create destroy workflow template in pkg/cli/github/workflows/destroy.yaml.tmpl
+- [ ] T097 [US6] Create rad destroy command in pkg/cli/cmd/destroy/destroy.go
+- [ ] T098 [US6] Implement Terraform destroy execution in pkg/cli/cmd/destroy/destroy.go
+- [ ] T099 [US6] Implement destruction record creation in .radius/deploy/<app>/<env>/<commit>/ in pkg/cli/cmd/destroy/destroy.go
+- [ ] T100 [P] [US6] Add unit tests for rad pr destroy in pkg/cli/cmd/pr/destroy/destroy_test.go
+- [ ] T101 [P] [US6] Add unit tests for rad destroy in pkg/cli/cmd/destroy/destroy_test.go
 
-**Checkpoint**: User Story 5 complete - full lifecycle with destroy capability
+**Checkpoint**: User Story 6 complete - full lifecycle with destroy capability
 
 ---
 
-## Phase 8: User Story 6 - Manage Workspaces Across Repositories (Priority: P3)
+## Phase 9: User Story 7 - Manage Workspaces Across Repositories (Priority: P3)
 
 **Goal**: Users can switch between GitHub and Kubernetes workspaces seamlessly
 
 **Independent Test**: Configure both workspace types in ~/.rad/config.yaml, switch between them, verify command behavior adapts
 
-### Implementation for User Story 6
+### Implementation for User Story 7
 
-- [ ] T102 [US6] Update rad workspace commands to support github kind in pkg/cli/cmd/workspace/
-- [ ] T103 [US6] Implement GitHub workspace warning for rad resource-type commands in pkg/cli/cmd/resourcetype/
-- [ ] T104 [US6] Implement GitHub workspace warning for rad environment commands in pkg/cli/cmd/environment/
-- [ ] T105 [US6] Implement GitHub workspace warning for rad recipe commands in pkg/cli/cmd/recipe/
-- [ ] T106 [US6] Update rad workspace switch to handle github kind in pkg/cli/cmd/workspace/switch/switch.go
-- [ ] T107 [P] [US6] Add unit tests for workspace switching in pkg/cli/cmd/workspace/switch/switch_test.go
+- [ ] T102 [US7] Update rad workspace commands to support github kind in pkg/cli/cmd/workspace/
+- [ ] T103 [US7] Implement GitHub workspace warning for rad resource-type commands in pkg/cli/cmd/resourcetype/
+- [ ] T104 [US7] Implement GitHub workspace warning for rad environment commands in pkg/cli/cmd/environment/
+- [ ] T105 [US7] Implement GitHub workspace warning for rad recipe commands in pkg/cli/cmd/recipe/
+- [ ] T106 [US7] Update rad workspace switch to handle github kind in pkg/cli/cmd/workspace/switch/switch.go
+- [ ] T107 [P] [US7] Add unit tests for workspace switching in pkg/cli/cmd/workspace/switch/switch_test.go
 
-**Checkpoint**: User Story 6 complete - multi-workspace support with GitHub and Kubernetes
+**Checkpoint**: User Story 7 complete - multi-workspace support with GitHub and Kubernetes
 
 ---
 
-## Phase 9: User Story 7 - View and Understand Deployment Plans (Priority: P3)
+## Phase 10: User Story 8 - View and Understand Deployment Plans (Priority: P3)
 
 **Goal**: Deployment plans are clear and auditable in PR reviews
 
 **Independent Test**: Create deployment PR, verify plan.yaml and artifacts are readable and document expected changes clearly
 
-### Implementation for User Story 7
+### Implementation for User Story 8
 
-- [ ] T108 [US7] Enhance plan.yaml formatting for PR readability in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T109 [US7] Add summary section with total steps, add/change/destroy counts in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T110 [US7] Generate terraform-context.txt with version and environment info in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T111 [US7] Implement allVersionsPinned check in plan summary in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T112 [P] [US7] Add unit tests for plan formatting in pkg/cli/cmd/plan/deploy/deploy_test.go
+- [ ] T108 [US8] Enhance plan.yaml formatting for PR readability in pkg/cli/cmd/plan/deploy/deploy.go
+- [ ] T109 [US8] Add summary section with total steps, add/change/destroy counts in pkg/cli/cmd/plan/deploy/deploy.go
+- [ ] T110 [US8] Generate terraform-context.txt with version and environment info in pkg/cli/cmd/plan/deploy/deploy.go
+- [ ] T111 [US8] Implement allVersionsPinned check in plan summary in pkg/cli/cmd/plan/deploy/deploy.go
+- [ ] T112 [P] [US8] Add unit tests for plan formatting in pkg/cli/cmd/plan/deploy/deploy_test.go
 
-**Checkpoint**: User Story 7 complete - deployment plans are clear and auditable
+**Checkpoint**: User Story 8 complete - deployment plans are clear and auditable
 
 ---
 
-## Phase 10: Polish & Cross-Cutting Concerns
+## Phase 11: Polish & Cross-Cutting Concerns
 
 **Purpose**: Improvements that affect multiple user stories
 
@@ -266,9 +298,9 @@ Note: All OIDC/cloud setup logic was implemented directly in connect.go rather t
 
 - **Phase 1 (Setup)**: No dependencies - can start immediately
 - **Phase 2 (Foundational)**: Depends on Phase 1 - BLOCKS all user stories
-- **Phases 3-4 (US1, US2)**: P1 priority - complete before P2/P3 user stories
-- **Phases 5-6 (US3, US4)**: P2 priority - depend on Phase 2, can parallel with each other
-- **Phases 7-9 (US5, US6, US7)**: P3 priority - depend on Phase 2, can parallel with each other
+- **Phases 3-5 (US1, US2, US3)**: P1 priority - complete before P2/P3 user stories
+- **Phases 6-7 (US4, US5)**: P2 priority - depend on Phase 2, can parallel with each other
+- **Phases 8-10 (US6, US7, US8)**: P3 priority - depend on Phase 2, can parallel with each other
 - **Phase 10 (Polish)**: Depends on all desired user stories being complete
 
 ### User Story Dependencies

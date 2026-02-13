@@ -285,6 +285,34 @@ func (c *Client) GetLatestWorkflowRun(workflowFile string) (*WorkflowRun, error)
 	return &runs[0], nil
 }
 
+// GetPendingWorkflowRun gets a workflow run that is queued or in_progress.
+// Returns nil if no pending run is found.
+func (c *Client) GetPendingWorkflowRun(workflowFile string) (*WorkflowRun, error) {
+	output, err := c.runCommand(
+		"run", "list",
+		"--workflow", workflowFile,
+		"--limit", "5",
+		"--json", "databaseId,name,status,conclusion,url,headBranch,event",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workflow runs: %w", err)
+	}
+
+	var runs []WorkflowRun
+	if err := json.Unmarshal([]byte(output), &runs); err != nil {
+		return nil, fmt.Errorf("failed to parse workflow runs: %w", err)
+	}
+
+	// Find a run that is not yet completed
+	for _, run := range runs {
+		if run.Status == "queued" || run.Status == "in_progress" {
+			return &run, nil
+		}
+	}
+
+	return nil, nil
+}
+
 // WatchWorkflowRun waits for a workflow run to complete, calling the progress callback periodically.
 // Returns the final workflow run status, or an error if watching fails.
 func (c *Client) WatchWorkflowRun(runID int64, progressCallback func(status string)) (*WorkflowRun, error) {
