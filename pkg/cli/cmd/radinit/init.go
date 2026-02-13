@@ -94,6 +94,12 @@ rad init --set-string 'global.imagePullSecrets[0].name=azure-cred' \
 
 ## Initialize with custom values from a file
 rad init --set-file global.rootCA.cert=/path/to/rootCA.crt
+
+## Initialize in GitHub mode (stores state in repository instead of Kubernetes)
+rad init --github --provider aws --deployment-tool terraform
+
+## Initialize in GitHub mode with Azure
+rad init --github --provider azure --deployment-tool bicep --environment production
 `,
 		Args: cobra.ExactArgs(0),
 		RunE: framework.RunCommand(runner),
@@ -104,6 +110,12 @@ rad init --set-file global.rootCA.cert=/path/to/rootCA.crt
 	cmd.Flags().Bool("full", false, "Prompt user for all available configuration options")
 	cmd.Flags().StringArrayVar(&runner.Set, "set", []string{}, "Set values on the command line (can specify multiple or separate values with commas: key1=val1,key2=val2)")
 	cmd.Flags().StringArrayVar(&runner.SetFile, "set-file", []string{}, "Set values from files on the command line (can specify multiple or separate files with commas: key1=filename1,key2=filename2)")
+
+	// GitHub mode flags
+	cmd.Flags().BoolVar(&runner.GitHub, "github", false, "Initialize in GitHub mode (stores state in repository)")
+	cmd.Flags().StringVar(&runner.Provider, "provider", "", "Cloud provider for GitHub mode (aws or azure)")
+	cmd.Flags().StringVar(&runner.DeploymentTool, "deployment-tool", "terraform", "Infrastructure deployment tool (terraform or bicep)")
+	cmd.Flags().StringVar(&runner.EnvironmentName, "environment", "default", "Environment name for GitHub mode")
 	return cmd, runner
 }
 
@@ -151,6 +163,21 @@ type Runner struct {
 	// SetFile is the list of additional Helm values from files.
 	SetFile []string
 
+	// GitHub indicates whether to initialize in GitHub mode.
+	GitHub bool
+
+	// Provider is the cloud provider for GitHub mode (aws or azure).
+	Provider string
+
+	// DeploymentTool is the infrastructure tool for GitHub mode (terraform or bicep).
+	DeploymentTool string
+
+	// EnvironmentName is the environment name for GitHub mode.
+	EnvironmentName string
+
+	// githubOpts holds GitHub-specific options populated during validation.
+	githubOpts *githubInitOptions
+
 	// Options provides the options to used for Radius initialization. This will be populated by Validate.
 	Options *initOptions
 }
@@ -194,6 +221,11 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Handle GitHub mode separately
+	if r.GitHub {
+		return r.validateGitHubMode(cmd)
+	}
+
 	for {
 		options, workspace, err := r.enterInitOptions(cmd.Context())
 		if err != nil {
@@ -226,6 +258,11 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 // Run creates a progress channel, installs the radius control plane, creates an environment, configures cloud
 // providers, scaffolds an application, and updates the config file, all while displaying progress updates to the UI.
 func (r *Runner) Run(ctx context.Context) error {
+	// GitHub mode has a separate execution path
+	if r.GitHub {
+		return r.runGitHubInit(ctx)
+	}
+
 	config := r.ConfigFileInterface.ConfigFromContext(ctx)
 
 	// Use this channel to send progress updates to the UI.

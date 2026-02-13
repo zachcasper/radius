@@ -109,7 +109,7 @@ func Test_Run(t *testing.T) {
 
 		expected := []any{
 			output.LogOutput{
-				Format: "Default workspace is already set to %v",
+				Format: "Current workspace is already set to %v",
 				Params: []any{"current-workspace"},
 			},
 		}
@@ -150,7 +150,7 @@ func Test_Run(t *testing.T) {
 
 		expected := []any{
 			output.LogOutput{
-				Format: "Switching default workspace to %v",
+				Format: "Switching current workspace to %v",
 				Params: []any{"new-workspace"},
 			},
 		}
@@ -195,7 +195,7 @@ func Test_Run(t *testing.T) {
 
 		expected := []any{
 			output.LogOutput{
-				Format: "Switching default workspace from %v to %v",
+				Format: "Switching current workspace from %v to %v",
 				Params: []any{"current-workspace", "new-workspace"},
 			},
 		}

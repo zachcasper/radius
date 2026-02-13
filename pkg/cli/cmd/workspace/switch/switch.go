@@ -102,24 +102,25 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 // Run runs the `rad workspace switch` command.
 //
 
-// Run checks if the default workspace is already set to the given workspace name, and if not, switches the default
+// Run checks if the current workspace is already set to the given workspace name, and if not, switches the current
 // workspace to the given workspace name. It returns an error if the workspace name is invalid or if there is an issue
-// setting the default workspace.
+// setting the current workspace.
 func (r *Runner) Run(ctx context.Context) error {
 	section, err := cli.ReadWorkspaceSection(r.ConfigHolder.Config)
 	if err != nil {
 		return err
 	}
 
-	if strings.EqualFold(section.Default, r.WorkspaceName) {
-		r.Output.LogInfo("Default workspace is already set to %v", r.WorkspaceName)
+	currentName := section.GetCurrentWorkspaceName()
+	if strings.EqualFold(currentName, r.WorkspaceName) {
+		r.Output.LogInfo("Current workspace is already set to %v", r.WorkspaceName)
 		return nil
 	}
 
-	if section.Default == "" {
-		r.Output.LogInfo("Switching default workspace to %v", r.WorkspaceName)
+	if currentName == "" {
+		r.Output.LogInfo("Switching current workspace to %v", r.WorkspaceName)
 	} else {
-		r.Output.LogInfo("Switching default workspace from %v to %v", section.Default, r.WorkspaceName)
+		r.Output.LogInfo("Switching current workspace from %v to %v", currentName, r.WorkspaceName)
 	}
 
 	err = r.ConfigFileInterface.SetDefaultWorkspace(ctx, r.ConfigHolder.Config, r.WorkspaceName)

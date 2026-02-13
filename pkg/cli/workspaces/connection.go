@@ -29,6 +29,7 @@ import (
 )
 
 const KindKubernetes string = "kubernetes"
+const KindGitHub string = "github"
 
 // MakeFallbackWorkspace creates an un-named workspace that will use the current KubeContext.
 // This is is used in fallback cases where the user has no config.
@@ -89,6 +90,19 @@ func (ws Workspace) ConnectionConfig() (ConnectionConfig, error) {
 		}
 
 		return config, nil
+	case KindGitHub:
+		config := &GitHubConnectionConfig{}
+		decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{ErrorUnused: true, Result: config})
+		if err != nil {
+			return nil, err
+		}
+
+		err = decoder.Decode(ws.Connection)
+		if err != nil {
+			return nil, err
+		}
+
+		return config, nil
 	default:
 		return nil, fmt.Errorf("unsupported connection kind '%s'", kind)
 	}
@@ -128,6 +142,13 @@ func (ws Workspace) ConnectionConfigEquals(other ConnectionConfig) bool {
 		}
 
 		return ws.Connection["kind"] == KindKubernetes && ws.IsSameKubernetesContext(kc.Context)
+	case KindGitHub:
+		gc, ok := other.(*GitHubConnectionConfig)
+		if !ok {
+			return false
+		}
+
+		return ws.Connection["kind"] == KindGitHub && ws.IsSameGitHubURL(gc.URL)
 	default:
 		return false
 	}
@@ -157,6 +178,37 @@ func (ws Workspace) KubernetesContext() (string, bool) {
 // the given "kubeContext" string and returns a boolean value accordingly.
 func (ws Workspace) IsSameKubernetesContext(kubeContext string) bool {
 	return ws.Connection["context"] == kubeContext
+}
+
+// GitHubURL checks if the workspace connection is of type GitHub and returns the URL string if it exists,
+// otherwise it returns an empty string and false.
+func (ws Workspace) GitHubURL() (string, bool) {
+	if ws.Connection["kind"] != KindGitHub {
+		return "", false
+	}
+
+	obj, ok := ws.Connection["url"]
+	if !ok {
+		return "", false
+	}
+
+	str, ok := obj.(string)
+	if !ok {
+		return "", false
+	}
+
+	return str, true
+}
+
+// IsSameGitHubURL checks if the "url" field of the "Connection" map of the "Workspace" struct is equal to
+// the given "url" string and returns a boolean value accordingly.
+func (ws Workspace) IsSameGitHubURL(githubURL string) bool {
+	return ws.Connection["url"] == githubURL
+}
+
+// IsGitHubWorkspace returns true if the workspace connection kind is GitHub.
+func (ws Workspace) IsGitHubWorkspace() bool {
+	return ws.Connection["kind"] == KindGitHub
 }
 
 var _ ConnectionConfig = (*KubernetesConnectionConfig)(nil)

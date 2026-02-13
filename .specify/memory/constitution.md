@@ -292,8 +292,16 @@ Features requiring design specifications (new resource types, architectural chan
 3. **Plan** (`.specify/features/*/plan.md`): Create technical implementation plan with architecture, file structure, and constitution compliance check
 4. **Tasks** (`.specify/features/*/tasks.md`): Break down plan into actionable, testable tasks organized by user story priority
 5. **Implement**: Execute tasks according to plan with iterative validation and testing
+6. **Defects** (`.specify/features/*/defects.md`): Track implementation defects and lessons learned for spec improvement
 
 Each phase MUST be reviewed and approved before proceeding to the next. The design note PR process in `design-notes` repository precedes implementation work in the `radius` repository.
+
+**Defect Tracking**: During implementation, record any defects discovered in `defects.md` with:
+- What went wrong (spec gap, implementation bug, design flaw, assumption error)
+- How it was resolved
+- What changes should be made to the spec to prevent recurrence
+
+This feedback loop ensures specifications improve over time and patterns that caused issues are not repeated.
 
 ### Code Review Standards
 

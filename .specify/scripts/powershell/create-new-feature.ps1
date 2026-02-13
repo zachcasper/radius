@@ -273,6 +273,16 @@ else {
     New-Item -ItemType File -Path $specFile | Out-Null
 }
 
+# Also create defects.md for tracking implementation issues
+$defectsTemplate = Join-Path $repoRoot '.specify/templates/defects-template.md'
+$defectsFile = Join-Path $featureDir 'defects.md'
+if (Test-Path $defectsTemplate) {
+    Copy-Item $defectsTemplate $defectsFile -Force
+}
+else {
+    New-Item -ItemType File -Path $defectsFile | Out-Null
+}
+
 # Set the SPECIFY_FEATURE environment variable for the current session
 $env:SPECIFY_FEATURE = $branchName
 

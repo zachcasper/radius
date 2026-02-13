@@ -19,7 +19,8 @@ Implement "Radius on GitHub" mode enabling users to deploy cloud applications us
 **Project Type**: Single monorepo with multiple command targets  
 **Performance Goals**: `rad init` < 5 minutes, k3d + Radius setup < 60 seconds, deployment of 5 resources < 15 minutes  
 **Constraints**: Terraform-only initially (Bicep future), AKS/EKS targets only, single active deployment per app/env  
-**Scale/Scope**: Individual repositories with multiple environments, concurrent users via Git branching
+**Scale/Scope**: Individual repositories with multiple environments, concurrent users via Git branching  
+**Template Embedding**: Workflow templates (`.github/workflows/radius-*.yml`) are embedded in the CLI binary using Go's `embed` package from `pkg/cli/github/workflows/` directory
 
 ## Constitution Check
 

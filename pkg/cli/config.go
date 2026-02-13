@@ -44,8 +44,23 @@ const (
 )
 
 type WorkspaceSection struct {
-	Default string                          `json:"default" mapstructure:"default" yaml:"default"`
-	Items   map[string]workspaces.Workspace `json:"items" mapstructure:"items" yaml:"items" validate:"dive"`
+	// Current is the name of the currently selected workspace. This is the preferred field.
+	Current string `json:"current,omitempty" mapstructure:"current" yaml:"current,omitempty"`
+
+	// Default is the name of the default workspace (deprecated, use Current instead).
+	// This field is maintained for backward compatibility with existing config files.
+	Default string `json:"default,omitempty" mapstructure:"default" yaml:"default,omitempty"`
+
+	Items map[string]workspaces.Workspace `json:"items" mapstructure:"items" yaml:"items" validate:"dive"`
+}
+
+// GetCurrentWorkspaceName returns the name of the currently selected workspace.
+// It prefers Current over Default for backward compatibility.
+func (ws WorkspaceSection) GetCurrentWorkspaceName() string {
+	if ws.Current != "" {
+		return ws.Current
+	}
+	return ws.Default
 }
 
 // HasWorkspace returns true if the specified workspace already exists. This function ignores the default workspace.
@@ -57,14 +72,15 @@ func (ws WorkspaceSection) HasWorkspace(name string) bool {
 // GetWorkspace returns the specified workspace or the default workspace if 'name' is empty.
 //
 
-// GetWorkspace checks if the given workspace name is empty and if so, checks if a default workspace is set. If a
+// GetWorkspace checks if the given workspace name is empty and if so, checks if a current/default workspace is set. If a
 // workspace name is provided, it looks up the workspace in the Items map and returns it. If the workspace does not exist,
 // it returns an error.
 func (ws WorkspaceSection) GetWorkspace(name string) (*workspaces.Workspace, error) {
-	if name == "" && ws.Default == "" {
+	currentName := ws.GetCurrentWorkspaceName()
+	if name == "" && currentName == "" {
 		return nil, nil
 	} else if name == "" {
-		name = ws.Default
+		name = currentName
 	}
 
 	result, ok := ws.Items[cases.Fold().String(name)]

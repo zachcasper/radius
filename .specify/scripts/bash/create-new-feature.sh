@@ -284,6 +284,11 @@ TEMPLATE="$REPO_ROOT/.specify/templates/spec-template.md"
 SPEC_FILE="$FEATURE_DIR/spec.md"
 if [ -f "$TEMPLATE" ]; then cp "$TEMPLATE" "$SPEC_FILE"; else touch "$SPEC_FILE"; fi
 
+# Also create defects.md for tracking implementation issues
+DEFECTS_TEMPLATE="$REPO_ROOT/.specify/templates/defects-template.md"
+DEFECTS_FILE="$FEATURE_DIR/defects.md"
+if [ -f "$DEFECTS_TEMPLATE" ]; then cp "$DEFECTS_TEMPLATE" "$DEFECTS_FILE"; else touch "$DEFECTS_FILE"; fi
+
 # Set the SPECIFY_FEATURE environment variable for the current session
 export SPECIFY_FEATURE="$BRANCH_NAME"
 

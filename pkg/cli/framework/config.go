@@ -67,20 +67,24 @@ var _ ConfigFileInterface = (*ConfigFileInterfaceImpl)(nil)
 type ConfigFileInterfaceImpl struct {
 }
 
-// SetDefaultWorkspace edits the configuration file to set the default workspace to the given name, and returns an error
+// SetDefaultWorkspace edits the configuration file to set the current workspace to the given name, and returns an error
 // if the operation fails.
 func (i *ConfigFileInterfaceImpl) SetDefaultWorkspace(ctx context.Context, config *viper.Viper, name string) error {
 	return cli.EditWorkspaces(ctx, config, func(section *cli.WorkspaceSection) error {
-		section.Default = name
+		section.Current = name
 		return nil
 	})
 }
 
-// DeleteWorkspace deletes a workspace from the configuration file and sets the default workspace to an empty string if
-// the deleted workspace was the default workspace. It returns an error if the workspace could not be deleted.
+// DeleteWorkspace deletes a workspace from the configuration file and sets the current workspace to an empty string if
+// the deleted workspace was the current workspace. It returns an error if the workspace could not be deleted.
 func (i *ConfigFileInterfaceImpl) DeleteWorkspace(ctx context.Context, config *viper.Viper, name string) error {
 	return cli.EditWorkspaces(ctx, config, func(section *cli.WorkspaceSection) error {
 		delete(section.Items, strings.ToLower(name))
+		// Check both Current and legacy Default fields
+		if strings.EqualFold(section.Current, name) {
+			section.Current = ""
+		}
 		if strings.EqualFold(section.Default, name) {
 			section.Default = ""
 		}
@@ -99,7 +103,7 @@ func (i *ConfigFileInterfaceImpl) EditWorkspaces(ctx context.Context, config *vi
 		// TODO: Add checks for duplicate workspace names and append random number mechanisms
 		workspace := workspace
 		name := strings.ToLower(workspace.Name)
-		section.Default = name
+		section.Current = name
 		section.Items[name] = *workspace
 
 		return nil
