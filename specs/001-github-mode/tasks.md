@@ -89,26 +89,40 @@
 
 ### Implementation for User Story 2
 
-- [ ] T039 [US2] Create rad environment connect command scaffold in pkg/cli/cmd/environment/connect/connect.go
-- [ ] T040 [US2] Add --environment flag with default to current workspace environment in pkg/cli/cmd/environment/connect/connect.go
-- [ ] T041 [US2] Implement GitHub workspace validation check in pkg/cli/cmd/environment/connect/connect.go
-- [ ] T042 [US2] Create AWS OIDC setup helper in pkg/cli/github/oidc_aws.go
-- [ ] T043 [US2] Implement AWS account ID prompt (default from aws sts get-caller-identity) in pkg/cli/github/oidc_aws.go
-- [ ] T044 [US2] Implement AWS region prompt (default from aws configure get region) in pkg/cli/github/oidc_aws.go
-- [ ] T045 [US2] Implement AWS IAM OIDC provider creation via aws CLI in pkg/cli/github/oidc_aws.go
-- [ ] T046 [US2] Implement AWS IAM role creation with trust policy for GitHub Actions in pkg/cli/github/oidc_aws.go
-- [ ] T047 [US2] Implement S3 state backend bucket creation in pkg/cli/github/oidc_aws.go
-- [ ] T048 [US2] Implement DynamoDB table creation for state locking in pkg/cli/github/oidc_aws.go
-- [ ] T049 [P] [US2] Create Azure OIDC setup helper in pkg/cli/github/oidc_azure.go
-- [ ] T050 [P] [US2] Implement Azure subscription list prompt in pkg/cli/github/oidc_azure.go
-- [ ] T051 [P] [US2] Implement Azure AD app creation via az CLI in pkg/cli/github/oidc_azure.go
-- [ ] T052 [P] [US2] Implement Azure federated credential creation for GitHub Actions in pkg/cli/github/oidc_azure.go
-- [ ] T053 [P] [US2] Implement Azure Storage account/container creation for state in pkg/cli/github/oidc_azure.go
-- [ ] T054 [US2] Implement .radius/env.<name>.yaml update with provider config in pkg/cli/cmd/environment/connect/connect.go
-- [ ] T055 [US2] Implement git commit with Radius-Action: environment-connect trailer in pkg/cli/cmd/environment/connect/connect.go
-- [ ] T056 [P] [US2] Add unit tests for rad environment connect in pkg/cli/cmd/environment/connect/connect_test.go
-- [ ] T057 [P] [US2] Add unit tests for AWS OIDC helper in pkg/cli/github/oidc_aws_test.go
-- [ ] T058 [P] [US2] Add unit tests for Azure OIDC helper in pkg/cli/github/oidc_azure_test.go
+Note: All OIDC/cloud setup logic was implemented directly in connect.go rather than separate helper files, following the single-file pattern used in other commands.
+
+- [X] T039 [US2] Create rad environment connect command scaffold in pkg/cli/cmd/env/connect/connect.go
+- [X] T040 [US2] Add --environment flag with default to current workspace environment in pkg/cli/cmd/env/connect/connect.go
+- [X] T041 [US2] Implement GitHub workspace validation check in pkg/cli/cmd/env/connect/connect.go
+- [X] T042 [US2] Create AWS OIDC setup helper in pkg/cli/cmd/env/connect/connect.go (connectAWS, createAWSRole methods)
+- [X] T043 [US2] Implement AWS account ID prompt (default from aws sts get-caller-identity) in pkg/cli/cmd/env/connect/connect.go
+- [X] T044 [US2] Implement AWS region prompt (default from aws configure get region) in pkg/cli/cmd/env/connect/connect.go
+- [X] T045 [US2] Implement AWS IAM OIDC provider creation via aws CLI in pkg/cli/cmd/env/connect/connect.go
+- [X] T046 [US2] Implement AWS IAM role creation with trust policy for GitHub Actions in pkg/cli/cmd/env/connect/connect.go
+- [X] T047 [US2] Implement S3 state backend bucket creation in pkg/cli/cmd/env/connect/connect.go
+- [X] T048 [US2] Implement DynamoDB table creation for state locking in pkg/cli/cmd/env/connect/connect.go
+- [X] T049 [P] [US2] Create Azure OIDC setup helper in pkg/cli/cmd/env/connect/connect.go (connectAzure, createAzureApp methods)
+- [X] T050 [P] [US2] Implement Azure subscription list prompt in pkg/cli/cmd/env/connect/connect.go
+- [X] T050-A [P] [US2] Implement Azure resource group list prompt with create new option in pkg/cli/cmd/env/connect/connect.go (FR-025)
+- [X] T050-B [P] [US2] Implement Azure AD application list prompt for existing apps in pkg/cli/cmd/env/connect/connect.go (FR-026)
+- [X] T051 [P] [US2] Implement Azure AD app creation via az CLI in pkg/cli/cmd/env/connect/connect.go
+- [X] T052 [P] [US2] Implement Azure federated credential creation for GitHub Actions in pkg/cli/cmd/env/connect/connect.go
+- [X] T053 [P] [US2] Implement Azure Storage account/container creation for state in pkg/cli/cmd/env/connect/connect.go
+- [X] T054 [US2] Implement .radius/env.<name>.yaml update with provider config in pkg/cli/cmd/env/connect/connect.go
+- [X] T055 [US2] Implement git commit with Radius-Action: environment-connect trailer in pkg/cli/cmd/env/connect/connect.go
+- [X] T056 [P] [US2] Add unit tests for rad environment connect in pkg/cli/cmd/env/connect/connect_test.go
+- [X] T057 [P] [US2] Add unit tests for AWS OIDC helper in pkg/cli/cmd/env/connect/connect_test.go
+- [X] T058 [P] [US2] Add unit tests for Azure OIDC helper in pkg/cli/cmd/env/connect/connect_test.go
+- [X] T058-A [US2] Create auth test workflow template generator in pkg/cli/github/workflows.go (generateAuthTestWorkflow function)
+- [X] T058-B [US2] Implement AWS auth test job in workflow template (uses aws-actions/configure-aws-credentials)
+- [X] T058-C [US2] Implement Azure auth test job in workflow template (uses azure/login)
+- [X] T058-D [US2] Add workflow generation call in rad environment connect after successful OIDC setup
+- [X] T058-E [P] [US2] Add unit tests for auth test workflow generation in pkg/cli/github/workflows_test.go
+- [X] T058-F [US2] Implement workflow run watcher in pkg/cli/github/client.go (FR-031-F: wait for workflow completion)
+- [X] T058-G [US2] Add git push and workflow trigger after OIDC setup in connect.go (FR-031-F)
+- [X] T058-H [US2] Display animated progress message during workflow wait (FR-031-F: "Verifying access to Azure/AWS...")
+- [X] T058-I [US2] Display workflow error logs on failure (FR-031-H)
+- [ ] T058-J [P] [US2] Add unit tests for workflow watcher in pkg/cli/github/workflows_test.go
 
 **Checkpoint**: User Story 2 complete - OIDC authentication configured for chosen cloud provider
 

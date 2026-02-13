@@ -264,6 +264,48 @@ return map[string]any{
 
 ---
 
+## 8. Resource Types Contrib Repository
+
+**Repository**: `radius-project/resource-types-contrib`
+
+**Structure** (as of 2026):
+```
+resource-types-contrib/
+├── Compute/                           # Namespace directory
+│   └── <resourceType>/
+│       ├── <resourceType>.yaml        # Resource type definition
+│       └── recipes/                   # Recipe implementations
+│           ├── aws-*/                 # AWS-specific recipes
+│           ├── azure-*/               # Azure-specific recipes
+│           └── kubernetes/            # Kubernetes recipes
+├── Data/                              # Namespace directory
+│   └── redisCaches/
+│       ├── redisCaches.yaml
+│       └── recipes/
+├── Security/secrets/                  # Nested namespace
+│   └── <resourceType>/
+├── docs/                              # Documentation
+└── recipe-packs/                      # Bundled recipe collections
+```
+
+**Resource Type Definition Format** (YAML):
+```yaml
+# Example: Data/redisCaches/redisCaches.yaml
+name: redisCaches
+description: Redis cache resource type
+provider: both  # aws, azure, or both
+```
+
+**Integration approach**:
+- Use sparse checkout to fetch only namespace directories (Compute, Data, Security)
+- Parse YAML files to extract resource type definitions
+- Filter by provider (aws/azure/both) based on environment configuration
+- Copy relevant recipe files to `.radius/recipes/` directory
+
+**Pattern reference**: [pkg/cli/github/resourcetypes.go](../../pkg/cli/github/resourcetypes.go)
+
+---
+
 ## Summary Table
 
 | Topic | Decision | Pattern Reference |
@@ -275,3 +317,4 @@ return map[string]any{
 | Azure OIDC | Azure CLI via existing pattern | pkg/azure/azcli/azcli.go |
 | Terraform Backend | New S3/AzureStorage implementations | pkg/recipes/terraform/config/backends/kubernetes.go |
 | k3d | Install and create cluster in workflow | build/scripts/start-radius.sh |
+| Resource Types | Sparse checkout from namespaces | pkg/cli/github/resourcetypes.go |

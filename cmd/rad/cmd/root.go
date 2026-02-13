@@ -41,6 +41,7 @@ import (
 	bicep_publishextension "github.com/radius-project/radius/pkg/cli/cmd/bicep/publishextension"
 	credential "github.com/radius-project/radius/pkg/cli/cmd/credential"
 	cmd_deploy "github.com/radius-project/radius/pkg/cli/cmd/deploy"
+	env_connect "github.com/radius-project/radius/pkg/cli/cmd/env/connect"
 	env_create "github.com/radius-project/radius/pkg/cli/cmd/env/create"
 	env_create_preview "github.com/radius-project/radius/pkg/cli/cmd/env/create/preview"
 	env_delete "github.com/radius-project/radius/pkg/cli/cmd/env/delete"
@@ -416,6 +417,9 @@ func initSubCommands() {
 	previewEnvSwitchCmd, _ := env_switch_preview.NewCommand(framework)
 	wirePreviewSubcommand(envSwitchCmd, previewEnvSwitchCmd)
 	envCmd.AddCommand(envSwitchCmd)
+
+	envConnectCmd, _ := env_connect.NewCommand(framework)
+	envCmd.AddCommand(envConnectCmd)
 
 	bicepPublishCmd, _ := bicep_publish.NewCommand(framework)
 	bicepCmd.AddCommand(bicepPublishCmd)

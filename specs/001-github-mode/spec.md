@@ -85,6 +85,10 @@ After initializing the repository, a developer needs to establish secure authent
 
 9. **Given** the current directory is not a GitHub workspace, **When** the user runs `rad environment connect`, **Then** the system displays an error message indicating the command requires a GitHub workspace.
 
+10. **Given** successful OIDC configuration, **When** the command completes and changes are pushed, **Then** an authentication test workflow is triggered automatically to verify the OIDC setup works correctly.
+
+11. **Given** the authentication test workflow runs, **When** the workflow completes successfully, **Then** the user sees confirmation that OIDC authentication is working; if the workflow fails, the user sees diagnostic information to help troubleshoot.
+
 ---
 
 ### User Story 3 - Create Deployment Plan via Pull Request (Priority: P2)
@@ -255,13 +259,21 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-022**: For AWS new role creation, system MUST summarize commands to execute and request user confirmation.
 - **FR-023**: For AWS environments, system MUST write `accountId`, `region`, and `oidcRoleARN` to `.radius/env.<ENV>.yaml`.
 - **FR-024**: For Azure environments, system MUST prompt for subscription (from `az account list`).
-- **FR-025**: For Azure environments, system MUST prompt for resource group name.
-- **FR-026**: For Azure environments, system MUST prompt whether to use existing Azure AD application or create a new one.
+- **FR-025**: For Azure environments, system MUST prompt for resource group, displaying a list of existing resource groups from `az group list` with an option to create a new resource group. If creating new, prompt for the name with default "radius-rg".
+- **FR-026**: For Azure environments, system MUST prompt whether to use existing Azure AD application or create a new one. If using existing, display a list of applications from `az ad app list --all` (filtered by "radius-" prefix first, then top 50) for selection, with an option to enter an application ID manually.
 - **FR-027**: For Azure new application creation, system MUST verify Azure CLI authentication via `az account show`.
 - **FR-028**: For Azure new application creation, system MUST summarize commands and request user confirmation to create federated credential.
 - **FR-029**: For Azure environments, system MUST write `subscriptionId`, `tenantId`, `clientId`, `resourceGroupName`, and `oidcEnabled: true` to environment file.
 - **FR-030**: System MUST NOT store cloud secret keys locally; only OIDC-related identifiers are stored.
 - **FR-031**: System MUST commit environment changes with trailer `Radius-Action: environment-connect`.
+- **FR-031-A**: System MUST create an authentication test workflow at `.github/workflows/radius-auth-test.yaml`.
+- **FR-031-B**: The authentication test workflow MUST be triggered by `push` events that modify `.radius/env.*.yaml` files.
+- **FR-031-C**: For AWS environments, the test workflow MUST verify OIDC authentication by calling `aws sts get-caller-identity` using the configured IAM role.
+- **FR-031-D**: For Azure environments, the test workflow MUST verify OIDC authentication by calling `az account show` using the configured federated credentials.
+- **FR-031-E**: The test workflow MUST report success/failure status clearly with diagnostic output on failure.
+- **FR-031-F**: After pushing changes, `rad environment connect` MUST push the commit and wait for the authentication test workflow to complete, displaying an animated progress message (e.g., "Verifying access to Azure..." or "Verifying access to AWS...").
+- **FR-031-G**: If the authentication test workflow succeeds, `rad environment connect` MUST display a success message and exit normally.
+- **FR-031-H**: If the authentication test workflow fails, `rad environment connect` MUST display the workflow error logs and exit with a non-zero status code.
 
 #### CLI Command: rad pr create
 
@@ -358,6 +370,8 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-095**: State backend credentials MUST use the same OIDC authentication configured for deployments.
 - **FR-096**: State backend MUST support state locking to prevent concurrent modification conflicts.
 - **FR-097**: State backend location MUST be recorded in the environment file `.radius/env.<NAME>.yaml`.
+- **FR-097-A**: Azure Storage account for Terraform state MUST be named `tfstateradius<org><repo>` (lowercase alphanumeric, max 24 characters).
+- **FR-097-B**: AWS S3 bucket for Terraform state MUST be named `tfstate-<org>-<repo>` (lowercase with hyphens).
 
 #### Concurrent Deployment Handling
 
@@ -463,7 +477,6 @@ A developer or reviewer needs to understand what changes a deployment will make 
 
 ## Future Enhancements
 
-- Authentication test workflow triggered automatically after OIDC configuration to verify setup
 - MCP server and tools for Copilot integration (e.g., "initialize this repository to use Radius", "create a model for this application", "create a PR to deploy this app")
 - Automated PR summarization using Copilot SDK during planning phase
 - Application visualization in PR comments (part of app graph workstream)

@@ -109,7 +109,8 @@ pkg/cli/
 pkg/cli/github/workflows/
 ├── plan.yaml.tmpl                # [NEW] Template for deployment planning workflow
 ├── deploy.yaml.tmpl              # [NEW] Template for deployment execution workflow
-└── destroy.yaml.tmpl             # [NEW] Template for destruction workflow
+├── destroy.yaml.tmpl             # [NEW] Template for destruction workflow
+└── auth-test.yaml.tmpl           # [NEW] Template for OIDC authentication verification workflow
 
 # Tests
 test/
