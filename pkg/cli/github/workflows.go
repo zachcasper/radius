@@ -77,6 +77,7 @@ type WorkflowConcurrency struct {
 type WorkflowJob struct {
 	Name        string            `yaml:"name,omitempty"`
 	RunsOn      string            `yaml:"runs-on"`
+	Environment string            `yaml:"environment,omitempty"`
 	Permissions map[string]string `yaml:"permissions,omitempty"`
 	Needs       []string          `yaml:"needs,omitempty"`
 	If          string            `yaml:"if,omitempty"`
