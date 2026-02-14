@@ -307,7 +307,7 @@ func generateDeploySteps(provider string) []WorkflowStep {
 	// Add deployment step
 	steps = append(steps, WorkflowStep{
 		Name: "Run deployment",
-		Run:  "rad deploy --plan-file .radius/plan/*/plan.yaml",
+		Run:  "cd app && rad deploy --plan-file .radius/plan/*/plan.yaml",
 		Env: map[string]string{
 			"KUBECONFIG": "/tmp/kubeconfig.yaml",
 		},
@@ -316,7 +316,8 @@ func generateDeploySteps(provider string) []WorkflowStep {
 	// Add commit results step
 	steps = append(steps, WorkflowStep{
 		Name: "Commit deployment results",
-		Run: `git config user.name "github-actions[bot]"
+		Run: `cd app
+git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git add .radius/deploy/
 git commit -m "Record deployment results" --trailer "Radius-Action: deploy" || true
@@ -326,7 +327,64 @@ git push`,
 	return steps
 }
 
-func generateDestroySteps(provider string) []WorkflowStep {\n\tsteps := []WorkflowStep{\n\t\t{\n\t\t\tName: \"Checkout Radius source\",\n\t\t\tUses: \"actions/checkout@v4\",\n\t\t\tWith: map[string]string{\n\t\t\t\t\"repository\": \"${{ vars.RADIUS_REPO || 'radius-project/radius' }}\",\n\t\t\t\t\"ref\":        \"${{ vars.RADIUS_REF || 'main' }}\",\n\t\t\t\t\"path\":       \"radius-src\",\n\t\t\t},\n\t\t},\n\t\t{\n\t\t\tName: \"Setup Go\",\n\t\t\tUses: \"actions/setup-go@v5\",\n\t\t\tWith: map[string]string{\n\t\t\t\t\"go-version\": \"1.23\",\n\t\t\t\t\"cache\":      \"true\",\n\t\t\t},\n\t\t},\n\t\t{\n\t\t\tName: \"Build Radius CLI\",\n\t\t\tRun:  \"cd radius-src && go build -o /usr/local/bin/rad ./cmd/rad\",\n\t\t},\n\t\t{\n\t\t\tName: \"Checkout application repository\",\n\t\t\tUses: \"actions/checkout@v4\",\n\t\t\tWith: map[string]string{\n\t\t\t\t\"path\": \"app\",\n\t\t\t},\n\t\t},\n\t\t{\n\t\t\tName: \"Install k3d\",\n\t\t\tRun:  \"curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash\",\n\t\t},\n\t\t{\n\t\t\tName: \"Create k3d cluster\",\n\t\t\tRun:  \"k3d cluster create radius-ephemeral --volume $GITHUB_WORKSPACE/app:/github_workspace\",\n\t\t},\n\t\t{\n\t\t\tName: \"Export kubeconfig\",\n\t\t\tRun:  \"k3d kubeconfig get radius-ephemeral > /tmp/kubeconfig.yaml\",\n\t\t},\n\t\t{\n\t\t\tName: \"Install Radius control plane\",\n\t\t\t// Support custom image registry via repository variables (RADIUS_IMAGE_REGISTRY, RADIUS_IMAGE_TAG)\n\t\t\tRun: \"cd app && rad install kubernetes --skip-contour-install --set global.repositoryPath=.radius --set dashboard.enabled=false ${RADIUS_IMAGE_REGISTRY:+--set global.imageRegistry=$RADIUS_IMAGE_REGISTRY} ${RADIUS_IMAGE_TAG:+--set global.imageTag=$RADIUS_IMAGE_TAG}\",\n\t\t\tEnv: map[string]string{\n\t\t\t\t\"KUBECONFIG\":            \"/tmp/kubeconfig.yaml\",\n\t\t\t\t\"RADIUS_IMAGE_REGISTRY\": \"${{ vars.RADIUS_IMAGE_REGISTRY }}\",\n\t\t\t\t\"RADIUS_IMAGE_TAG\":      \"${{ vars.RADIUS_IMAGE_TAG }}\",\n\t\t\t},\n\t\t},\n\t}\n\n\t// Add cloud-specific authentication (same as deploy)\n\tif provider == \"aws\" {\n\t\tsteps = append(steps, WorkflowStep{\n\t\t\tName: \"Configure AWS credentials\",
+func generateDestroySteps(provider string) []WorkflowStep {
+	steps := []WorkflowStep{
+		{
+			Name: "Checkout Radius source",
+			Uses: "actions/checkout@v4",
+			With: map[string]string{
+				"repository": "${{ vars.RADIUS_REPO || 'radius-project/radius' }}",
+				"ref":        "${{ vars.RADIUS_REF || 'main' }}",
+				"path":       "radius-src",
+			},
+		},
+		{
+			Name: "Setup Go",
+			Uses: "actions/setup-go@v5",
+			With: map[string]string{
+				"go-version": "1.23",
+				"cache":      "true",
+			},
+		},
+		{
+			Name: "Build Radius CLI",
+			Run:  "cd radius-src && go build -o /usr/local/bin/rad ./cmd/rad",
+		},
+		{
+			Name: "Checkout application repository",
+			Uses: "actions/checkout@v4",
+			With: map[string]string{
+				"path": "app",
+			},
+		},
+		{
+			Name: "Install k3d",
+			Run:  "curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash",
+		},
+		{
+			Name: "Create k3d cluster",
+			Run:  "k3d cluster create radius-ephemeral --volume $GITHUB_WORKSPACE/app:/github_workspace",
+		},
+		{
+			Name: "Export kubeconfig",
+			Run:  "k3d kubeconfig get radius-ephemeral > /tmp/kubeconfig.yaml",
+		},
+		{
+			Name: "Install Radius control plane",
+			// Support custom image registry via repository variables (RADIUS_IMAGE_REGISTRY, RADIUS_IMAGE_TAG)
+			Run: "cd app && rad install kubernetes --skip-contour-install --set global.repositoryPath=.radius --set dashboard.enabled=false ${RADIUS_IMAGE_REGISTRY:+--set global.imageRegistry=$RADIUS_IMAGE_REGISTRY} ${RADIUS_IMAGE_TAG:+--set global.imageTag=$RADIUS_IMAGE_TAG}",
+			Env: map[string]string{
+				"KUBECONFIG":            "/tmp/kubeconfig.yaml",
+				"RADIUS_IMAGE_REGISTRY": "${{ vars.RADIUS_IMAGE_REGISTRY }}",
+				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
+			},
+		},
+	}
+
+	// Add cloud-specific authentication (same as deploy)
+	if provider == "aws" {
+		steps = append(steps, WorkflowStep{
+			Name: "Configure AWS credentials",
 			Uses: "aws-actions/configure-aws-credentials@v4",
 			With: map[string]string{
 				"role-to-assume": "${{ secrets.AWS_OIDC_ROLE_ARN }}",
@@ -348,7 +406,7 @@ func generateDestroySteps(provider string) []WorkflowStep {\n\tsteps := []Workfl
 	// Add destroy step
 	steps = append(steps, WorkflowStep{
 		Name: "Run destruction",
-		Run:  "rad destroy --plan-file .radius/plan/*/plan.yaml",
+		Run:  "cd app && rad destroy --plan-file .radius/plan/*/plan.yaml",
 		Env: map[string]string{
 			"KUBECONFIG": "/tmp/kubeconfig.yaml",
 		},
@@ -357,7 +415,8 @@ func generateDestroySteps(provider string) []WorkflowStep {\n\tsteps := []Workfl
 	// Add commit results step
 	steps = append(steps, WorkflowStep{
 		Name: "Commit destruction results",
-		Run: `git config user.name "github-actions[bot]"
+		Run: `cd app
+git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git add .radius/deploy/
 git commit -m "Record destruction results" --trailer "Radius-Action: destroy" || true
@@ -370,8 +429,13 @@ git push`,
 func generatePlanSteps(provider string) []WorkflowStep {
 	steps := []WorkflowStep{
 		{
-			Name: "Checkout",
+			Name: "Checkout Radius source",
 			Uses: "actions/checkout@v4",
+			With: map[string]string{
+				"repository": "${{ vars.RADIUS_REPO || 'radius-project/radius' }}",
+				"ref":        "${{ vars.RADIUS_REF || 'main' }}",
+				"path":       "radius-src",
+			},
 		},
 		{
 			Name: "Setup Go",
@@ -383,7 +447,14 @@ func generatePlanSteps(provider string) []WorkflowStep {
 		},
 		{
 			Name: "Build Radius CLI",
-			Run:  "go build -o /usr/local/bin/rad ./cmd/rad",
+			Run:  "cd radius-src && go build -o /usr/local/bin/rad ./cmd/rad",
+		},
+		{
+			Name: "Checkout application repository",
+			Uses: "actions/checkout@v4",
+			With: map[string]string{
+				"path": "app",
+			},
 		},
 		{
 			Name: "Install k3d",
@@ -391,7 +462,7 @@ func generatePlanSteps(provider string) []WorkflowStep {
 		},
 		{
 			Name: "Create k3d cluster",
-			Run:  "k3d cluster create radius-ephemeral --volume $GITHUB_WORKSPACE:/github_workspace",
+			Run:  "k3d cluster create radius-ephemeral --volume $GITHUB_WORKSPACE/app:/github_workspace",
 		},
 		{
 			Name: "Export kubeconfig",
@@ -400,7 +471,7 @@ func generatePlanSteps(provider string) []WorkflowStep {
 		{
 			Name: "Install Radius control plane",
 			// Support custom image registry via repository variables (RADIUS_IMAGE_REGISTRY, RADIUS_IMAGE_TAG)
-			Run: "rad install kubernetes --skip-contour-install --set global.repositoryPath=.radius --set dashboard.enabled=false ${RADIUS_IMAGE_REGISTRY:+--set global.imageRegistry=$RADIUS_IMAGE_REGISTRY} ${RADIUS_IMAGE_TAG:+--set global.imageTag=$RADIUS_IMAGE_TAG}",
+			Run: "cd app && rad install kubernetes --skip-contour-install --set global.repositoryPath=.radius --set dashboard.enabled=false ${RADIUS_IMAGE_REGISTRY:+--set global.imageRegistry=$RADIUS_IMAGE_REGISTRY} ${RADIUS_IMAGE_TAG:+--set global.imageTag=$RADIUS_IMAGE_TAG}",
 			Env: map[string]string{
 				"KUBECONFIG":            "/tmp/kubeconfig.yaml",
 				"RADIUS_IMAGE_REGISTRY": "${{ vars.RADIUS_IMAGE_REGISTRY }}",
@@ -435,7 +506,7 @@ func generatePlanSteps(provider string) []WorkflowStep {
 	// Note: rad deploy --plan generates a plan without executing deployment
 	steps = append(steps, WorkflowStep{
 		Name: "Generate deployment plan",
-		Run:  "rad deploy --plan --environment ${{ github.event.inputs.environment }} --application \"${{ github.event.inputs.application }}\" --output .radius/plan/",
+		Run:  "cd app && rad deploy --plan --environment ${{ github.event.inputs.environment }} --application \"${{ github.event.inputs.application }}\" --output .radius/plan/",
 		Env: map[string]string{
 			"KUBECONFIG": "/tmp/kubeconfig.yaml",
 		},
@@ -444,7 +515,8 @@ func generatePlanSteps(provider string) []WorkflowStep {
 	// Create branch and PR
 	steps = append(steps, WorkflowStep{
 		Name: "Create deployment PR",
-		Run: `BRANCH_NAME="deploy/${{ github.event.inputs.application || 'all' }}/${{ github.event.inputs.environment }}-$(date +%Y%m%d%H%M%S)"
+		Run: `cd app
+BRANCH_NAME="deploy/${{ github.event.inputs.application || 'all' }}/${{ github.event.inputs.environment }}-$(date +%Y%m%d%H%M%S)"
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git checkout -b "$BRANCH_NAME"

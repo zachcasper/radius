@@ -487,3 +487,23 @@ Each defect should include:
   Workflows automatically use these variables when set. See plan.md "Publishing Radius Control Plane Images" section.
 - **Files Changed**: Documentation in `specs/001-github-mode/plan.md`, `build/github-mode.mk`
 - **Spec Impact**: None - documented workaround
+
+---
+
+### D032: Workflow builds rad CLI from app repo instead of Radius repo ✅ FIXED
+- **Phase/Task**: Phase 6 (US4) - Workflow runtime
+- **Category**: Implementation bug
+- **Description**: After D030 fix to build rad CLI from source, workflows fail with "go: cannot find main module" error. This is because the workflow checks out the user's application repository (not the Radius source repository), then attempts to run `go build ./cmd/rad` which doesn't exist in the app repo.
+- **Root Cause**: Workflow used a single checkout step that checked out the app repository where the workflow runs. The rad CLI source code is in the Radius repository, not the user's application repository.
+- **Resolution**: FIXED - Updated all workflow generators (`generateDeploySteps`, `generateDestroySteps`, `generatePlanSteps`) to use a dual-checkout pattern:
+  1. First checkout the Radius source repository to `radius-src` path using configurable `RADIUS_REPO` and `RADIUS_REF` variables
+  2. Build rad CLI: `cd radius-src && go build -o /usr/local/bin/rad ./cmd/rad`
+  3. Then checkout the application repository to `app` path
+  4. Update all subsequent commands to run from `app` directory (e.g., `cd app && rad deploy ...`)
+  5. Mount `$GITHUB_WORKSPACE/app` instead of `$GITHUB_WORKSPACE` for k3d cluster volumes
+  
+  Users can configure via repository variables:
+  - `RADIUS_REPO`: Source repo (default: `radius-project/radius`)
+  - `RADIUS_REF`: Branch/tag/commit (default: `main`)
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: None - implementation detail for source-building approach
