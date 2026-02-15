@@ -584,8 +584,7 @@ func requiredMultiple(cmd *cobra.Command, args []string, names ...string) ([]str
 //
 
 // RequireScope checks if a resource group is passed in as a flag and returns the scope of the resource group if it is,
-// otherwise it returns the scope of the workspace if it is set, otherwise for GitHub workspaces it defaults to "default",
-// otherwise it returns an error.
+// otherwise it returns the scope of the workspace if it is set, otherwise it falls back to the "default" resource group.
 func RequireScope(cmd *cobra.Command, workspace workspaces.Workspace) (string, error) {
 	resourceGroup, err := cmd.Flags().GetString("group")
 	if err != nil {
@@ -598,13 +597,11 @@ func RequireScope(cmd *cobra.Command, workspace workspaces.Workspace) (string, e
 		return workspace.Scope, nil
 	}
 
-	// GitHub workspaces don't have a Scope property; default to "default" resource group.
-	kind, _ := workspace.Connection["kind"].(string)
-	if kind == workspaces.KindGitHub {
-		return "/planes/radius/local/resourceGroups/default", nil
-	}
-
-	return "", clierrors.Message("No resource group set, use `--group` to pass in a resource group name.")
+	// Fall back to "default" resource group when no scope is configured.
+	// This supports GitHub-mode workspaces (which don't set Scope) and
+	// ephemeral environments (like CI runners with no workspace config).
+	// The control plane auto-creates the resource group on first use.
+	return "/planes/radius/local/resourceGroups/default", nil
 }
 
 // RequireRecipeNameArgs checks if the provided arguments contain at least one string, and if not, returns an error. If the

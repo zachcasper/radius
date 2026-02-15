@@ -450,6 +450,10 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-113**: The `rad init github` command MUST generate `.github/workflows/radius-destroy.yml` workflow template for handling destruction PRs.
 - **FR-114**: Generated workflow files MUST be included in the initial commit created by `rad init github`.
 
+#### Resource Group Defaults
+
+- **FR-115**: The `rad` CLI MUST fall back to the `default` resource group when no `--group` flag is provided and no workspace scope is configured. This supports GitHub-mode workspaces (which do not set a `Scope` property) and ephemeral CI environments (where no `~/.rad/config.yaml` exists). The Radius control plane auto-creates the resource group on first use.
+
 ### Key Entities
 
 - **Workspace**: User's working context stored in `~/.rad/config.yaml`; can be of kind `github` (URL-based connection) or `kubernetes` (context-based connection). GitHub workspaces connect to repository URLs; Kubernetes workspaces connect to cluster contexts with scope and environment references.
