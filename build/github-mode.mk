@@ -21,11 +21,18 @@
 #   make github-mode-publish GITHUB_USER=myuser GITHUB_TOKEN=ghp_xxx
 GITHUB_USER ?= $(shell gh api user -q .login 2>/dev/null || echo "")
 GITHUB_REPO ?= radius
-GITHUB_MODE_REGISTRY ?= ghcr.io/$(GITHUB_USER)
-GITHUB_MODE_TAG ?= github-mode
+GITHUB_MODE_REGISTRY ?= ghcr.io/zachcasper/github-radius
+GITHUB_MODE_TAG ?= latest
 
 # Images required for Radius control plane
-RADIUS_IMAGES := ucpd applications-rp dynamic-rp controller
+RADIUS_IMAGES := ucpd applications-rp dynamic-rp controller bicep deployment-engine
+
+# Images built from source in this repo
+RADIUS_BUILD_IMAGES := ucpd applications-rp dynamic-rp controller bicep
+
+# Images mirrored from upstream (not built from source)
+RADIUS_MIRROR_IMAGES := deployment-engine
+RADIUS_UPSTREAM_REGISTRY ?= ghcr.io/radius-project
 
 .PHONY: github-mode-check
 github-mode-check: ## Verify prerequisites for GitHub mode image publishing
@@ -70,39 +77,39 @@ github-mode-login: ## Authenticate Docker to ghcr.io using gh CLI token
 	@gh auth token | docker login ghcr.io -u $(GITHUB_USER) --password-stdin
 	@echo "✓ Docker authenticated to ghcr.io"
 
-.PHONY: github-mode-build
-github-mode-build: copy-manifests ## Build all Radius control plane images for GitHub mode
-	@echo "$(ARROW) Building Radius images for GitHub mode..."
+.PHONY: github-mode-mirror
+github-mode-mirror: ## Copy upstream multi-arch images to GHCR under our registry
+	@echo "$(ARROW) Mirroring upstream images to $(GITHUB_MODE_REGISTRY)..."
+	@for img in $(RADIUS_MIRROR_IMAGES); do \
+		echo "  Copying $(RADIUS_UPSTREAM_REGISTRY)/$$img:$(GITHUB_MODE_TAG) → $(GITHUB_MODE_REGISTRY)/$$img:$(GITHUB_MODE_TAG)..."; \
+		docker buildx imagetools create \
+			--tag $(GITHUB_MODE_REGISTRY)/$$img:$(GITHUB_MODE_TAG) \
+			$(RADIUS_UPSTREAM_REGISTRY)/$$img:$(GITHUB_MODE_TAG); \
+		echo "  ✓ $$img mirrored (all platforms)"; \
+	done
+
+.PHONY: github-mode-build-push
+github-mode-build-push: copy-manifests ## Build and push multi-arch Radius images to GHCR
+	@echo "$(ARROW) Building and pushing multi-arch Radius images..."
 	@echo "  Registry: $(GITHUB_MODE_REGISTRY)"
 	@echo "  Tag: $(GITHUB_MODE_TAG)"
+	@echo "  Platforms: linux/amd64, linux/arm64"
 	@echo ""
-	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-build-ucpd
-	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-build-applications-rp
-	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-build-dynamic-rp
-	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-build-controller
+	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-multi-arch-push-ucpd
+	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-multi-arch-push-applications-rp
+	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-multi-arch-push-dynamic-rp
+	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-multi-arch-push-controller
+	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-multi-arch-push-bicep
 	@echo ""
-	@echo "✓ All images built successfully"
+	@echo "✓ All source images built and pushed successfully"
 	@echo ""
-	@echo "Images created:"
-	@for img in $(RADIUS_IMAGES); do \
+	@echo "Images built (linux/amd64 + linux/arm64):"
+	@for img in $(RADIUS_BUILD_IMAGES); do \
 		echo "  $(GITHUB_MODE_REGISTRY)/$$img:$(GITHUB_MODE_TAG)"; \
 	done
 
-.PHONY: github-mode-push
-github-mode-push: ## Push all Radius control plane images to GHCR
-	@echo "$(ARROW) Pushing Radius images to ghcr.io..."
-	@echo "  Registry: $(GITHUB_MODE_REGISTRY)"
-	@echo "  Tag: $(GITHUB_MODE_TAG)"
-	@echo ""
-	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-push-ucpd
-	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-push-applications-rp
-	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-push-dynamic-rp
-	$(MAKE) DOCKER_REGISTRY=$(GITHUB_MODE_REGISTRY) DOCKER_TAG_VERSION=$(GITHUB_MODE_TAG) docker-push-controller
-	@echo ""
-	@echo "✓ All images pushed successfully"
-
 .PHONY: github-mode-publish
-github-mode-publish: github-mode-check github-mode-login github-mode-build github-mode-push ## Build and push all images to GHCR (full workflow)
+github-mode-publish: github-mode-check github-mode-login github-mode-build-push github-mode-mirror ## Build, mirror, and push all images to GHCR (full workflow)
 	@echo ""
 	@echo "============================================="
 	@echo "GitHub Mode Images Published Successfully!"

@@ -308,7 +308,7 @@ func generateDeploySteps(provider string) []WorkflowStep {
 	// Add deployment step
 	steps = append(steps, WorkflowStep{
 		Name: "Run deployment",
-		Run:  "cd app && rad deploy --plan-file .radius/plan/*/plan.yaml",
+		Run:  "cd app && rad deploy .radius/model/*.bicep",
 		Env: map[string]string{
 			"KUBECONFIG": "/tmp/kubeconfig.yaml",
 		},
@@ -407,7 +407,7 @@ func generateDestroySteps(provider string) []WorkflowStep {
 	// Add destroy step
 	steps = append(steps, WorkflowStep{
 		Name: "Run destruction",
-		Run:  "cd app && rad destroy --plan-file .radius/plan/*/plan.yaml",
+		Run:  "cd app && rad destroy .radius/model/*.bicep",
 		Env: map[string]string{
 			"KUBECONFIG": "/tmp/kubeconfig.yaml",
 		},
@@ -507,7 +507,7 @@ func generatePlanSteps(provider string) []WorkflowStep {
 	// Note: rad deploy --plan generates a plan without executing deployment
 	steps = append(steps, WorkflowStep{
 		Name: "Generate deployment plan",
-		Run:  "cd app && rad deploy --plan --environment ${{ github.event.inputs.environment }} --application \"${{ github.event.inputs.application }}\" --output .radius/plan/",
+		Run:  "cd app && rad deploy .radius/model/${{ github.event.inputs.application }}.bicep --plan --environment ${{ github.event.inputs.environment }} --application \"${{ github.event.inputs.application }}\" --output .radius/plan/",
 		Env: map[string]string{
 			"KUBECONFIG": "/tmp/kubeconfig.yaml",
 		},
