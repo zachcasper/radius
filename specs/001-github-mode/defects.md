@@ -507,3 +507,18 @@ Each defect should include:
   - `RADIUS_REF`: Branch/tag/commit (default: `main`)
 - **Files Changed**: `pkg/cli/github/workflows.go`
 - **Spec Impact**: None - implementation detail for source-building approach
+
+---
+
+### D033: rad deploy requires --group flag in GitHub mode ✅ FIXED
+- **Phase/Task**: Phase 6 (US4) - Workflow runtime
+- **Category**: Spec gap
+- **Description**: FR-077 specifies that generated workflows call `rad deploy` to execute deployments within ephemeral k3d clusters. However, `rad deploy` requires a resource group scope via either `--group` flag or a workspace `Scope` property. The GitHub-mode workspace intentionally does not set `Scope` (per D009 fix), causing `rad deploy` to fail with "No resource group set, use --group to pass in a resource group name."
+- **Root Cause**: `RequireScope()` in `pkg/cli/clivalidation.go` only checked for `--group` flag or workspace `Scope` property, with no fallback for GitHub-mode workspaces. The spec did not account for `rad deploy`'s requirement for a resource group scope.
+- **Resolution**: FIXED - Two changes:
+  1. Updated `RequireScope()` in `pkg/cli/clivalidation.go` to detect GitHub-kind workspaces (via `workspace.Connection["kind"]`) and automatically default to `/planes/radius/local/resourceGroups/default` — no `--group` flag needed.
+  2. Fixed all three workflow generators to pass the Bicep model file as the required positional argument (was missing entirely, causing "accepts 1 arg(s), received 0").
+  
+  The `--group default` workaround added earlier was removed since `RequireScope` now handles it natively.
+- **Files Changed**: `pkg/cli/clivalidation.go`, `pkg/cli/github/workflows.go`
+- **Spec Impact**: FR-077 should document that GitHub-mode workspaces automatically use `default` resource group. The Bicep file path should also be documented as a required positional argument for `rad deploy`.
