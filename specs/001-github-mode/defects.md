@@ -522,3 +522,14 @@ Each defect should include:
   The `--group default` workaround added earlier was removed since `RequireScope` now handles it natively.
 - **Files Changed**: `pkg/cli/clivalidation.go`, `pkg/cli/github/workflows.go`
 - **Spec Impact**: FR-077 should document that GitHub-mode workspaces automatically use `default` resource group. The Bicep file path should also be documented as a required positional argument for `rad deploy`.
+
+---
+
+### D034: Unused clierrors import after RequireScope refactor ✅ FIXED
+- **Phase/Task**: D033 fix (RequireScope refactor)
+- **Category**: Implementation bug
+- **Description**: After refactoring `RequireScope()` in `pkg/cli/clivalidation.go` to fall back to the `default` resource group instead of returning a `clierrors.Message(...)` error, the `clierrors` package import became unused, causing a compile error: `"github.com/radius-project/radius/pkg/cli/clierrors" imported and not used`.
+- **Root Cause**: The only usage of `clierrors` in `clivalidation.go` was the error message in `RequireScope`. When the error path was removed in favor of a default fallback, the import was left behind.
+- **Resolution**: FIXED - Removed the unused `clierrors` import from `pkg/cli/clivalidation.go`.
+- **Files Changed**: `pkg/cli/clivalidation.go`
+- **Spec Impact**: None - build hygiene fix.
