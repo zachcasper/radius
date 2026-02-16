@@ -18,6 +18,8 @@ package create
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	corerp "github.com/radius-project/radius/pkg/corerp/api/v20231001preview"
 	"github.com/radius-project/radius/pkg/to"
@@ -31,18 +33,16 @@ import (
 	"github.com/radius-project/radius/pkg/cli/cmd/env/namespace"
 	"github.com/radius-project/radius/pkg/cli/connections"
 	"github.com/radius-project/radius/pkg/cli/framework"
+	"github.com/radius-project/radius/pkg/cli/github"
 	"github.com/radius-project/radius/pkg/cli/kubernetes"
 	"github.com/radius-project/radius/pkg/cli/output"
+	"github.com/radius-project/radius/pkg/cli/prompt"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
 	"github.com/radius-project/radius/pkg/ucp/resources"
 	resources_radius "github.com/radius-project/radius/pkg/ucp/resources/radius"
 )
 
 // NewCommand creates an instance of the command and runner for the `rad env create` command.
-//
-
-// NewCommand creates a new Cobra command and a Runner object to handle the command's logic, and adds flags to the command
-// for environment name, workspace, resource group, and namespace.
 func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 	runner := NewRunner(factory)
 
@@ -51,16 +51,33 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 		Short: "Create a new Radius Environment",
 		Long: `Create a new Radius Environment
 Radius Environments are prepared "landing zones" for Radius Applications.
-Applications deployed to an environment will inherit the container runtime, configuration, and other settings from the environment.`,
-		Args:    cobra.ExactArgs(1),
-		Example: `rad env create myenv`,
-		RunE:    framework.RunCommand(runner),
+Applications deployed to an environment will inherit the container runtime, configuration, and other settings from the environment.
+
+In GitHub mode, this command:
+- Creates a GitHub Environment
+- Sets up OIDC authentication with your cloud provider (AWS or Azure)
+- Stores configuration as GitHub Environment variables
+- Dispatches an auth test workflow to verify connectivity`,
+		Args: cobra.ExactArgs(1),
+		Example: `# Create an environment (Kubernetes mode)
+rad env create myenv
+
+# Create an environment with cloud provider (GitHub mode)
+rad env create dev --provider azure
+
+# Create an environment with custom recipes manifest
+rad env create prod --provider aws --recipes https://example.com/recipes.yaml`,
+		RunE: framework.RunCommand(runner),
 	}
 
 	commonflags.AddEnvironmentNameFlag(cmd)
 	commonflags.AddWorkspaceFlag(cmd)
 	commonflags.AddResourceGroupFlag(cmd)
 	commonflags.AddNamespaceFlag(cmd)
+
+	// GitHub mode flags
+	cmd.Flags().String("provider", "", "Cloud provider for the environment (aws or azure)")
+	cmd.Flags().String("recipes", "", "URL to a custom recipes manifest")
 
 	return cmd, runner
 }
@@ -77,6 +94,12 @@ type Runner struct {
 	ConfigFileInterface framework.ConfigFileInterface
 	KubernetesInterface kubernetes.Interface
 	NamespaceInterface  namespace.Interface
+	Prompter            prompt.Interface
+	CommandRunner       github.CommandRunner
+
+	// GitHub mode fields
+	Provider string
+	Recipes  string
 }
 
 // NewRunner creates a new instance of the `rad env create` runner.
@@ -88,14 +111,14 @@ func NewRunner(factory framework.Factory) *Runner {
 		ConfigFileInterface: factory.GetConfigFileInterface(),
 		KubernetesInterface: factory.GetKubernetesInterface(),
 		NamespaceInterface:  factory.GetNamespaceInterface(),
+		Prompter:            factory.GetPrompter(),
+		CommandRunner:       github.NewCommandRunner(),
 	}
 }
 
 // Validate runs validation for the `rad env create` command.
-//
-
-// Validate checks if the workspace, environment name, scope, namespace, resource group name, and namespace
-// interface are valid and returns an error if any of them are not.
+// Branches on workspace kind: GitHub mode validates provider flag,
+// Kubernetes mode validates scope and namespace.
 func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	workspace, err := cli.RequireWorkspace(cmd, r.ConfigHolder.Config, r.ConfigHolder.DirectoryConfig)
 	if err != nil {
@@ -103,7 +126,45 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.Workspace = workspace
 
-	r.EnvironmentName, err = cli.RequireEnvironmentNameArgs(cmd, args, *workspace)
+	r.EnvironmentName = args[0]
+
+	// Branch on workspace kind
+	if r.Workspace.IsGitHubWorkspace() {
+		return r.validateGitHubMode(cmd)
+	}
+
+	return r.validateKubernetesMode(cmd)
+}
+
+// validateGitHubMode validates GitHub mode specific flags.
+func (r *Runner) validateGitHubMode(cmd *cobra.Command) error {
+	// --provider is required in GitHub mode
+	provider, err := cmd.Flags().GetString("provider")
+	if err != nil {
+		return err
+	}
+	if provider == "" {
+		return clierrors.Message("--provider flag is required for GitHub mode (use 'aws' or 'azure')")
+	}
+	if provider != "aws" && provider != "azure" {
+		return clierrors.Message("--provider must be 'aws' or 'azure', got: %s", provider)
+	}
+	r.Provider = provider
+
+	// --recipes is optional
+	r.Recipes, err = cmd.Flags().GetString("recipes")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateKubernetesMode validates Kubernetes mode specific flags.
+func (r *Runner) validateKubernetesMode(cmd *cobra.Command) error {
+	var err error
+
+	r.EnvironmentName, err = cli.RequireEnvironmentNameArgs(cmd, []string{r.EnvironmentName}, *r.Workspace)
 	if err != nil {
 		return err
 	}
@@ -125,9 +186,6 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Parse the resource group name so we can use it later. DO NOT use the
-	// --group argument, because we want to find the right group when the user
-	// didn't pass it.
 	scopeId, err := resources.Parse(r.Workspace.Scope)
 	if err != nil {
 		return err
@@ -145,11 +203,17 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 }
 
 // Run runs the `rad env create` command.
-//
-
-// Run creates an environment in the specified resource group using the provided environment name and namespace, and
-// returns an error if unsuccessful.
+// Branches on workspace kind for GitHub vs Kubernetes mode.
 func (r *Runner) Run(ctx context.Context) error {
+	if r.Workspace.IsGitHubWorkspace() {
+		return r.runGitHubMode(ctx)
+	}
+
+	return r.runKubernetesMode(ctx)
+}
+
+// runKubernetesMode creates an environment via UCP (original behavior).
+func (r *Runner) runKubernetesMode(ctx context.Context) error {
 	r.Output.LogInfo("Creating Environment...")
 
 	client, err := r.ConnectionFactory.CreateApplicationsManagementClient(ctx, *r.Workspace)
@@ -173,4 +237,125 @@ func (r *Runner) Run(ctx context.Context) error {
 	r.Output.LogInfo("Successfully created environment %q in resource group %q", r.EnvironmentName, r.ResourceGroupName)
 
 	return nil
+}
+
+// runGitHubMode creates a GitHub Environment, sets up OIDC, stores env variables,
+// and dispatches an auth test workflow.
+// FR-022 through FR-030: Full GitHub environment creation flow.
+func (r *Runner) runGitHubMode(ctx context.Context) error {
+	// Extract owner/repo from workspace URL
+	repoURL, _ := r.Workspace.Connection["url"].(string)
+	owner, repo := parseGitHubURL(repoURL)
+	if owner == "" || repo == "" {
+		return clierrors.Message("Could not parse GitHub repository from workspace URL: %s", repoURL)
+	}
+
+	r.Output.LogInfo("Creating environment %q for %s/%s...", r.EnvironmentName, owner, repo)
+
+	// Step 1: Create GitHub Environment (FR-022)
+	r.Output.LogInfo("Creating GitHub Environment...")
+	ghClient := github.NewClient()
+	if err := ghClient.CreateEnvironment(owner, repo, r.EnvironmentName); err != nil {
+		return fmt.Errorf("failed to create GitHub Environment: %w", err)
+	}
+	r.Output.LogInfo("GitHub Environment %q created.", r.EnvironmentName)
+
+	// Step 2: Run OIDC setup based on provider (FR-024/FR-028)
+	oidcSetup := github.NewOIDCSetup(r.Output, r.Prompter, r.CommandRunner, owner, repo)
+
+	r.Output.LogInfo("")
+	r.Output.LogInfo("Setting up %s OIDC authentication...", r.Provider)
+
+	switch r.Provider {
+	case "aws":
+		result, err := oidcSetup.SetupAWSOIDC(ctx)
+		if err != nil {
+			return err
+		}
+
+		// Step 3: Set environment variables (FR-025)
+		r.Output.LogInfo("")
+		r.Output.LogInfo("Setting environment variables...")
+		if err := oidcSetup.SetAWSEnvironmentVariables(r.EnvironmentName, result); err != nil {
+			return err
+		}
+
+	case "azure":
+		result, err := oidcSetup.SetupAzureOIDC(ctx)
+		if err != nil {
+			return err
+		}
+
+		// Step 3: Set environment variables (FR-029)
+		r.Output.LogInfo("")
+		r.Output.LogInfo("Setting environment variables...")
+		if err := oidcSetup.SetAzureEnvironmentVariables(r.EnvironmentName, result); err != nil {
+			return err
+		}
+	}
+
+	// Step 4: Set RADIUS_RECIPES_MANIFEST env variable (FR-026, FR-027, FR-030)
+	recipesManifest := r.Recipes
+	if recipesManifest == "" {
+		// Use default recipes manifest based on provider
+		recipesManifest = fmt.Sprintf("https://raw.githubusercontent.com/radius-project/recipes-contrib/main/%s/recipes.yaml", r.Provider)
+	}
+	r.Output.LogInfo("  Setting RADIUS_RECIPES_MANIFEST...")
+	if err := ghClient.SetEnvironmentVariable(owner, repo, r.EnvironmentName, "RADIUS_RECIPES_MANIFEST", recipesManifest); err != nil {
+		return fmt.Errorf("failed to set RADIUS_RECIPES_MANIFEST: %w", err)
+	}
+
+	// Step 5: Dispatch auth test workflow (FR-030-E through FR-030-I)
+	r.Output.LogInfo("")
+	r.Output.LogInfo("Dispatching authentication test workflow...")
+	if err := r.dispatchAuthTest(ctx, r.EnvironmentName); err != nil {
+		// Don't fail the command if auth test dispatch fails
+		r.Output.LogInfo("Warning: could not dispatch auth test: %v", err)
+		r.Output.LogInfo("You can manually run the auth test workflow from GitHub Actions.")
+	}
+
+	r.Output.LogInfo("")
+	r.Output.LogInfo("Environment %q created successfully!", r.EnvironmentName)
+	r.Output.LogInfo("")
+	r.Output.LogInfo("Next steps:")
+	r.Output.LogInfo("  1. Run 'rad app model' to create an application definition")
+	r.Output.LogInfo("  2. Run 'rad deployment create' to generate a deployment plan")
+
+	return nil
+}
+
+// dispatchAuthTest dispatches the auth test workflow and shows animated progress.
+// FR-030-E through FR-030-I: Dispatch, watch, report success/failure with hints.
+func (r *Runner) dispatchAuthTest(ctx context.Context, envName string) error {
+	ghClient := github.NewClient()
+
+	inputs := map[string]string{
+		"environment": envName,
+	}
+
+	// Dispatch and watch with progress
+	_, _, err := ghClient.DispatchAndWatch(
+		github.AuthTestWorkflowFile,
+		"main",
+		inputs,
+		func() {
+			r.Output.LogInfo("Auth test workflow queued, waiting for runner...")
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// parseGitHubURL extracts owner and repo from a GitHub URL.
+func parseGitHubURL(url string) (owner, repo string) {
+	url = strings.TrimSuffix(url, ".git")
+	parts := strings.Split(url, "/")
+	if len(parts) >= 2 {
+		repo = parts[len(parts)-1]
+		owner = parts[len(parts)-2]
+	}
+	return
 }

@@ -19,6 +19,8 @@ package delete
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/radius-project/radius/pkg/cli"
@@ -29,11 +31,14 @@ import (
 	"github.com/radius-project/radius/pkg/cli/delete"
 
 	"github.com/radius-project/radius/pkg/cli/framework"
+	"github.com/radius-project/radius/pkg/cli/github"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/prompt"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
 	"github.com/radius-project/radius/pkg/ucp/resources"
 	"github.com/spf13/cobra"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 const (
@@ -116,6 +121,70 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.Workspace = workspace
 
+	if workspace.IsGitHubWorkspace() {
+		return r.validateGitHubMode(cmd, args)
+	}
+
+	return r.validateKubernetesMode(cmd, args)
+}
+
+// validateGitHubMode validates the command for GitHub workspace mode.
+// FR-106-A: Auto-select application and environment when unambiguous.
+func (r *Runner) validateGitHubMode(cmd *cobra.Command, args []string) error {
+	var err error
+
+	// Get application name from args or flag
+	if len(args) > 0 {
+		r.ApplicationName = args[0]
+	} else {
+		r.ApplicationName, err = cmd.Flags().GetString("application")
+		if err != nil {
+			return err
+		}
+	}
+
+	// Auto-select application if not specified
+	if r.ApplicationName == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return clierrors.Message("Failed to get current directory: %v", err)
+		}
+
+		app, err := autoSelectApplication(cwd)
+		if err != nil {
+			return err
+		}
+		r.ApplicationName = app
+	}
+
+	// Throw error if user specifies a Bicep filename
+	if strings.HasSuffix(r.ApplicationName, ".bicep") {
+		return clierrors.Message(bicepWarning, r.ApplicationName)
+	}
+
+	// Auto-select environment
+	repoURL, _ := r.Workspace.Connection["url"].(string)
+	owner, repo := parseGitHubURL(repoURL)
+	if r.EnvironmentName == "" {
+		env, err := autoSelectEnvironment(owner, repo)
+		if err != nil {
+			return err
+		}
+		r.EnvironmentName = env
+	}
+
+	r.Confirm, err = cmd.Flags().GetBool("yes")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateKubernetesMode validates the command for Kubernetes workspace mode.
+func (r *Runner) validateKubernetesMode(cmd *cobra.Command, args []string) error {
+	var err error
+
 	// Allow '--group' to override scope
 	scope, err := cli.RequireScope(cmd, *r.Workspace)
 	if err != nil {
@@ -123,14 +192,14 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.Workspace.Scope = scope
 
-	r.ApplicationName, err = cli.RequireApplicationArgs(cmd, args, *workspace)
+	r.ApplicationName, err = cli.RequireApplicationArgs(cmd, args, *r.Workspace)
 	if err != nil {
 		return err
 	}
 
 	// Lookup the environment name for use in the confirmation prompt
-	if workspace.Environment != "" {
-		id, err := resources.ParseResource(workspace.Environment)
+	if r.Workspace.Environment != "" {
+		id, err := resources.ParseResource(r.Workspace.Environment)
 		if err != nil {
 			return err
 		}
@@ -158,6 +227,83 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 // client, and deletes the application if it exists. If the application does not exist, it logs a message. It returns an
 // error if there is an issue with the connection or the prompt.
 func (r *Runner) Run(ctx context.Context) error {
+	if r.Workspace.IsGitHubWorkspace() {
+		return r.runGitHubMode(ctx)
+	}
+
+	return r.runKubernetesMode(ctx)
+}
+
+// runGitHubMode dispatches the destroy workflow for GitHub workspaces.
+// FR-106-A: Dispatch radius-destroy.yaml workflow with application and environment inputs.
+// FR-106-D: Show animated progress indicator.
+func (r *Runner) runGitHubMode(ctx context.Context) error {
+	// Prompt user to confirm deletion
+	if !r.Confirm {
+		confirmed, err := prompt.YesOrNoPrompt(fmt.Sprintf(deleteConfirmation, r.ApplicationName, r.EnvironmentName), prompt.ConfirmNo, r.InputPrompter)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return nil
+		}
+	}
+
+	r.Output.LogInfo("Deleting application '%s' from environment '%s'...", r.ApplicationName, r.EnvironmentName)
+	r.Output.LogInfo("")
+
+	ghClient := github.NewClient()
+
+	inputs := map[string]string{
+		"application": r.ApplicationName,
+		"environment": r.EnvironmentName,
+	}
+
+	// FR-106-A: Dispatch destroy workflow
+	runID, runURL, err := ghClient.DispatchAndWatch(
+		github.DestroyWorkflowFile,
+		"main",
+		inputs,
+		func() {
+			r.Output.LogInfo("Workflow queued, waiting for runner...")
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to dispatch destroy workflow: %w", err)
+	}
+
+	r.Output.LogInfo("Workflow started: %s", runURL)
+	r.Output.LogInfo("")
+
+	// FR-106-D: Show animated progress with L key log streaming
+	pollFunc := ghClient.CreatePollFunc(runID)
+	model := github.NewProgressModel("Destroying application", pollFunc)
+	model.RunURL = runURL
+
+	p := tea.NewProgram(model)
+	finalModel, err := r.InputPrompter.RunProgram(p)
+	if err != nil {
+		return fmt.Errorf("progress display error: %w", err)
+	}
+
+	// Check final state
+	if pm, ok := finalModel.(github.ProgressModel); ok {
+		if pm.State == github.ProgressStateFailed {
+			r.Output.LogInfo("")
+			r.Output.LogInfo("Application deletion failed.")
+			r.Output.LogInfo("See workflow logs: %s", runURL)
+			return clierrors.Message("Application deletion failed. Check the workflow logs for details.")
+		}
+	}
+
+	r.Output.LogInfo("")
+	r.Output.LogInfo("Application '%s' deleted successfully from environment '%s'.", r.ApplicationName, r.EnvironmentName)
+
+	return nil
+}
+
+// runKubernetesMode runs the standard Kubernetes-mode delete flow.
+func (r *Runner) runKubernetesMode(ctx context.Context) error {
 	// Prompt user to confirm deletion
 	client, err := r.ConnectionFactory.CreateApplicationsManagementClient(ctx, *r.Workspace)
 	if err != nil {
@@ -210,4 +356,60 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// autoSelectApplication auto-selects the application when unambiguous.
+// FR-107: If exactly one .bicep file exists in .radius/applications/, use it.
+func autoSelectApplication(cwd string) (string, error) {
+	appsDir := filepath.Join(cwd, ".radius", "applications")
+	entries, err := os.ReadDir(appsDir)
+	if err != nil {
+		return "", clierrors.Message("No applications found. Run 'rad app model' to create an application definition.")
+	}
+
+	var bicepFiles []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".bicep") {
+			name := strings.TrimSuffix(entry.Name(), ".bicep")
+			bicepFiles = append(bicepFiles, name)
+		}
+	}
+
+	switch len(bicepFiles) {
+	case 0:
+		return "", clierrors.Message("No application definitions found in .radius/applications/. Run 'rad app model' to create one.")
+	case 1:
+		return bicepFiles[0], nil
+	default:
+		return "", clierrors.Message("Multiple applications found: %s. Use --application to specify which one.", strings.Join(bicepFiles, ", "))
+	}
+}
+
+// autoSelectEnvironment auto-selects the environment when unambiguous.
+func autoSelectEnvironment(owner, repo string) (string, error) {
+	ghClient := github.NewClient()
+	envs, err := ghClient.ListEnvironments(owner, repo)
+	if err != nil {
+		return "", clierrors.Message("Failed to list GitHub Environments: %v", err)
+	}
+
+	switch len(envs) {
+	case 0:
+		return "", clierrors.Message("No environments found. Run 'rad environment create' to set up an environment.")
+	case 1:
+		return envs[0], nil
+	default:
+		return "", clierrors.Message("Multiple environments found: %s. Use --environment to specify which one.", strings.Join(envs, ", "))
+	}
+}
+
+// parseGitHubURL extracts owner and repo from a GitHub URL.
+func parseGitHubURL(url string) (owner, repo string) {
+	url = strings.TrimSuffix(url, ".git")
+	parts := strings.Split(url, "/")
+	if len(parts) >= 2 {
+		repo = parts[len(parts)-1]
+		owner = parts[len(parts)-2]
+	}
+	return owner, repo
 }

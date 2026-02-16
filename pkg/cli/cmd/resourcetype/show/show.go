@@ -18,16 +18,23 @@ package show
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 
 	"github.com/radius-project/radius/pkg/cli"
+	"github.com/radius-project/radius/pkg/cli/clierrors"
 	"github.com/radius-project/radius/pkg/cli/cmd"
 	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/cmd/resourcetype/common"
+	"github.com/radius-project/radius/pkg/cli/config"
 	"github.com/radius-project/radius/pkg/cli/framework"
+	"github.com/radius-project/radius/pkg/cli/github"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
 	"github.com/radius-project/radius/pkg/ucp/api/v20231001preview"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // NewCommand creates an instance of the `rad resource-type show` command and runner.
@@ -99,6 +106,63 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 
 // Run runs the `rad resource-type show` command.
 func (r *Runner) Run(ctx context.Context) error {
+	if r.Workspace.IsGitHubWorkspace() {
+		return r.runGitHubMode(ctx)
+	}
+
+	return r.runKubernetesMode(ctx)
+}
+
+// runGitHubMode shows a resource type from the RADIUS_RESOURCE_TYPES_MANIFEST URL.
+// FR-073: Operate against the manifest URL instead of UCP.
+func (r *Runner) runGitHubMode(ctx context.Context) error {
+	ghClient := github.NewClient()
+
+	// Get the manifest URL from the repo variable
+	manifestURL, err := ghClient.GetRepoVariable("RADIUS_RESOURCE_TYPES_MANIFEST")
+	if err != nil {
+		return clierrors.Message("Failed to get RADIUS_RESOURCE_TYPES_MANIFEST: %v. Run 'rad init --github' to set up the repository.", err)
+	}
+
+	// Fetch the manifest
+	manifest, err := fetchManifest(manifestURL)
+	if err != nil {
+		return clierrors.Message("Failed to fetch resource types manifest from %s: %v", manifestURL, err)
+	}
+
+	// Look up the specific resource type
+	entry, found := manifest.Types[r.ResourceTypeName]
+	if !found {
+		return clierrors.Message("Resource type '%s' not found in manifest.", r.ResourceTypeName)
+	}
+
+	type githubResourceTypeDetail struct {
+		Name               string `json:"name"`
+		DefinitionLocation string `json:"definitionLocation"`
+	}
+
+	detail := githubResourceTypeDetail{
+		Name:               r.ResourceTypeName,
+		DefinitionLocation: entry.DefinitionLocation,
+	}
+
+	tableFormat := output.FormatterOptions{
+		Columns: []output.Column{
+			{Heading: "TYPE", JSONPath: "{ .name }"},
+			{Heading: "DEFINITION", JSONPath: "{ .definitionLocation }"},
+		},
+	}
+
+	err = r.Output.WriteFormatted(r.Format, detail, tableFormat)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// runKubernetesMode shows a resource type from UCP.
+func (r *Runner) runKubernetesMode(ctx context.Context) error {
 	// Initialize the client factory if it hasn't been set externally.
 	// This allows for flexibility where a test UCPClientFactory can be set externally during testing.
 	if r.UCPClientFactory == nil {
@@ -126,4 +190,29 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// fetchManifest fetches a ResourceTypesManifest from a URL.
+func fetchManifest(url string) (*config.ResourceTypesManifest, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("manifest fetch returned HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read manifest body: %w", err)
+	}
+
+	var manifest config.ResourceTypesManifest
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest: %w", err)
+	}
+
+	return &manifest, nil
 }

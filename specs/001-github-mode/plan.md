@@ -1,26 +1,23 @@
 # Implementation Plan: Radius on GitHub
 
-**Branch**: `001-github-mode` | **Date**: 2026-02-12 | **Spec**: [spec.md](spec.md)
+**Branch**: `001-github-mode` | **Date**: 2026-02-16 | **Spec**: [specs/001-github-mode/spec.md](spec.md)
 **Input**: Feature specification from `/specs/001-github-mode/spec.md`
-
-**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
 
 ## Summary
 
-Implement "Radius on GitHub" mode enabling users to deploy cloud applications using Radius without a centralized Kubernetes control plane. All configuration, plans, and deployment records are stored in the GitHub repository, leveraging GitHub Actions for execution and Pull Requests for review workflows. Requires new CLI commands (`rad init` enhanced, `rad environment connect`, `rad pr create/merge/destroy`) with GitHub workspace support and ephemeral k3d-based control plane execution.
+Radius on GitHub adds a new operational mode where environment configuration is stored via the GitHub Environments API, application definitions and deployment artifacts live in the repository, and deployments execute in ephemeral k3d clusters within GitHub Action runners. The two-phase model (`rad deployment create` + `rad deployment apply`) separates plan generation from execution. Implementation extends the existing `rad` CLI with new commands and a `github` workspace kind, leveraging the existing Cobra/Runner/Factory patterns, `gh` CLI wrapper, Git helper, and workflow generation infrastructure already present in the codebase.
 
 ## Technical Context
 
-**Language/Version**: Go 1.21+ (per go.mod)  
-**Primary Dependencies**: spf13/cobra (CLI), spf13/viper (config), go-git/go-git (git operations), hashicorp/terraform-exec (Terraform execution), aws-sdk-go-v2 (AWS OIDC), azure-sdk-for-go (Azure OIDC)  
-**Storage**: File-based (`.radius/*.yaml` in repository, `.radius/model/`, `.radius/plan/`, `.radius/deploy/` subdirectories, `~/.rad/config.yaml` locally)  
-**Testing**: Go testing with gomock, radcli test helpers, functional tests in test/  
-**Target Platform**: Cross-platform CLI (Linux, macOS, Windows), GitHub Actions runners (Linux)
-**Project Type**: Single monorepo with multiple command targets  
-**Performance Goals**: `rad init` < 5 minutes, k3d + Radius setup < 60 seconds, deployment of 5 resources < 15 minutes  
-**Constraints**: Terraform-only initially (Bicep future), AKS/EKS targets only, single active deployment per app/env  
-**Scale/Scope**: Individual repositories with multiple environments, concurrent users via Git branching  
-**Template Embedding**: Workflow templates (`.github/workflows/radius-*.yml`) are embedded in the CLI binary using Go's `embed` package from `pkg/cli/github/workflows/` directory
+**Language/Version**: Go 1.25.7
+**Primary Dependencies**: Cobra (CLI framework), Viper (config), `gh` CLI (GitHub API), `go-git/v5` (Git operations), `gopkg.in/yaml.v3` (YAML marshaling), `go.uber.org/mock` (test mocks)
+**Storage**: GitHub Environments API (env variables), GitHub repository variables, Git repository (`.radius/` directory tree), cloud backends (S3/Azure Storage for Terraform state)
+**Testing**: `go test` via `make test`; Cobra command tests using `test/radcli/shared.go` harness (`SharedCommandValidation`, `SharedValidateValidation`); `gomock` for interface mocking
+**Target Platform**: macOS, Linux (CLI binary); GitHub Actions runners (workflow execution)
+**Project Type**: Single Go module (monorepo with CLI + packages)
+**Performance Goals**: `rad init` < 2 min; `rad environment create` < 10 min (with OIDC setup + auth test); k3d + Radius setup < 60 sec in GitHub Actions; deployment < 15 min for ≤5 resources
+**Constraints**: No persistent Radius control plane in GitHub mode; all state in GitHub API + repository; `gh` CLI required on user workstations; GitHub Actions minutes quota required
+**Scale/Scope**: ~15 new/modified Go source files; 4 new GitHub Actions workflow templates; 8 CLI commands (3 new, 5 modified)
 
 ## Constitution Check
 
@@ -28,22 +25,28 @@ Implement "Radius on GitHub" mode enabling users to deploy cloud applications us
 
 | Principle | Status | Notes |
 |-----------|--------|-------|
-| I. API-First Design | ✅ PASS | No new external APIs exposed; internal CLI command structure follows existing patterns |
-| II. Idiomatic Code Standards | ✅ PASS | Go code follows existing Radius CLI patterns (Cobra, Viper, go-git) |
-| III. Multi-Cloud Neutrality | ✅ PASS | Supports AWS and Azure equally via provider abstraction in environment config |
-| IV. Testing Pyramid Discipline | ✅ PASS | Unit tests for commands, integration tests for GitHub/cloud operations, functional tests for workflows |
-| V. Collaboration-Centric Design | ✅ PASS | PR-based workflow enables developer/platform-engineer collaboration via code review |
-| VI. Open Source and Community-First | ✅ PASS | Spec in design-notes, external resource-types-contrib dependency |
-| VII. Simplicity Over Cleverness | ✅ PASS | File-based storage (YAML), existing CLI patterns, no new abstraction layers |
-| VIII. Separation of Concerns | ✅ PASS | Clear separation: CLI commands → GitHub Actions → k3d control plane → cloud providers |
-| IX. Incremental Adoption | ✅ PASS | New mode does not break existing Kubernetes mode; users choose via `rad init` vs `rad install kubernetes` |
-| X-XI. TypeScript/React Standards | N/A | No dashboard changes in this feature |
-| XII-XIII. Resource Types/Recipes | ✅ PASS | Leverages existing resource-types-contrib repo; adds new `Radius.Core/applications` type |
-| XIV-XV. Documentation | ✅ PASS | CLI help text, configuration file comments, generated workflow files are self-documenting |
-| XVI. Repository-Specific Standards | ✅ PASS | Follows radius repo CONTRIBUTING.md patterns |
-| XVII. Polyglot Project Coherence | ✅ PASS | Uses existing terminology (workspace, environment, resource type, recipe); no new cross-repo concepts |
+| **I. API-First Design** | ✅ PASS | Uses existing Radius ARM-RPC APIs within ephemeral k3d cluster; new `Radius.Core/applications` resource type follows TypeSpec patterns; no new external APIs introduced — GitHub API is consumed, not created |
+| **II. Idiomatic Code Standards** | ✅ PASS | Go: follows Cobra/Runner/Factory patterns established in codebase; godoc on all exported items; `gofmt` + `golangci-lint` enforced |
+| **III. Multi-Cloud Neutrality** | ✅ PASS | Supports AWS and Azure with provider-specific abstractions behind `--provider` flag; cloud-specific logic isolated in provider step generators (`generateAWSAuthTestSteps`, `generateAzureAuthTestSteps`) |
+| **IV. Testing Pyramid** | ✅ PASS | Unit tests for each command (Validate + Run); mock-based testing via existing `gomock` infrastructure; integration tests for workflow dispatch; functional tests via `test/radcli/shared.go` harness |
+| **V. Collaboration-Centric** | ✅ PASS | Two-phase model explicitly separates developer experience (create plan) from platform engineer experience (review/approve/apply); GitHub PR review enables collaboration |
+| **VI. Open Source / Community-First** | ✅ PASS | Design spec in public repo; feature branch workflow; DCO signed commits |
+| **VII. Simplicity Over Cleverness** | ✅ PASS | Wraps existing `gh` CLI rather than implementing GitHub API client; reuses existing workflow generation infrastructure; no new abstraction layers |
+| **VIII. Separation of Concerns** | ✅ PASS | CLI commands in `pkg/cli/cmd/`; GitHub client in `pkg/cli/github/`; workspace config in `pkg/cli/workspaces/`; workflow generation in `pkg/cli/github/workflows.go` — all existing separation maintained |
+| **IX. Incremental Adoption** | ✅ PASS | GitHub mode is opt-in via `rad init --github`; Kubernetes mode unchanged; workspace switching supports both; `rad deploy` continues to work for Kubernetes users |
+| **X-XI. TypeScript/React** | N/A | No dashboard changes in this feature |
+| **XII-XIII. Resource Type/Recipe** | ✅ PASS | New `Radius.Core/applications` resource type follows schema quality standards; recipes referenced by manifest URL, not embedded |
+| **XIV-XV. Documentation** | ⚠️ DEFERRED | CLI help text included in implementation; docs repo updates tracked separately |
+| **XVI. Repository-Specific** | ✅ PASS | Follows radius repo conventions: `make build`, `make test`, `make lint` |
+| **XVII. Polyglot Coherence** | ✅ PASS | Consistent terminology (workspace, environment, application); GitHub mode uses same resource type names as Kubernetes mode |
 
-**Gate Result**: ✅ All applicable principles pass. Proceed to Phase 0.
+**Gate Result: PASS** — No blocking violations. Documentation updates deferred to separate docs repo PR.
+
+**Post-Phase 1 Re-check (2026-02-16)**: Constitution compliance confirmed after design phase. Key design decisions:
+- GitHub Environment variables (external API) replace local env files → aligns with Principle VII (simplicity) and VIII (separation)
+- Commit-hash scoped deployment artifacts → aligns with Principle V (collaboration, auditable)
+- Two-phase model (create/apply) → aligns with Principle V (collaboration) and IX (incremental adoption)
+- All contracts updated to reflect current data model. No new violations introduced.
 
 ## Project Structure
 
@@ -51,158 +54,49 @@ Implement "Radius on GitHub" mode enabling users to deploy cloud applications us
 
 ```text
 specs/001-github-mode/
-├── plan.md              # This file (/speckit.plan command output)
-├── research.md          # Phase 0 output (/speckit.plan command)
-├── data-model.md        # Phase 1 output (/speckit.plan command)
-├── quickstart.md        # Phase 1 output (/speckit.plan command)
-├── contracts/           # Phase 1 output (/speckit.plan command)
-│   └── github-actions-schema.json  # GitHub Actions workflow schema
-└── tasks.md             # Phase 2 output (/speckit.tasks command - NOT created by /speckit.plan)
+├── plan.md              # This file
+├── research.md          # Phase 0 output
+├── data-model.md        # Phase 1 output
+├── quickstart.md        # Phase 1 output
+├── contracts/           # Phase 1 output
+├── tasks.md             # Phase 2 output (created by /speckit.tasks)
+└── defects.md           # Implementation feedback
 ```
 
 ### Source Code (repository root)
 
 ```text
-# Existing structure with additions marked [NEW]
+# Modified files (existing)
+cmd/rad/cmd/root.go                          # Wire new commands: deploymentCmd group, rad app model
+pkg/cli/workspaces/connection.go             # GitHub connection validation updates
+pkg/cli/workspaces/github.go                 # GitHub workspace helpers (IsGitHubWorkspace, ParseOwnerRepo)
+pkg/cli/github/client.go                     # Add DispatchAndWatch, SetEnvironmentVariable, GetEnvironmentVariables, DeleteEnvironment
+pkg/cli/github/git.go                        # Add IsDirty (exists), HasUnpushedCommits, GetHeadCommitHash
+pkg/cli/github/workflows.go                  # Update workflow generators for two-phase model (create, apply, destroy, auth-test)
+pkg/cli/cmd/radinit/init.go                  # Remove --provider, --deployment-tool; simplify for GitHub mode
+pkg/cli/cmd/radinit/github.go               # Update init flow: directory structure, workflow generation, git commit+push
+pkg/cli/cmd/env/create/create.go             # Branch on workspace kind: GitHub mode → GitHub Environments API + OIDC
+pkg/cli/cmd/env/delete/delete.go             # Branch on workspace kind: GitHub mode → delete GitHub Environment + OIDC cleanup prompt
+pkg/cli/cmd/deploy/deploy.go                 # Add GitHub mode guard (error if GitHub workspace)
+pkg/cli/cmd/app/delete/delete.go             # Branch on workspace kind: GitHub mode → dispatch destroy workflow
+pkg/cli/cmd/model/model.go                   # Rename to rad app model (move under applicationCmd)
+pkg/cli/config.go                            # Rename workspace "default" to "current"
 
-pkg/cli/
-├── cmd/
-│   ├── radinit/
-│   │   ├── init.go               # [MODIFY] Enhanced for GitHub mode
-│   │   └── init_test.go          # [MODIFY] Tests for new flags/behavior
-│   ├── environment/
-│   │   └── connect/              # [NEW] rad environment connect
-│   │       ├── connect.go
-│   │       └── connect_test.go
-│   ├── pr/                       # [NEW] rad pr commands
-│   │   ├── create/
-│   │   │   ├── create.go
-│   │   │   └── create_test.go
-│   │   ├── merge/
-│   │   │   ├── merge.go
-│   │   │   └── merge_test.go
-│   │   └── destroy/
-│   │       ├── destroy.go
-│   │       └── destroy_test.go
-├── workspaces/
-│   ├── connection.go             # [MODIFY] Add KindGitHub
-│   ├── github.go                 # [NEW] GitHub workspace implementation
-│   └── github_test.go            # [NEW]
-├── github/                       # [NEW] GitHub integration
-│   ├── client.go                 # gh CLI wrapper
-│   ├── actions.go                # Workflow generation
-│   ├── oidc_aws.go               # AWS OIDC setup
-│   ├── oidc_azure.go             # Azure OIDC setup
-│   └── *_test.go
-└── config/
-    ├── radyaml.go                # [MODIFY] Support .radius/ config files
-    └── types.go                  # [NEW] types.yaml, recipes.yaml, env.yaml parsing
-
-# GitHub Actions workflow templates
-pkg/cli/github/workflows/
-├── plan.yaml.tmpl                # [NEW] Template for deployment planning workflow
-├── deploy.yaml.tmpl              # [NEW] Template for deployment execution workflow
-├── destroy.yaml.tmpl             # [NEW] Template for destruction workflow
-└── auth-test.yaml.tmpl           # [NEW] Template for OIDC authentication verification workflow
-
-# Tests
-test/
-├── functional-portable/
-│   └── github/                   # [NEW] Functional tests for GitHub mode
-│       ├── init_test.go
-│       ├── deploy_test.go
-│       └── fixtures/
-└── radcli/                       # Use existing test helpers
+# New files
+pkg/cli/cmd/deployment/create/create.go      # rad deployment create command
+pkg/cli/cmd/deployment/create/create_test.go # Unit tests
+pkg/cli/cmd/deployment/apply/apply.go        # rad deployment apply command
+pkg/cli/cmd/deployment/apply/apply_test.go   # Unit tests
+pkg/cli/github/environment.go               # GitHub Environments API operations via gh CLI
+pkg/cli/github/environment_test.go           # Unit tests
+pkg/cli/github/oidc.go                       # OIDC setup flows for AWS and Azure
+pkg/cli/github/oidc_test.go                  # Unit tests
+pkg/cli/github/progress.go                   # Animated progress indicator + L key log streaming
+pkg/cli/github/progress_test.go              # Unit tests
 ```
 
-**Structure Decision**: Extends existing CLI structure in `pkg/cli/cmd/` with new command groups (`pr/`, `plan/`) and adds GitHub integration package (`pkg/cli/github/`). No new top-level directories; maintains existing patterns.
+**Structure Decision**: Follows established Radius CLI patterns — each command in its own package under `pkg/cli/cmd/`, shared infrastructure in `pkg/cli/github/`. The `deployment` command group is new, mirroring `env`, `app`, etc. No new top-level directories; all code fits within existing package organization.
 
 ## Complexity Tracking
 
-> **Fill ONLY if Constitution Check has violations that must be justified**
-
-No violations identified. All constitution principles pass without exceptions.
-
-## Constitution Re-evaluation (Post-Design)
-
-*Performed after Phase 1 design artifacts were created.*
-
-| Principle | Status | Post-Design Notes |
-|-----------|--------|-------------------|
-| I. API-First Design | ✅ PASS | Configuration schemas defined in contracts/ (JSON Schema). No external REST APIs. |
-| II. Idiomatic Code Standards | ✅ PASS | Quickstart shows idiomatic Go patterns following existing codebase conventions. |
-| III. Multi-Cloud Neutrality | ✅ PASS | Data model defines symmetric AWS/Azure provider configs. Both providers supported equally. |
-| IV. Testing Pyramid Discipline | ✅ PASS | Quickstart documents testing patterns. Unit tests use gomock, integration tests for cloud ops. |
-| VII. Simplicity Over Cleverness | ✅ PASS | Data model uses simple YAML/JSON structures. No abstract factory or DAO patterns introduced. |
-| VIII. Separation of Concerns | ✅ PASS | Clear packages: `workspaces/`, `github/`, `cmd/`. No circular dependencies. |
-| XVII. Polyglot Project Coherence | ✅ PASS | Reuses existing types (Backend interface, Workspace). Consistent terminology across artifacts. |
-
-**Post-Design Gate Result**: ✅ All principles continue to pass. Design is constitution-compliant.
-
-## Publishing Radius Control Plane Images
-
-For GitHub Mode to work, you must publish Radius control plane container images to your GitHub Container Registry (GHCR). The workflows install Radius in an ephemeral k3d cluster, which pulls images from GHCR.
-
-### Quick Start
-
-```bash
-# 1. Authenticate (ensure gh CLI is logged in)
-gh auth login
-
-# 2. Build and push images to your GHCR
-make github-mode-publish
-
-# 3. (Optional) Generate a Helm values file for manual installation
-make github-mode-generate-values
-```
-
-### Available Make Targets
-
-| Target | Description |
-|--------|-------------|
-| `make github-mode-info` | Show current configuration |
-| `make github-mode-check` | Verify prerequisites |
-| `make github-mode-publish` | Build and push all images to GHCR |
-| `make github-mode-build` | Build images locally |
-| `make github-mode-push` | Push images (after building) |
-| `make github-mode-values` | Show Helm values override |
-| `make github-mode-generate-values` | Write github-mode-values.yaml file |
-| `make github-mode-workflow-update` | Show workflow update instructions |
-
-### Configuration Variables
-
-Override via environment or command line:
-
-```bash
-# Use a different GitHub user
-make github-mode-publish GITHUB_USER=myorg
-
-# Use a custom tag
-make github-mode-publish GITHUB_MODE_TAG=v1.0.0
-
-# Full customization
-make github-mode-publish \
-  GITHUB_USER=myorg \
-  GITHUB_MODE_REGISTRY=ghcr.io/myorg \
-  GITHUB_MODE_TAG=custom-tag
-```
-
-### Images Published
-
-The following images are built and pushed:
-
-- `ghcr.io/<user>/ucpd:<tag>` - Universal Control Plane daemon
-- `ghcr.io/<user>/applications-rp:<tag>` - Applications resource provider
-- `ghcr.io/<user>/dynamic-rp:<tag>` - Dynamic resource provider
-- `ghcr.io/<user>/controller:<tag>` - Radius controller
-
-### Updating Generated Workflows
-
-After publishing images, update the `rad install kubernetes` command in workflows.go or generated workflows to use your custom images:
-
-```go
-// In pkg/cli/github/workflows.go, update the install step:
-Run: "rad install kubernetes --skip-contour-install --set global.imageRegistry=ghcr.io/<your-user> --set global.imageTag=github-mode --set dashboard.enabled=false"
-```
-
-Or modify workflows to use repository variables for flexibility.
+> No constitution violations requiring justification. All implementation follows existing patterns.

@@ -92,6 +92,11 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.Workspace = workspace
 
+	// GitHub mode: recipes are managed via the recipes manifest file, not via register/unregister.
+	if r.Workspace.IsGitHubWorkspace() {
+		return clierrors.Message("Recipe unregistration is not supported in GitHub mode. Manage recipes by editing the recipes manifest file directly.")
+	}
+
 	environment, err := cli.RequireEnvironmentName(cmd, args, *workspace)
 	if err != nil {
 		return err

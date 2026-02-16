@@ -222,6 +222,28 @@ func (g *GitHelper) IsDirty() (bool, error) {
 	return !status.IsClean(), nil
 }
 
+// HasUnpushedCommits checks if the current branch has commits that haven't been pushed to origin.
+func (g *GitHelper) HasUnpushedCommits() (bool, error) {
+	branch, err := g.GetCurrentBranch()
+	if err != nil {
+		return false, err
+	}
+
+	// Use git log to check for commits ahead of origin
+	cmd := exec.Command("git", "log", fmt.Sprintf("origin/%s..HEAD", branch), "--oneline")
+	cmd.Dir = g.repoPath
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		// If the remote branch doesn't exist yet, consider all commits as unpushed
+		return true, nil
+	}
+
+	return strings.TrimSpace(stdout.String()) != "", nil
+}
+
 // CreateBranch creates a new branch from the current HEAD.
 func (g *GitHelper) CreateBranch(name string) error {
 	if name == "" {

@@ -96,10 +96,10 @@ rad init --set-string 'global.imagePullSecrets[0].name=azure-cred' \
 rad init --set-file global.rootCA.cert=/path/to/rootCA.crt
 
 ## Initialize in GitHub mode (stores state in repository instead of Kubernetes)
-rad init --github --provider aws --deployment-tool terraform
+rad init --github
 
-## Initialize in GitHub mode with Azure
-rad init --github --provider azure --deployment-tool bicep --environment production
+## Initialize in GitHub mode with a custom resource types manifest URL
+rad init --github --resource-types-manifest https://example.com/types.yaml
 `,
 		Args: cobra.ExactArgs(0),
 		RunE: framework.RunCommand(runner),
@@ -113,9 +113,7 @@ rad init --github --provider azure --deployment-tool bicep --environment product
 
 	// GitHub mode flags
 	cmd.Flags().BoolVar(&runner.GitHub, "github", false, "Initialize in GitHub mode (stores state in repository)")
-	cmd.Flags().StringVar(&runner.Provider, "provider", "", "Cloud provider for GitHub mode (aws or azure)")
-	cmd.Flags().StringVar(&runner.DeploymentTool, "deployment-tool", "terraform", "Infrastructure deployment tool (terraform or bicep)")
-	cmd.Flags().StringVar(&runner.EnvironmentName, "environment", "default", "Environment name for GitHub mode")
+	cmd.Flags().StringVar(&runner.ResourceTypesManifest, "resource-types-manifest", "", "URL to resource types manifest for GitHub mode")
 	return cmd, runner
 }
 
@@ -166,14 +164,8 @@ type Runner struct {
 	// GitHub indicates whether to initialize in GitHub mode.
 	GitHub bool
 
-	// Provider is the cloud provider for GitHub mode (aws or azure).
-	Provider string
-
-	// DeploymentTool is the infrastructure tool for GitHub mode (terraform or bicep).
-	DeploymentTool string
-
-	// EnvironmentName is the environment name for GitHub mode.
-	EnvironmentName string
+	// ResourceTypesManifest is the URL to a custom resource types manifest for GitHub mode.
+	ResourceTypesManifest string
 
 	// githubOpts holds GitHub-specific options populated during validation.
 	githubOpts *githubInitOptions

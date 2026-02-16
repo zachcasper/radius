@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://radius.dev/schemas/github-mode/deployment-record.json",
   "title": "Radius Deployment Record",
-  "description": "Schema for .radius/deploy/<app>/<env>/<commit>/deploy-<commit>.json files",
+  "description": "Schema for deployment execution records stored in .radius/deploy/<app>/<env>/<commit>/deploy.yaml (same file as plan, updated after apply)",
   "type": "object",
   "required": ["application", "environment", "startedAt", "completedAt", "status", "git", "plan", "steps", "summary"],
   "properties": {
@@ -53,12 +53,9 @@
   "definitions": {
     "environmentInfo": {
       "type": "object",
-      "required": ["name", "environmentFile"],
+      "required": ["name"],
       "properties": {
         "name": {
-          "type": "string"
-        },
-        "environmentFile": {
           "type": "string"
         },
         "kubernetesContext": {

@@ -41,7 +41,8 @@ import (
 	bicep_publishextension "github.com/radius-project/radius/pkg/cli/cmd/bicep/publishextension"
 	credential "github.com/radius-project/radius/pkg/cli/cmd/credential"
 	cmd_deploy "github.com/radius-project/radius/pkg/cli/cmd/deploy"
-	env_connect "github.com/radius-project/radius/pkg/cli/cmd/env/connect"
+	deployment_apply "github.com/radius-project/radius/pkg/cli/cmd/deployment/apply"
+	deployment_create "github.com/radius-project/radius/pkg/cli/cmd/deployment/create"
 	env_create "github.com/radius-project/radius/pkg/cli/cmd/env/create"
 	env_create_preview "github.com/radius-project/radius/pkg/cli/cmd/env/create/preview"
 	env_delete "github.com/radius-project/radius/pkg/cli/cmd/env/delete"
@@ -59,8 +60,6 @@ import (
 	"github.com/radius-project/radius/pkg/cli/cmd/install"
 	install_kubernetes "github.com/radius-project/radius/pkg/cli/cmd/install/kubernetes"
 	"github.com/radius-project/radius/pkg/cli/cmd/model"
-	pr_create "github.com/radius-project/radius/pkg/cli/cmd/pr/create"
-	pr_merge "github.com/radius-project/radius/pkg/cli/cmd/pr/merge"
 	"github.com/radius-project/radius/pkg/cli/cmd/radinit"
 	recipe_list "github.com/radius-project/radius/pkg/cli/cmd/recipe/list"
 	recipe_register "github.com/radius-project/radius/pkg/cli/cmd/recipe/register"
@@ -421,9 +420,6 @@ func initSubCommands() {
 	wirePreviewSubcommand(envSwitchCmd, previewEnvSwitchCmd)
 	envCmd.AddCommand(envSwitchCmd)
 
-	envConnectCmd, _ := env_connect.NewCommand(framework)
-	envCmd.AddCommand(envConnectCmd)
-
 	bicepPublishCmd, _ := bicep_publish.NewCommand(framework)
 	bicepCmd.AddCommand(bicepPublishCmd)
 
@@ -457,16 +453,19 @@ func initSubCommands() {
 	rollbackKubernetesCmd, _ := rollback_kubernetes.NewCommand(framework)
 	rollbackCmd.AddCommand(rollbackKubernetesCmd)
 
-	// PR commands
-	prCreateCmd, _ := pr_create.NewCommand(framework)
-	prCmd.AddCommand(prCreateCmd)
+	// Deployment command group (FR-068-A: two-phase deployment commands)
+	deploymentCmd := NewDeploymentCommand()
+	RootCmd.AddCommand(deploymentCmd)
 
-	prMergeCmd, _ := pr_merge.NewCommand(framework)
-	prCmd.AddCommand(prMergeCmd)
+	deploymentCreateCmd, _ := deployment_create.NewCommand(framework)
+	deploymentCmd.AddCommand(deploymentCreateCmd)
 
-	// Model command
+	deploymentApplyCmd, _ := deployment_apply.NewCommand(framework)
+	deploymentCmd.AddCommand(deploymentApplyCmd)
+
+	// Model command (under app: rad app model)
 	modelCmd, _ := model.NewCommand(framework)
-	RootCmd.AddCommand(modelCmd)
+	applicationCmd.AddCommand(modelCmd)
 
 	versionCmd, _ := version.NewCommand(framework)
 	RootCmd.AddCommand(versionCmd)

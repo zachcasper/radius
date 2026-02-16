@@ -1,11 +1,15 @@
 # Quickstart: Radius on GitHub Implementation
 
 **Phase**: 1 (Design & Contracts)  
-**Date**: 2026-02-12
+**Date**: 2026-02-16 (updated from 2026-02-12)
 
 ## Overview
 
-This quickstart guide provides implementation patterns for the Radius on GitHub feature. It covers the essential code paths and integration points for developers working on this feature.
+This quickstart guide provides implementation patterns for the Radius on GitHub feature using the **two-phase deployment model**:
+1. **`rad deployment create`** — generates a deployment plan locally, commits it to a PR branch
+2. **`rad deployment apply`** — dispatches a GitHub Actions workflow to execute the plan
+
+Configuration is stored in **GitHub Environment variables** (not local files), and deployment artifacts are scoped by **commit hash**.
 
 ---
 
@@ -23,332 +27,307 @@ make test
 ```
 
 **Prerequisites** (from constitution):
-- Go 1.21+ (per go.mod)
+- Go 1.25.7 (per go.mod)
 - GitHub CLI (`gh`) installed and authenticated
 - AWS CLI or Azure CLI for OIDC setup testing
 
 ---
 
-## 2. Adding the GitHub Workspace Kind
+## 2. GitHub Workspace Connection (Already Partially Exists)
 
-**Location**: `pkg/cli/workspaces/connection.go`
+**Location**: `pkg/cli/workspaces/connection.go` — `KindGitHub = "github"` already defined
 
-```go
-// Add new constant for GitHub workspace kind
-const (
-    KindKubernetes = "kubernetes"
-    KindGitHub     = "github"  // NEW
-)
-
-// Update CreateConnection to handle GitHub
-func CreateConnection(connectionMap map[string]any) (Connection, error) {
-    kind, ok := connectionMap["kind"].(string)
-    if !ok {
-        return nil, errors.New("missing connection kind")
-    }
-
-    switch kind {
-    case KindKubernetes:
-        return createKubernetesConnection(connectionMap)
-    case KindGitHub:
-        return createGitHubConnection(connectionMap)  // NEW
-    default:
-        return nil, fmt.Errorf("unknown connection kind: %s", kind)
-    }
-}
-```
-
-**New file**: `pkg/cli/workspaces/github.go`
+The new `GitHubConnectionConfig` struct in `pkg/cli/workspaces/github.go` stores the GitHub repository URL:
 
 ```go
 package workspaces
 
-// GitHubConnection represents a connection to a GitHub repository
-type GitHubConnection struct {
-    URL string
+// GitHubConnectionConfig stores GitHub workspace connection details
+type GitHubConnectionConfig struct {
+    URL string `yaml:"url"` // GitHub repository URL
 }
+```
 
-func (c *GitHubConnection) Kind() string {
-    return KindGitHub
-}
-
-func (c *GitHubConnection) String() string {
-    return c.URL
-}
-
-func createGitHubConnection(connectionMap map[string]any) (*GitHubConnection, error) {
-    url, ok := connectionMap["url"].(string)
-    if !ok {
-        return nil, errors.New("GitHub connection requires 'url' field")
-    }
-    return &GitHubConnection{URL: url}, nil
-}
+Workspace config (`~/.rad/config.yaml`):
+```yaml
+current: my-app
+items:
+  my-app:
+    connection:
+      kind: github
+      url: https://github.com/org/my-app
+    environment: dev
 ```
 
 ---
 
-## 3. Implementing rad init for GitHub Mode
+## 3. Two-Phase Deployment: `rad deployment create`
 
-**Location**: `pkg/cli/cmd/radinit/init.go` (modify existing)
+**New package**: `pkg/cli/cmd/deployment/create/`
 
-Key changes:
-1. Add `--provider` and `--deployment-tool` flags
-2. Detect GitHub repository (check `.git` and remote)
-3. Create `.radius/` directory structure
-4. Fetch resource types via sparse checkout
-5. Create workspace config
+This command runs **locally** to generate the deployment plan:
 
 ```go
-// Runner for rad init (modified)
+// Runner for rad deployment create
 type Runner struct {
-    factory      framework.Factory
-    provider     string  // aws, azure
-    deployTool   string  // terraform, bicep
-    environment  string  // default: "default"
-    // ... existing fields
+    factory     framework.Factory
+    application string
+    environment string
+    gitCommit   string // from --git-commit flag or auto-detected HEAD
+    Output      output.Interface
+    Prompter    prompt.Interface
+    GitHub      github.Interface
+    Git         github.GitInterface
 }
 
-func (r *Runner) Validate() error {
-    // Validate directory is a git repo
-    if !r.isGitRepository() {
-        return errors.New("current directory is not a git repository")
+func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
+    // 1. Verify GitHub workspace mode
+    workspace, err := cli.RequireWorkspace(cmd, r.ConfigHolder)
+    if err != nil || workspace.Connection.Kind != workspaces.KindGitHub {
+        return clierrors.Message("This command requires a GitHub workspace.")
     }
-    
-    // Validate GitHub remote exists
-    remote, err := r.getGitHubRemote()
-    if err != nil {
-        return fmt.Errorf("no GitHub remote found: %w", err)
+
+    // 2. Require clean worktree (no uncommitted changes)
+    if dirty, err := r.Git.IsWorktreeDirty(); err != nil || dirty {
+        return clierrors.Message("Working tree must be clean. Commit or stash changes first.")
     }
-    r.gitHubRemote = remote
-    
-    // Validate gh auth status
-    if err := r.checkGHAuth(); err != nil {
-        return fmt.Errorf("GitHub CLI not authenticated: %w", err)
+
+    // 3. Resolve commit hash (default: HEAD)
+    if r.gitCommit == "" {
+        r.gitCommit, err = r.Git.GetHeadCommitShort()
     }
-    
+
     return nil
 }
 
 func (r *Runner) Run(ctx context.Context) error {
-    // 1. Create .radius directory
-    if err := r.createRadiusDir(); err != nil {
+    // 1. Read application definition from .radius/applications/<app>.bicep
+    // 2. Fetch resource types manifest (from RADIUS_RESOURCE_TYPES_MANIFEST repo variable)
+    // 3. Fetch recipes manifest (from RADIUS_RECIPES_MANIFEST env variable)
+    // 4. Generate deployment plan with ordered steps
+    // 5. Generate Terraform/Bicep artifacts for each step
+    // 6. Write deploy.yaml to .radius/deploy/<app>/<env>/<commit>/deploy.yaml
+    // 7. Create PR branch, commit, push
+    // 8. Create PR with plan summary in body
+    return nil
+}
+```
+
+Output: `.radius/deploy/<app>/<env>/<commit>/deploy.yaml`
+
+---
+
+## 4. Two-Phase Deployment: `rad deployment apply`
+
+**New package**: `pkg/cli/cmd/deployment/apply/`
+
+This command **dispatches a GitHub Actions workflow** and shows animated progress:
+
+```go
+// Runner for rad deployment apply
+type Runner struct {
+    factory     framework.Factory
+    application string
+    environment string
+    gitCommit   string // from --git-commit flag or auto-detected from PR
+    Output      output.Interface
+    Prompter    prompt.Interface
+    GitHub      github.Interface
+}
+
+func (r *Runner) Run(ctx context.Context) error {
+    // 1. Dispatch radius-deployment-apply.yml workflow
+    err := r.GitHub.RunWorkflow("radius-deployment-apply.yml", r.branch, map[string]string{
+        "application": r.application,
+        "environment": r.environment,
+        "commit":      r.gitCommit,
+    })
+
+    // 2. Wait for workflow to start
+    run, err := r.GitHub.GetLatestWorkflowRun("radius-deployment-apply.yml", r.branch)
+
+    // 3. Show animated progress indicator (Bubble Tea)
+    // User can press 'L' to stream logs
+    model := progress.NewModel(r.GitHub, run.ID)
+    if _, err := r.Prompter.RunProgram(model); err != nil {
         return err
     }
-    
-    // 2. Fetch and create types.yaml (sparse checkout)
-    if err := r.fetchResourceTypes(ctx); err != nil {
-        return err
-    }
-    
-    // 3. Create recipes.yaml for provider
-    if err := r.createRecipesManifest(); err != nil {
-        return err
-    }
-    
-    // 4. Create env.<name>.yaml
-    if err := r.createEnvironmentFile(); err != nil {
-        return err
-    }
-    
-    // 5. Update ~/.rad/config.yaml with github workspace
-    if err := r.createWorkspace(); err != nil {
-        return err
-    }
-    
-    // 6. Commit changes with trailer
-    if err := r.commitChanges("Radius-Action: init"); err != nil {
-        return err
-    }
-    
+
+    // 4. Report final status
     return nil
 }
 ```
 
 ---
 
-## 4. GitHub CLI Wrapper
+## 5. GitHub Client Extensions
 
-**Location**: `pkg/cli/github/ghcli.go` (new package)
+**Location**: `pkg/cli/github/client.go` (existing — extend)
+
+New methods needed:
 
 ```go
-package github
-
-import (
-    "bytes"
-    "encoding/json"
-    "os/exec"
-)
-
-// Client wraps the gh CLI for GitHub operations
-type Client struct{}
-
-// AuthStatus checks if gh CLI is authenticated
-func (c *Client) AuthStatus() error {
-    return exec.Command("gh", "auth", "status").Run()
+// SetEnvironmentVariable sets a GitHub Environment-scoped variable
+func (c *Impl) SetEnvironmentVariable(envName, name, value string) error {
+    return c.runGH("variable", "set", name, "--env", envName, "--body", value)
 }
 
-// CreatePR creates a pull request
-func (c *Client) CreatePR(base, head, title, body string) (int, error) {
-    cmd := exec.Command("gh", "pr", "create",
-        "--base", base,
-        "--head", head,
-        "--title", title,
-        "--body", body,
-        "--json", "number",
-    )
-    
-    output, err := cmd.Output()
-    if err != nil {
-        return 0, err
-    }
-    
-    var result struct {
-        Number int `json:"number"`
-    }
-    if err := json.Unmarshal(output, &result); err != nil {
-        return 0, err
-    }
-    
-    return result.Number, nil
+// GetEnvironmentVariables lists variables for a GitHub Environment
+func (c *Impl) GetEnvironmentVariables(envName string) (map[string]string, error) {
+    output, err := c.runGHOutput("variable", "list", "--env", envName, "--json", "name,value")
+    // parse JSON output
+    return vars, err
 }
 
-// RunWorkflow triggers a workflow dispatch event
-func (c *Client) RunWorkflow(workflow, ref string, inputs map[string]string) error {
-    args := []string{"workflow", "run", workflow, "--ref", ref}
-    for k, v := range inputs {
-        args = append(args, "-f", k+"="+v)
-    }
-    return exec.Command("gh", args...).Run()
+// SetRepoVariable sets a GitHub repository variable
+func (c *Impl) SetRepoVariable(name, value string) error {
+    return c.runGH("variable", "set", name, "--body", value)
 }
 
-// MergePR merges a pull request
-func (c *Client) MergePR(prNumber int, autoMerge bool) error {
-    args := []string{"pr", "merge", fmt.Sprintf("%d", prNumber), "--squash"}
-    if autoMerge {
-        args = append(args, "--auto")
-    }
-    return exec.Command("gh", args...).Run()
+// CreateEnvironment creates a GitHub Environment via API
+func (c *Impl) CreateEnvironment(envName string) error {
+    return c.runGH("api", "--method", "PUT",
+        fmt.Sprintf("repos/{owner}/{repo}/environments/%s", envName))
+}
+
+// DeleteEnvironment deletes a GitHub Environment via API
+func (c *Impl) DeleteEnvironment(envName string) error {
+    return c.runGH("api", "--method", "DELETE",
+        fmt.Sprintf("repos/{owner}/{repo}/environments/%s", envName))
 }
 ```
 
 ---
 
-## 5. Terraform State Backend Implementation
+## 6. Workflow Generation
 
-**Location**: `pkg/recipes/terraform/config/backends/s3.go` (new)
+**Location**: `pkg/cli/github/workflows.go` (existing — extend)
+
+Four workflows are generated by `rad init` (FR-112):
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `radius-deployment-create.yml` | `workflow_dispatch` | Generates deployment plan |
+| `radius-deployment-apply.yml` | `workflow_dispatch` | Executes deployment plan |
+| `radius-destroy.yml` | `workflow_dispatch` | Destroys deployed resources |
+| `radius-auth-test.yml` | `workflow_dispatch` | Verifies OIDC authentication |
+
+Each workflow uses GitHub Actions `concurrency` groups to prevent parallel deployments:
+
+```yaml
+concurrency:
+  group: radius-deploy-${{ inputs.application }}-${{ inputs.environment }}
+  cancel-in-progress: false
+```
+
+---
+
+## 7. OIDC Setup and Verification
+
+**Location**: `pkg/cli/cmd/env/connect/connect.go` (existing — 1300+ lines)
+
+After OIDC setup, auto-verify by dispatching `radius-auth-test.yml`:
 
 ```go
-package backends
+// After OIDC configuration completes:
+err := r.GitHub.RunWorkflow("radius-auth-test.yml", "main", map[string]string{
+    "environment": r.environment,
+})
+// Monitor workflow result for pass/fail
+run, err := r.GitHub.WatchWorkflowRun(ctx, runID)
+```
 
-import (
-    "context"
-    
-    "github.com/radius-project/radius/pkg/recipes"
-)
+---
 
-// S3Backend implements the Backend interface for AWS S3
-type S3Backend struct {
-    Bucket        string
-    Region        string
-    DynamoDBTable string
-}
+## 8. Environment Delete with OIDC Cleanup
 
-func (b *S3Backend) BuildBackend(resourceRecipe *recipes.ResourceMetadata) (map[string]any, error) {
-    key := fmt.Sprintf("radius/%s/%s/%s.tfstate",
-        resourceRecipe.Application,
-        resourceRecipe.Environment,
-        resourceRecipe.Name,
-    )
-    
-    backend := map[string]any{
-        "s3": map[string]any{
-            "bucket":         b.Bucket,
-            "key":            key,
-            "region":         b.Region,
-            "encrypt":        true,
-        },
+**Location**: `pkg/cli/cmd/env/delete/` (new or modified)
+
+When deleting a GitHub-mode environment:
+
+```go
+func (r *Runner) Run(ctx context.Context) error {
+    // 1. Prompt: "Do you want to clean up OIDC configuration from <provider>?"
+    if cleanup {
+        // 2. Azure: delete app registration + federated credential
+        //    AWS: delete IAM role + OIDC identity provider
     }
-    
-    if b.DynamoDBTable != "" {
-        backend["s3"].(map[string]any)["dynamodb_table"] = b.DynamoDBTable
-    }
-    
-    return backend, nil
-}
 
-func (b *S3Backend) ValidateBackendExists(ctx context.Context, name string) (bool, error) {
-    // Use AWS SDK to check if bucket exists
-    // Implementation follows patterns in pkg/cli/aws/client.go
-    return true, nil
+    // 3. Delete GitHub Environment (removes all env-scoped variables)
+    err := r.GitHub.DeleteEnvironment(r.environment)
+
+    return nil
 }
 ```
 
 ---
 
-## 6. Testing Patterns
+## 9. Testing Patterns
 
 **Unit tests** follow the existing pattern in `test/radcli/`:
 
 ```go
-// pkg/cli/cmd/radinit/init_test.go (modify existing)
-
-func Test_Run_GitHubMode(t *testing.T) {
+func Test_Validate_GitHubWorkspaceRequired(t *testing.T) {
     ctrl := gomock.NewController(t)
-    defer ctrl.Finish()
-    
-    // Setup mocks
-    mocks := &radcli.ValidateMocks{
-        // Configure mocks for GitHub mode
-    }
-    
+
     runner := &Runner{
-        provider:     "aws",
-        deployTool:   "terraform",
-        environment:  "default",
+        // ... setup with Kubernetes workspace (should fail)
     }
-    
-    // Create temp git repo
-    dir := t.TempDir()
-    git.PlainInit(dir, false)
-    
-    // Run
+
+    err := runner.Validate(cmd, args)
+    require.Error(t, err)
+    assert.Contains(t, err.Error(), "GitHub workspace")
+}
+
+func Test_Run_DeploymentCreate(t *testing.T) {
+    ctrl := gomock.NewController(t)
+
+    mockGit := github.NewMockGitInterface(ctrl)
+    mockGit.EXPECT().IsWorktreeDirty().Return(false, nil)
+    mockGit.EXPECT().GetHeadCommitShort().Return("abc1234", nil)
+
+    mockGH := github.NewMockInterface(ctrl)
+    // ... expect workflow dispatch, PR creation, etc.
+
+    runner := &Runner{
+        application: "myapp",
+        environment: "dev",
+        Git:         mockGit,
+        GitHub:      mockGH,
+    }
+
     err := runner.Run(context.Background())
     require.NoError(t, err)
-    
-    // Verify files created
-    assert.FileExists(t, filepath.Join(dir, ".radius", "types.yaml"))
-    assert.FileExists(t, filepath.Join(dir, ".radius", "recipes.yaml"))
-    assert.FileExists(t, filepath.Join(dir, ".radius", "env.default.yaml"))
 }
 ```
 
 ---
 
-## 7. Key Files to Implement
+## 10. Key Files to Implement
 
 | Priority | File | Purpose |
 |----------|------|---------|
-| 1 | `pkg/cli/workspaces/github.go` | GitHub workspace connection type |
-| 2 | `pkg/cli/github/ghcli.go` | GitHub CLI wrapper |
-| 3 | `pkg/cli/cmd/radinit/init.go` | Enhanced rad init |
-| 4 | `pkg/cli/cmd/environment/connect/connect.go` | rad environment connect |
-| 5 | `pkg/cli/cmd/pr/create/create.go` | rad pr create |
-| 6 | `pkg/cli/cmd/pr/merge/merge.go` | rad pr merge |
-| 7 | `pkg/cli/cmd/pr/destroy/destroy.go` | rad pr destroy |
-| 8 | `pkg/cli/cmd/plan/deploy/deploy.go` | rad plan deploy |
-| 9 | `pkg/recipes/terraform/config/backends/s3.go` | S3 state backend |
-| 10 | `pkg/recipes/terraform/config/backends/azurestorage.go` | Azure Storage backend |
-| 11 | `pkg/cli/github/workflows/` | GitHub Actions templates |
+| 1 | `pkg/cli/cmd/deployment/create/create.go` | `rad deployment create` command |
+| 2 | `pkg/cli/cmd/deployment/apply/apply.go` | `rad deployment apply` command |
+| 3 | `pkg/cli/cmd/radinit/github.go` | Enhanced `rad init` for GitHub mode |
+| 4 | `pkg/cli/github/client.go` | Extend with env variable methods |
+| 5 | `pkg/cli/github/workflows.go` | Add deployment-create/apply workflow generation |
+| 6 | `pkg/cli/cmd/env/connect/connect.go` | Add OIDC auto-verify after setup |
+| 7 | `pkg/cli/cmd/env/delete/delete.go` | OIDC cleanup on env delete |
+| 8 | `pkg/cli/cmd/app/delete/delete.go` | `rad app delete` via workflow dispatch |
+| 9 | `pkg/cli/cmd/app/model/model.go` | Rename from `rad model` → `rad app model` |
+| 10 | `cmd/rad/cmd/root.go` | Wire new deployment subcommands |
 
 ---
 
-## 8. Constitution Compliance Checklist
+## 11. Constitution Compliance Checklist
 
 Before submitting PRs, verify:
 
 - [ ] Unit tests cover new functionality (Principle IV)
 - [ ] Go code passes `make lint` and `make format-check` (Principle II)
-- [ ] No cloud-specific assumptions - both AWS and Azure work (Principle III)
+- [ ] No cloud-specific assumptions — both AWS and Azure work (Principle III)
 - [ ] CLI help text is comprehensive (Principle XIV)
 - [ ] Commits include `Signed-off-by` (Principle VI)
 - [ ] Feature can be incrementally adopted (Principle IX)
+- [ ] GitHub workspace commands error clearly when used in Kubernetes mode (Principle XI)

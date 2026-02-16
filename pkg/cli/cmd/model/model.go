@@ -94,12 +94,12 @@ func NewCommand(factory framework.Factory) (*cobra.Command, framework.Runner) {
 		Use:   "model",
 		Short: "Create an application model",
 		Long: `Create a sample application model file for Radius.
-This command generates a starter application model at .radius/model/todolist.bicep
+This command generates a starter application model at .radius/applications/todolist.bicep
 containing a sample application with a frontend container and PostgreSQL database.
 This is a placeholder for future AI-assisted modeling functionality.`,
 		Example: `# Create a sample application model
-rad model
-# The generated model will be at .radius/model/todolist.bicep`,
+rad app model
+# The generated model will be at .radius/applications/todolist.bicep`,
 		Args: cobra.NoArgs,
 		RunE: framework.RunCommand(runner),
 	}
@@ -172,14 +172,14 @@ func (r *Runner) Run(ctx context.Context) error {
 		return clierrors.Message("Failed to get current directory: %v", err)
 	}
 
-	// Create .radius/model/ directory
-	modelDir := filepath.Join(cwd, ".radius", "model")
-	if err := os.MkdirAll(modelDir, 0755); err != nil {
-		return clierrors.Message("Failed to create model directory: %v", err)
+	// Create .radius/applications/ directory
+	appsDir := filepath.Join(cwd, ".radius", "applications")
+	if err := os.MkdirAll(appsDir, 0755); err != nil {
+		return clierrors.Message("Failed to create applications directory: %v", err)
 	}
 
 	// Check if model file already exists
-	modelFile := filepath.Join(modelDir, DefaultModelName+ModelFileExtension)
+	modelFile := filepath.Join(appsDir, DefaultModelName+ModelFileExtension)
 	if _, err := os.Stat(modelFile); err == nil {
 		// File exists, prompt for overwrite
 		if !r.Yes {
@@ -208,7 +208,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	// go-git requires relative path from repository root
-	relativeModelPath := filepath.Join(".radius", "model", DefaultModelName+ModelFileExtension)
+	relativeModelPath := filepath.Join(".radius", "applications", DefaultModelName+ModelFileExtension)
 	if err := gitHelper.Add(relativeModelPath); err != nil {
 		return clierrors.Message("Failed to stage model file: %v", err)
 	}
@@ -227,7 +227,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	r.Output.LogInfo("")
 	r.Output.LogInfo("Next steps:")
 	r.Output.LogInfo("  1. Edit the model to define your application resources")
-	r.Output.LogInfo("  2. Run 'rad pr create' to create a deployment plan")
+	r.Output.LogInfo("  2. Run 'rad deployment create' to generate a deployment plan")
 
 	return nil
 }

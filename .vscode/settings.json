@@ -31,6 +31,7 @@
         ".specify/scripts/bash/": true,
         ".specify/scripts/powershell/": true,
         "mkdir": true,
-        "go": true
+        "go": true,
+        "/Users/zcasper/radius/dev/github-radius/.specify/scripts/bash/update-agent-context.sh": true
     }
 }

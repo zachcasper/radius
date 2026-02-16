@@ -114,6 +114,11 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.Workspace = workspace
 
+	// FR-073: GitHub mode uses manifest-based resource types; create is not supported.
+	if workspace.IsGitHubWorkspace() {
+		return clierrors.Message("Resource type creation is not supported in GitHub mode. Resource types are managed through the RADIUS_RESOURCE_TYPES_MANIFEST. Use 'rad resource-type list' to view available types.")
+	}
+
 	format, err := cli.RequireOutput(cmd)
 	if err != nil {
 		return err

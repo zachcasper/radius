@@ -1,30 +1,37 @@
 # Tasks: Radius on GitHub
 
-**Input**: Design documents from `/specs/001-github-mode/`  
-**Prerequisites**: plan.md ✓, spec.md ✓, research.md ✓, data-model.md ✓, contracts/ ✓, quickstart.md ✓
+**Input**: Design documents from `/specs/001-github-mode/`
+**Prerequisites**: plan.md, spec.md (10 user stories), research.md, data-model.md, contracts/
 
-## Format: `[ID] [P?] [Story?] Description`
+**Tests**: Test tasks included per Constitution Principle IV (Testing Pyramid, NON-NEGOTIABLE). Each new package includes corresponding unit test tasks.
+
+**Organization**: Tasks grouped by user story to enable independent implementation and testing.
+
+## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story this task belongs to (US1, US2, etc.)
-- File paths use repository root conventions (pkg/cli/...)
+- **[Story]**: Which user story this task belongs to (e.g., US1, US2)
+- Exact file paths included per plan.md Project Structure
 
 ---
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-**Purpose**: Project initialization and core infrastructure types
+**Purpose**: Project initialization, workspace config updates, and shared infrastructure needed by all stories
 
-- [X] T001 Add KindGitHub constant to pkg/cli/workspaces/connection.go
-- [X] T002 [P] Create GitHubConnection type in pkg/cli/workspaces/github.go
-- [X] T003 [P] Create unit tests for GitHubConnection in pkg/cli/workspaces/github_test.go
-- [X] T004 [P] Create ResourceTypesManifest type in pkg/cli/config/types.go
-- [X] T005 [P] Create RecipesManifest type in pkg/cli/config/recipes.go
-- [X] T006 [P] Create Environment type in pkg/cli/config/environment.go
-- [X] T007 [P] Create DeploymentPlan type in pkg/cli/config/plan.go
-- [X] T008 [P] Create DeploymentRecord type in pkg/cli/config/record.go
-- [X] T009 Update pkg/cli/workspaces/connection.go CreateConnection to handle GitHub kind
-- [X] T010 Create YAML parser for .radius/ config files in pkg/cli/config/parser.go
+- [X] T001 Rename workspace config property `default` to `current` in pkg/cli/config.go and update all references across pkg/cli/ (FR-012, FR-071)
+- [X] T002 [P] Add GitHub connection validation to pkg/cli/workspaces/connection.go — validate `Kind == "github"` requires non-empty `URL` with GitHub hostname (FR-072)
+- [X] T003 [P] Create helper functions `IsGitHubWorkspace()` and `ParseOwnerRepo()` in pkg/cli/workspaces/github.go (used by all GitHub-mode commands)
+- [X] T004 [P] Leverage existing `IsDirty()` and add `GetHeadCommitHash()` method to pkg/cli/github/git.go (used by deployment create, FR-045-A, FR-045-C)
+- [X] T005 [P] Add `HasUnpushedCommits()` method to pkg/cli/github/git.go (used by deployment create, FR-045-B)
+- [X] T006 [P] Add default resource group fallback logic in pkg/cli/cmd/radinit/init.go or relevant resolver — when no `--group` flag and no workspace scope, fall back to `default` resource group (FR-115)
+- [X] T007 [P] Add `rad deploy` GitHub-mode guard in pkg/cli/cmd/deploy/deploy.go — error with message directing to `rad deployment create`/`apply` when workspace kind is `github` (FR-036, FR-037)
+- [X] T007-A [P] Remove `rad pr` command group (cmd/rad/cmd/pr.go, pkg/cli/cmd/pr/) — `rad pr create`, `rad pr merge`, `rad pr destroy` are replaced by `rad deployment create`/`apply` (FR-032, FR-033, FR-034, FR-035)
+- [X] T007-B [P] Rename `rad environment connect` to `rad environment create` — remove pkg/cli/cmd/env/connect/ and update command wiring in cmd/rad/cmd/root.go (FR-015)
+- [X] T007-C [P] Add GitHub-mode routing in `rad resource-type` commands — when workspace kind is `github`, operate against `RADIUS_RESOURCE_TYPES_MANIFEST` URL instead of UCP (FR-073)
+- [X] T007-D [P] Add GitHub-mode routing in `rad recipe` commands — when workspace kind is `github`, operate against environment's `RADIUS_RECIPES_MANIFEST` variable instead of UCP (FR-075)
+
+**Checkpoint**: Shared infrastructure ready — user story implementation can begin
 
 ---
 
@@ -34,261 +41,239 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [X] T011 Create GitHub CLI wrapper package in pkg/cli/github/client.go with AuthStatus(), CreatePR(), MergePR(), RunWorkflow()
-- [X] T012 [P] Create unit tests for GitHub client in pkg/cli/github/client_test.go
-- [X] T013 [P] Create git operations helper in pkg/cli/github/git.go using go-git for init, add, commit with trailers
-- [X] T014 [P] Create unit tests for git helper in pkg/cli/github/git_test.go
-- [X] T015 Create S3 Terraform state backend in pkg/recipes/terraform/config/backends/s3.go implementing Backend interface
-- [X] T016 [P] Create unit tests for S3 backend in pkg/recipes/terraform/config/backends/s3_test.go
-- [X] T017 [P] Create Azure Storage Terraform state backend in pkg/recipes/terraform/config/backends/azurestorage.go
-- [X] T018 [P] Create unit tests for Azure Storage backend in pkg/recipes/terraform/config/backends/azurestorage_test.go
-- [X] T019 Create GitHub Actions workflow struct types in pkg/cli/github/workflows.go
-- [X] T020 [P] Create workflow YAML generation using goccy/go-yaml in pkg/cli/github/workflows.go
+- [X] T008 Create pkg/cli/github/environment.go — implement GitHub Environments API operations via `gh` CLI: `CreateEnvironment()`, `DeleteEnvironment()`, `SetEnvironmentVariable()`, `GetEnvironmentVariables()`, `SetRepoVariable()` (used by US1, US2, US7)
+- [ ] T008-T [P] Create pkg/cli/github/environment_test.go (DEFERRED: tests deferred to after implementation) — unit tests for all environment API operations using gomock (mock gh CLI calls)
+- [X] T009 [P] Create pkg/cli/github/progress.go — implement animated progress indicator using Charm Bubble Tea with `L` key toggle for real-time log streaming from GitHub Action workflow runs (FR-089-C through FR-089-G; used by US2, US4, US5, US6)
+- [ ] T009-T [P] Create pkg/cli/github/progress_test.go (DEFERRED: tests deferred to after implementation) — unit tests for progress model state machine (toggle, completion, error states)
+- [X] T010 [P] Update pkg/cli/github/workflows.go — add workflow generation functions: `GenerateDeploymentCreateWorkflow()`, `GenerateDeploymentApplyWorkflow()`, `GenerateDestroyWorkflow()`, `GenerateAuthTestWorkflow()` producing 4 YAML workflow files with concurrency groups (FR-098, FR-099, FR-112, FR-113, FR-113-A)
+- [X] T011 [P] Add `DispatchAndWatch()` method to pkg/cli/github/client.go — dispatch a workflow, poll for run start, return run ID for progress tracking (combines `RunWorkflow` + `GetLatestWorkflowRun`; used by US2, US4, US5, US6)
+- [X] T011-T [P] Add concurrency queue detection to `DispatchAndWatch()` — if workflow is queued behind another run, display message "Another deployment is in progress, this run is queued..." (FR-100)
+- [X] T012 Wire `deploymentCmd` command group and `rad app model` subcommand in cmd/rad/cmd/root.go — add `deploymentCmd` under root with `create` and `apply` subcommands; move `rad model` under `applicationCmd` as `rad app model` (FR-068-A)
 
-**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
+**Checkpoint**: Foundation ready — user story implementation can now begin in parallel
 
 ---
 
-## Phase 3: User Story 1 - Initialize Repository for Radius (Priority: P1) 🎯 MVP
+## Phase 3: User Story 1 — Initialize Repository for Radius (Priority: P1) 🎯 MVP
 
-**Goal**: Users can run `rad init` to set up a GitHub repository for Radius deployments
+**Goal**: `rad init` sets up `.radius/` directory structure, generates 4 GitHub Actions workflows, sets `RADIUS_RESOURCE_TYPES_MANIFEST` repo variable, creates GitHub workspace in `~/.rad/config.yaml`, commits and pushes.
 
-**Independent Test**: Run `rad init --provider aws --deployment-tool terraform` on a fresh git clone, verify .radius/ files created and workspace registered
+**Independent Test**: Run `rad init` on a fresh GitHub repo clone → verify workspace registered, workflows created, repo variable set, changes committed.
 
 ### Implementation for User Story 1
 
-- [X] T021 [US1] Add --provider flag (aws|azure) to rad init command in pkg/cli/cmd/radinit/init.go
-- [X] T022 [US1] Add --deployment-tool flag (terraform|bicep) to rad init command in pkg/cli/cmd/radinit/init.go
-- [X] T023 [US1] Add --environment flag with default "default" to rad init command in pkg/cli/cmd/radinit/init.go
-- [X] T024 [US1] Implement git repository validation (check .git directory) in pkg/cli/cmd/radinit/github.go
-- [X] T025 [US1] Implement GitHub remote validation (parse origin URL) in pkg/cli/cmd/radinit/github.go
-- [X] T026 [US1] Implement gh auth status check in pkg/cli/cmd/radinit/github.go
-- [X] T027 [US1] Implement .radius/ directory creation in pkg/cli/cmd/radinit/github.go
-- [X] T027-A [US1] Create .radius/model/, .radius/plan/, .radius/deploy/ subdirectories with .gitkeep files (FR-014-A) in pkg/cli/cmd/radinit/github.go
-- [X] T028 [US1] Implement resource types fetch from radius-project/resource-types-contrib using sparse checkout in pkg/cli/github/resourcetypes.go
-- [X] T029 [US1] Implement .radius/types.yaml generation from fetched resource types in pkg/cli/config/writers.go
-- [X] T030 [US1] Implement .radius/recipes.yaml generation based on provider/tool selection in pkg/cli/config/writers.go
-- [X] T030-A [US1] Update recipes.yaml to include recipe for every type in types.yaml per FR-009-A in pkg/cli/config/writers.go
-- [X] T031 [US1] Implement .radius/env.<name>.yaml generation with placeholder structure in pkg/cli/config/writers.go
-- [X] T032 [US1] Implement ~/.rad/config.yaml update with github kind workspace in pkg/cli/cmd/radinit/github.go
-- [X] T033 [US1] Rename workspace config property "default" to "current" in pkg/cli/config.go (with backward compatibility)
-- [X] T034 [US1] Create embedded workflow templates in pkg/cli/github/workflows.go (using code generation instead of templates)
-- [X] T034-A [US1] Add --skip-contour-install and dashboard.enabled=false to rad install kubernetes in workflows (FR-088-A)
-- [X] T035 [US1] Implement .github/workflows/ directory creation and template generation in pkg/cli/cmd/radinit/github.go
-- [X] T036 [US1] Implement git add and commit with Radius-Action: init trailer in pkg/cli/cmd/radinit/github.go
-- [X] T037 [P] [US1] Add unit tests for new rad init GitHub mode in pkg/cli/cmd/radinit/github_test.go
-- [ ] T038 [P] [US1] Add integration test for rad init end-to-end in test/functional-portable/github/init_test.go
+- [X] T013 [US1] Update pkg/cli/cmd/radinit/init.go — remove `--provider` and `--deployment-tool` flags; add error if those flags are passed (FR-001, FR-007)
+- [X] T014 [US1] Update pkg/cli/cmd/radinit/github.go — rewrite `Run()`:
+  1. Create `.radius/applications/` and `.radius/deploy/` directories with `.gitkeep` files (FR-014-A)
+  2. Call workflow generators from T010 to produce 4 workflow files under `.github/workflows/` (FR-112, FR-114)
+  3. Call `SetRepoVariable("RADIUS_RESOURCE_TYPES_MANIFEST", url)` with default or `--resource-types-manifest` value (FR-005, FR-006, FR-007)
+  4. Create/update `~/.rad/config.yaml` with `github` workspace (FR-011)
+  5. `git add`, `git commit` with `Radius-Action: init` trailer, `git push` (FR-013)
+  6. Verify `.radius/types.yaml`, `.radius/recipes.yaml`, and `.radius/env.*.yaml` are NOT created (FR-002, FR-003, FR-004)
+- [X] T015 [US1] Update `Validate()` in pkg/cli/cmd/radinit/github.go — verify git repo (FR-008), GitHub remote (FR-009), `gh auth status` (FR-010); ensure non-interactive (FR-014)
+- [X] T016 [US1] Handle re-initialization: if `.radius/` already exists, warn and offer to reinitialize (US1 scenario 6)
+- [ ] T016-T [US1] Add unit tests for pkg/cli/cmd/radinit/github.go — test Validate() checks (git repo, remote, auth), Run() output (directory creation, workflow generation, commit), re-init warning, and verify FR-002/FR-003/FR-004 negative cases (no types.yaml, no recipes.yaml, no env files created)
 
-**Checkpoint**: User Story 1 complete - rad init creates all .radius/ config files, workflow templates, and registers workspace
+**Checkpoint**: `rad init` fully functional — repository can be initialized for Radius on GitHub
 
 ---
 
-## Phase 4: User Story 2 - Connect Cloud Provider Authentication (Priority: P1)
+## Phase 4: User Story 2 — Create Environment with Cloud Provider (Priority: P1)
 
-**Goal**: Users can run `rad environment connect` to configure OIDC authentication with AWS or Azure
+**Goal**: `rad environment create <name> --provider <aws|azure>` creates a GitHub Environment, sets up OIDC, stores env variables, dispatches auth test workflow, reports result.
 
-**Independent Test**: Run `rad environment connect` after init, verify OIDC role/app created (or existing validated) and env file updated
+**Independent Test**: Run `rad environment create dev --provider azure` → verify GitHub Environment created, env variables set, auth test passes.
 
 ### Implementation for User Story 2
 
-Note: All OIDC/cloud setup logic was implemented directly in connect.go rather than separate helper files, following the single-file pattern used in other commands.
+- [X] T017 [US2] Create pkg/cli/github/oidc.go — extract OIDC setup flows from pkg/cli/cmd/env/connect/connect.go into reusable functions: `SetupAzureOIDC()` and `SetupAWSOIDC()` that handle prompting, credential creation, and federated identity setup (FR-024, FR-028)
+- [ ] T017-T [US2] Create pkg/cli/github/oidc_test.go — unit tests for OIDC setup flows with mocked az/aws CLI calls
+- [X] T018 [US2] Update pkg/cli/cmd/env/create/create.go — branch on workspace kind:
+  - GitHub mode: create GitHub Environment via API (FR-022), run OIDC setup (FR-024/FR-028), set all env variables (FR-025/FR-029), set `RADIUS_RECIPES_MANIFEST` with correct default based on provider + deployment tool (FR-026, FR-027, FR-030), accept `--recipes` override (FR-023)
+  - Kubernetes mode: retain existing behavior (FR-016)
+  - Error if `--provider aws --deployment-tool bicep` (FR-021)
+- [X] T019 [US2] Add auth test dispatch to pkg/cli/cmd/env/create/create.go — after env variables are stored, dispatch `radius-auth-test.yml` workflow, show animated progress via T009, display success/failure with OIDC remediation hints (FR-030-E through FR-030-I)
+- [X] T020 [US2] Add Terraform state backend provisioning to pkg/cli/cmd/env/create/create.go — create S3 bucket (FR-097-B) or Azure Storage account (FR-097-A) for Terraform state, store location as env variable (FR-093 through FR-097)
+- [X] T021 [US2] Handle edge cases: environment already exists warning (US2 scenario 5), AWS CLI not installed error (US2 scenario 8), non-GitHub workspace error (US2 scenario 11)
+- [ ] T021-T [US2] Add unit tests for pkg/cli/cmd/env/create/create.go — test GitHub-mode branching, OIDC dispatch, TF state provisioning, and all edge cases
 
-- [X] T039 [US2] Create rad environment connect command scaffold in pkg/cli/cmd/env/connect/connect.go
-- [X] T040 [US2] Add --environment flag with default to current workspace environment in pkg/cli/cmd/env/connect/connect.go
-- [X] T041 [US2] Implement GitHub workspace validation check in pkg/cli/cmd/env/connect/connect.go
-- [X] T042 [US2] Create AWS OIDC setup helper in pkg/cli/cmd/env/connect/connect.go (connectAWS, createAWSRole methods)
-- [X] T043 [US2] Implement AWS account ID prompt (default from aws sts get-caller-identity) in pkg/cli/cmd/env/connect/connect.go
-- [X] T044 [US2] Implement AWS region prompt (default from aws configure get region) in pkg/cli/cmd/env/connect/connect.go
-- [X] T045 [US2] Implement AWS IAM OIDC provider creation via aws CLI in pkg/cli/cmd/env/connect/connect.go
-- [X] T046 [US2] Implement AWS IAM role creation with trust policy for GitHub Actions in pkg/cli/cmd/env/connect/connect.go
-- [X] T047 [US2] Implement S3 state backend bucket creation in pkg/cli/cmd/env/connect/connect.go
-- [X] T048 [US2] Implement DynamoDB table creation for state locking in pkg/cli/cmd/env/connect/connect.go
-- [X] T049 [P] [US2] Create Azure OIDC setup helper in pkg/cli/cmd/env/connect/connect.go (connectAzure, createAzureApp methods)
-- [X] T050 [P] [US2] Implement Azure subscription list prompt in pkg/cli/cmd/env/connect/connect.go
-- [X] T050-A [P] [US2] Implement Azure resource group list prompt with create new option in pkg/cli/cmd/env/connect/connect.go (FR-025)
-- [X] T050-B [P] [US2] Implement Azure AD application list prompt for existing apps in pkg/cli/cmd/env/connect/connect.go (FR-026)
-- [X] T051 [P] [US2] Implement Azure AD app creation via az CLI in pkg/cli/cmd/env/connect/connect.go
-- [X] T052 [P] [US2] Implement Azure federated credential creation for GitHub Actions in pkg/cli/cmd/env/connect/connect.go
-- [X] T053 [P] [US2] Implement Azure Storage account/container creation for state in pkg/cli/cmd/env/connect/connect.go
-- [X] T054 [US2] Implement .radius/env.<name>.yaml update with provider config in pkg/cli/cmd/env/connect/connect.go
-- [X] T055 [US2] Implement git commit with Radius-Action: environment-connect trailer in pkg/cli/cmd/env/connect/connect.go
-- [X] T056 [P] [US2] Add unit tests for rad environment connect in pkg/cli/cmd/env/connect/connect_test.go
-- [X] T057 [P] [US2] Add unit tests for AWS OIDC helper in pkg/cli/cmd/env/connect/connect_test.go
-- [X] T058 [P] [US2] Add unit tests for Azure OIDC helper in pkg/cli/cmd/env/connect/connect_test.go
-- [X] T058-A [US2] Create auth test workflow template generator in pkg/cli/github/workflows.go (generateAuthTestWorkflow function)
-- [X] T058-B [US2] Implement AWS auth test job in workflow template (uses aws-actions/configure-aws-credentials)
-- [X] T058-C [US2] Implement Azure auth test job in workflow template (uses azure/login)
-- [X] T058-D [US2] Add workflow generation call in rad environment connect after successful OIDC setup
-- [X] T058-E [P] [US2] Add unit tests for auth test workflow generation in pkg/cli/github/workflows_test.go
-- [X] T058-F [US2] Implement workflow run watcher in pkg/cli/github/client.go (FR-031-F: wait for workflow completion)
-- [X] T058-G [US2] Add git push and workflow trigger after OIDC setup in connect.go (FR-031-F)
-- [X] T058-H [US2] Display animated progress message during workflow wait (FR-031-F: "Verifying access to Azure/AWS...")
-- [X] T058-I [US2] Display workflow error logs on failure (FR-031-H)
-- [ ] T058-J [P] [US2] Add unit tests for workflow watcher in pkg/cli/github/workflows_test.go
-- [X] T058-K [US2] Add eksClusterName and kubernetesNamespace fields to AWSProviderConfig in pkg/cli/config/environment.go (FR-067-A)
-- [X] T058-L [US2] Add aksClusterName and kubernetesNamespace fields to AzureProviderConfig in pkg/cli/config/environment.go (FR-067-A)
-- [X] T058-M [US2] Update rad init to create placeholder values for cluster config in env file (FR-067-B)
-- [X] T058-N [US2] Add EKS cluster selection prompt in rad environment connect (FR-067-C)
-- [X] T058-O [US2] Add AKS cluster selection prompt in rad environment connect (FR-067-C)
-- [X] T058-P [US2] Add Kubernetes namespace prompt in rad environment connect (FR-067-C)
-- [X] T058-Q [US2] Implement GitHub secret setting via gh secret set for AWS (FR-030-A, FR-030-B)
-- [X] T058-R [US2] Implement GitHub secret setting via gh secret set for Azure (FR-030-A, FR-030-C)
-
-**Checkpoint**: User Story 2 complete - OIDC authentication configured for chosen cloud provider
+**Checkpoint**: `rad environment create` fully functional — environments can be provisioned with OIDC
 
 ---
 
-## Phase 5: User Story 3 - Create Application Model (Priority: P1)
+## Phase 5: User Story 3 — Create Application Definition (Priority: P1)
 
-**Goal**: Users can run `rad model` to generate a sample application model file
+**Goal**: `rad app model` generates a sample `.radius/applications/todolist.bicep` with application, container, and database resources.
 
-**Independent Test**: Run `rad model` in initialized repo, verify `.radius/model/todolist.bicep` created with correct structure
+**Independent Test**: Run `rad app model` in an initialized repo → verify Bicep file created with correct resources and syntax.
 
 ### Implementation for User Story 3
 
-- [X] T073 [US3] Create rad model command scaffold in pkg/cli/cmd/model/model.go
-- [X] T073-A [US3] Implement GitHub workspace validation in pkg/cli/cmd/model/model.go
-- [X] T073-B [US3] Implement .radius/model/ directory creation in pkg/cli/cmd/model/model.go
-- [X] T073-C [US3] Implement todolist.bicep template generation in pkg/cli/cmd/model/model.go
-- [X] T073-D [US3] Implement existing file detection with overwrite prompt in pkg/cli/cmd/model/model.go
-- [X] T073-E [US3] Implement git commit with Radius-Action: model trailer in pkg/cli/cmd/model/model.go
-- [X] T073-F [P] [US3] Add unit tests for rad model in pkg/cli/cmd/model/model_test.go
+- [X] T022 [US3] Move pkg/cli/cmd/model/model.go under applicationCmd — rename from `rad model` to `rad app model`; update cmd/rad/cmd/root.go wiring from T012 (FR-068-A)
+- [X] T023 [US3] Update pkg/cli/cmd/model/model.go `Run()` — generate `.radius/applications/todolist.bicep` with `extension radius`, `Radius.Core/applications@2025-08-01-preview`, `Radius.Compute/containers@2025-08-01-preview`, `Radius.Data/postgreSqlDatabases@2025-08-01-preview` resources (FR-068-A, FR-090, FR-091, FR-092, spec appendix B.5)
+- [X] T024 [US3] Add `Validate()` checks — require initialized repository (`.radius/` exists); if existing file at target path, prompt to overwrite or choose different name (US3 scenarios 4, 5)
+- [ ] T024-T [US3] Add unit tests for rad app model — test Validate() and Run() including overwrite prompt
 
-**Checkpoint**: User Story 3 complete - sample application model can be generated
+**Checkpoint**: `rad app model` creates sample application definition
 
 ---
 
-## Phase 6: User Story 4 - Create Deployment Plan via Pull Request (Priority: P2)
+## Phase 6: User Story 4 — Create Deployment Plan (Priority: P1)
 
-**Goal**: Users can run `rad pr create` to generate a deployment plan and create a PR for review
+**Goal**: `rad deployment create --application <name> --environment <env>` dispatches workflow that generates deployment plan and artifacts at `.radius/deploy/<app>/<env>/<commit>/`.
 
-**Independent Test**: Have app model in .radius/model/, run `rad pr create --environment dev`, verify PR created with plan files
+**Independent Test**: Run `rad deployment create --application todolist --environment dev` → verify workflow dispatched, plan committed to repo.
 
 ### Implementation for User Story 4
 
-- [X] T059 [US4] Create rad pr command group scaffold in pkg/cli/cmd/pr/pr.go
-- [X] T060 [US4] Create rad pr create command in pkg/cli/cmd/pr/create/create.go
-- [X] T061 [US4] Add --environment required flag to rad pr create in pkg/cli/cmd/pr/create/create.go
-- [X] T062 [US4] Add --application optional flag to rad pr create in pkg/cli/cmd/pr/create/create.go
-- [X] T063 [US4] Implement GitHub workflow trigger via gh workflow run in pkg/cli/cmd/pr/create/create.go
-- [X] T064 [US4] Create plan workflow template in pkg/cli/github/workflows.go (GeneratePlanWorkflow)
-- [X] T065 [US4] Implement k3d cluster setup step in workflow template in pkg/cli/github/workflows.go
-- [X] T066 [US4] Implement Radius install step in workflow template in pkg/cli/github/workflows.go
-- [X] T067 [US4] REMOVED - Plan generation is a control plane API, not a CLI command. The workflow calls `rad deploy --dry-run` which invokes the control plane's plan API.
-- [X] T068 [US4] REMOVED - See T067. Plan API generates plan.yaml.
-- [X] T069 [US4] REMOVED - See T067. Plan API generates plan.yaml with ordered steps.
-- [X] T070 [US4] REMOVED - See T067. Plan API generates deployment artifact directories.
-- [X] T071 [US4] Implement PR creation with plan files via gh pr create in workflow template
-- [X] T072 [P] [US4] Add unit tests for rad pr create in pkg/cli/cmd/pr/create/create_test.go
-- [X] T072-A [US4] Add --plan flag to rad deploy command for plan-only mode (FR-039-A) in pkg/cli/cmd/deploy/deploy.go
-- [X] T072-B [US4] Add --output flag to rad deploy for specifying plan output directory (FR-039-A) in pkg/cli/cmd/deploy/deploy.go
-- [X] T072-C [US4] Implement plan generation via control plane API call in pkg/cli/cmd/deploy/deploy.go
+- [X] T025 [US4] Create pkg/cli/cmd/deployment/create/create.go — implement `NewCommand()` returning `(*cobra.Command, framework.Runner)` with `--application`/`-a`, `--environment`/`-e`, `--git-commit` flags (FR-038, FR-042, FR-045-D)
+- [X] T026 [US4] Implement `Validate()` in pkg/cli/cmd/deployment/create/create.go:
+  - Require GitHub workspace (FR-048)
+  - Require clean worktree via `IsWorktreeDirty()` (FR-045-A)
+  - Require all commits pushed via `HasUnpushedCommits()` (FR-045-B)
+  - Auto-select application if exactly one `.bicep` in `.radius/applications/` (FR-040); error if ambiguous (FR-041)
+  - Auto-select environment if exactly one GitHub Environment (FR-043); error if ambiguous (FR-044)
+  - Resolve commit hash: `--git-commit` or HEAD (FR-045-C, FR-045-D)
+- [X] T027 [US4] Implement `Run()` in pkg/cli/cmd/deployment/create/create.go:
+  - Dispatch `radius-deployment-create.yml` workflow with application, environment, commit inputs (FR-045)
+  - Show animated progress indicator via progress model from T009 (FR-089-C through FR-089-G)
+  - Display final result (success: plan generated; failure: error details) (FR-089-G)
+- [ ] T027-T [US4] Create pkg/cli/cmd/deployment/create/create_test.go — unit tests for Validate() (workspace, worktree, auto-select, commit) and Run() (dispatch, progress)
 
-**Checkpoint**: User Story 4 complete - deployment plans can be created and reviewed via PRs
+**Checkpoint**: `rad deployment create` dispatches workflow and generates deployment plan
 
 ---
 
-## Phase 7: User Story 5 - Deploy Application via PR Merge (Priority: P2)
+## Phase 7: User Story 5 — Apply Deployment (Priority: P1)
 
-**Goal**: Users can run `rad pr merge` to execute deployment from an approved PR
+**Goal**: `rad deployment apply --application <name> --environment <env>` dispatches workflow that executes the deployment plan.
 
-**Independent Test**: Have deployment PR, run `rad pr merge`, verify resources provisioned and deployment record created
+**Independent Test**: Run `rad deployment apply --application todolist --environment dev` (after plan exists) → verify resources deployed.
 
 ### Implementation for User Story 5
 
-- [X] T074 [US5] Create rad pr merge command in pkg/cli/cmd/pr/merge/merge.go
-- [X] T075 [US5] Add --pr optional flag to specify PR number in pkg/cli/cmd/pr/merge/merge.go
-- [X] T076 [US5] Add --yes flag for automatic merge without confirmation in pkg/cli/cmd/pr/merge/merge.go
-- [X] T077 [US5] Implement latest PR detection when --pr not specified in pkg/cli/cmd/pr/merge/merge.go
-- [X] T078 [US5] Implement PR merge via gh pr merge in pkg/cli/cmd/pr/merge/merge.go
-- [X] T079 [US5] Create deploy workflow template in pkg/cli/github/workflows.go (GenerateDeployWorkflow - already exists)
-- [ ] T080 [US5] Create rad deploy command in pkg/cli/cmd/deploy/deploy.go
-- [ ] T081 [US5] Implement plan.yaml parsing in rad deploy in pkg/cli/cmd/deploy/deploy.go
-- [ ] T082 [US5] Implement sequential Terraform execution using hashicorp/terraform-exec in pkg/cli/cmd/deploy/deploy.go
-- [ ] T083 [US5] Implement deployment record creation in .radius/deploy/<app>/<env>/<commit>/ in pkg/cli/cmd/deploy/deploy.go
-- [ ] T084 [US5] Implement captured resource definition storage (YAML/JSON) in pkg/cli/cmd/deploy/deploy.go
-- [ ] T085 [US5] Implement lock-based concurrency control (reject if locked) in pkg/cli/github/workflows/deploy.yaml.tmpl
-- [ ] T086 [US5] Implement partial failure handling (leave resources in place) in pkg/cli/cmd/deploy/deploy.go
-- [X] T087 [P] [US5] Add unit tests for rad pr merge in pkg/cli/cmd/pr/merge/merge_test.go
-- [ ] T088 [P] [US5] Add unit tests for rad deploy in pkg/cli/cmd/deploy/deploy_test.go
+- [X] T028 [US5] Create pkg/cli/cmd/deployment/apply/apply.go — implement `NewCommand()` returning `(*cobra.Command, framework.Runner)` with `--application`/`-a`, `--environment`/`-e`, `--git-commit` flags (FR-049, FR-050-A)
+- [X] T029 [US5] Implement `Validate()` in pkg/cli/cmd/deployment/apply/apply.go:
+  - Require GitHub workspace (FR-054)
+  - Same auto-selection rules as `deployment create` (FR-049)
+  - Resolve deployment plan: `--git-commit <hash>` uses specific plan; otherwise most recent plan under `.radius/deploy/<app>/<env>/` (FR-050)
+  - Error if no plan exists (FR-050)
+- [X] T030 [US5] Implement `Run()` in pkg/cli/cmd/deployment/apply/apply.go:
+  - Dispatch `radius-deployment-apply.yml` workflow with application, environment, commit inputs (FR-051)
+  - Show animated progress indicator via progress model (FR-089-C through FR-089-G)
+  - Workflow updates deploy.yaml status `planned` → `deployed` (FR-053), captures resources (FR-052, FR-084)
+  - Display final result (FR-089-G)
+- [ ] T030-T [US5] Create pkg/cli/cmd/deployment/apply/apply_test.go — unit tests for Validate() (plan resolution, auto-select) and Run() (dispatch, status updates)
 
-**Checkpoint**: User Story 5 complete - deployments execute on PR merge with audit records
+**Checkpoint**: `rad deployment apply` executes deployment plans — full two-phase deployment works end-to-end
 
 ---
 
-## Phase 8: User Story 6 - Destroy Application Resources (Priority: P3)
+## Phase 8: User Story 6 — Delete Deployed Application (Priority: P1)
 
-**Goal**: Users can run `rad pr destroy` to tear down deployed resources
+**Goal**: `rad app delete --application <name> --environment <env>` dispatches destroy workflow in GitHub mode.
 
-**Independent Test**: Have deployed resources, run `rad pr destroy --environment dev --application myapp`, verify destruction PR created and resources removed after merge
+**Independent Test**: Deploy an app, run `rad app delete --application todolist --environment dev` → verify resources destroyed.
 
-### Implementation for User Story 5
+### Implementation for User Story 6
 
-- [ ] T089 [US6] Create rad pr destroy command in pkg/cli/cmd/pr/destroy/destroy.go
-- [ ] T090 [US6] Add --environment required flag in pkg/cli/cmd/pr/destroy/destroy.go
-- [ ] T091 [US6] Add --application required flag (per clarification) in pkg/cli/cmd/pr/destroy/destroy.go
-- [ ] T092 [US6] Add --commit optional flag to target specific deployment in pkg/cli/cmd/pr/destroy/destroy.go
-- [ ] T093 [US6] Add --yes flag for automatic merge in pkg/cli/cmd/pr/destroy/destroy.go
-- [ ] T094 [US6] Create rad plan destroy command in pkg/cli/cmd/plan/destroy/destroy.go
-- [ ] T095 [US6] Implement destruction plan.yaml generation in pkg/cli/cmd/plan/destroy/destroy.go
-- [ ] T096 [US6] Create destroy workflow template in pkg/cli/github/workflows/destroy.yaml.tmpl
-- [ ] T097 [US6] Create rad destroy command in pkg/cli/cmd/destroy/destroy.go
-- [ ] T098 [US6] Implement Terraform destroy execution in pkg/cli/cmd/destroy/destroy.go
-- [ ] T099 [US6] Implement destruction record creation in .radius/deploy/<app>/<env>/<commit>/ in pkg/cli/cmd/destroy/destroy.go
-- [ ] T100 [P] [US6] Add unit tests for rad pr destroy in pkg/cli/cmd/pr/destroy/destroy_test.go
-- [ ] T101 [P] [US6] Add unit tests for rad destroy in pkg/cli/cmd/destroy/destroy_test.go
+- [X] T031 [US6] Update pkg/cli/cmd/app/delete/delete.go — branch on workspace kind:
+  - GitHub mode: dispatch `radius-destroy.yml` workflow with application and environment inputs (FR-106-A)
+  - Kubernetes mode: retain existing destroy behavior (US6 scenario 6)
+- [X] T032 [US6] Add progress and validation to pkg/cli/cmd/app/delete/delete.go:
+  - Show animated progress indicator with `L` key log streaming (FR-106-D)
+  - Error if `--application` omitted and multiple apps exist (FR-107)
+  - Error if application not deployed to specified environment (US6 scenario 5)
+  - Auto-select application/environment when unambiguous (US6 scenario 2)
+- [X] T033 [US6] Verify destroy workflow updates deploy.yaml step statuses to `destroyed` and removes captured resource files (FR-106-B, FR-106-C) — this is workflow-side logic in the generated YAML from T010
 
-**Checkpoint**: User Story 6 complete - full lifecycle with destroy capability
+**Checkpoint**: Full lifecycle (init → env create → model → create → apply → delete) works
 
 ---
 
-## Phase 9: User Story 7 - Manage Workspaces Across Repositories (Priority: P3)
+## Phase 9: User Story 7 — Delete Environment (Priority: P2)
 
-**Goal**: Users can switch between GitHub and Kubernetes workspaces seamlessly
+**Goal**: `rad environment delete <name>` deletes GitHub Environment, prompts for OIDC cleanup.
 
-**Independent Test**: Configure both workspace types in ~/.rad/config.yaml, switch between them, verify command behavior adapts
+**Independent Test**: Run `rad environment delete dev` → verify GitHub Environment removed, OIDC resources cleaned up if confirmed.
 
 ### Implementation for User Story 7
 
-- [ ] T102 [US7] Update rad workspace commands to support github kind in pkg/cli/cmd/workspace/
-- [ ] T103 [US7] Implement GitHub workspace warning for rad resource-type commands in pkg/cli/cmd/resourcetype/
-- [ ] T104 [US7] Implement GitHub workspace warning for rad environment commands in pkg/cli/cmd/environment/
-- [ ] T105 [US7] Implement GitHub workspace warning for rad recipe commands in pkg/cli/cmd/recipe/
-- [ ] T106 [US7] Update rad workspace switch to handle github kind in pkg/cli/cmd/workspace/switch/switch.go
-- [ ] T107 [P] [US7] Add unit tests for workspace switching in pkg/cli/cmd/workspace/switch/switch_test.go
+- [X] T034 [US7] Update pkg/cli/cmd/env/delete/delete.go — branch on workspace kind:
+  - GitHub mode: check for deployed applications, prompt for deletion strategy (FR-030-D, US7 scenario 4)
+  - Kubernetes mode: retain existing behavior (FR-030-C, US7 scenario 3)
+- [X] T035 [US7] Add OIDC cleanup prompt to pkg/cli/cmd/env/delete/delete.go:
+  - Read `AZURE_CLIENT_ID` or `AWS_IAM_ROLE_NAME` from env variables before deletion (FR-030-N)
+  - Prompt whether to delete cloud OIDC resources (FR-030-J)
+  - Azure: `az ad app delete --id <CLIENT_ID>` (FR-030-K)
+  - AWS: `aws iam delete-role` + `aws iam delete-open-id-connect-provider` (FR-030-L)
+  - If declined: display resource identifiers for manual cleanup (FR-030-M)
+- [X] T036 [US7] Delete GitHub Environment via `DeleteEnvironment()` after OIDC cleanup (FR-030-B); error if environment doesn't exist (US7 scenario 2)
 
-**Checkpoint**: User Story 7 complete - multi-workspace support with GitHub and Kubernetes
+**Checkpoint**: Environment lifecycle (create + delete) fully functional
 
 ---
 
-## Phase 10: User Story 8 - View and Understand Deployment Plans (Priority: P3)
+## Phase 10: User Story 8 — Platform Engineer Configures Deployment Pipeline (Priority: P2)
 
-**Goal**: Deployment plans are clear and auditable in PR reviews
+**Goal**: Platform engineers can compose `rad deployment create` and `rad deployment apply` into custom GitHub Actions workflows triggered by GitHub events.
 
-**Independent Test**: Create deployment PR, verify plan.yaml and artifacts are readable and document expected changes clearly
+**Independent Test**: Configure a workflow running `rad deployment create` on PR and `rad deployment apply` on merge → verify two-phase flow executes automatically.
 
 ### Implementation for User Story 8
 
-- [ ] T108 [US8] Enhance plan.yaml formatting for PR readability in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T109 [US8] Add summary section with total steps, add/change/destroy counts in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T110 [US8] Generate terraform-context.txt with version and environment info in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T111 [US8] Implement allVersionsPinned check in plan summary in pkg/cli/cmd/plan/deploy/deploy.go
-- [ ] T112 [P] [US8] Add unit tests for plan formatting in pkg/cli/cmd/plan/deploy/deploy_test.go
+- [X] T037 [US8] Add workflow customization comments to generated workflow templates in pkg/cli/github/workflows.go — include comments in the 4 generated YAML files showing how to change triggers from `workflow_dispatch` to `push`/`pull_request`/`schedule`, how to add `needs:` dependencies for multi-environment promotion, and how to add GitHub Environment approval gates (US8 scenarios 1-3)
+- [X] T038 [US8] Add inline comments in generated workflows documenting how to extract deployment artifacts for external tool execution (US8 scenario 4) — show that `rad deployment create` output at `.radius/deploy/<app>/<env>/<commit>/` can be used with `terraform apply` directly
 
-**Checkpoint**: User Story 8 complete - deployment plans are clear and auditable
+**Checkpoint**: Generated workflows serve as documented starting points for custom pipelines
 
 ---
 
-## Phase 11: Polish & Cross-Cutting Concerns
+## Phase 11: User Story 9 — Manage Workspaces Across Repositories (Priority: P3)
+
+**Goal**: Seamless workspace switching between GitHub and Kubernetes modes with appropriate command behavior.
+
+**Independent Test**: Configure multiple workspaces, switch between them, verify commands behave appropriately for each kind.
+
+### Implementation for User Story 9
+
+- [X] T039 [US9] Verify workspace switching logic in pkg/cli/workspaces/ — ensure `rad workspace switch` properly loads GitHub workspace URL and Kubernetes context; verify command routing uses workspace kind to select correct code paths (US9 scenarios 1-3)
+- [X] T040 [US9] Verify `rad install kubernetes` path is unaffected — ensure `rad init` changes do not interfere with the Kubernetes control plane installation path (US9 scenario 4)
+
+**Checkpoint**: Multi-workspace management works seamlessly
+
+---
+
+## Phase 12: User Story 10 — Review Deployment Plans (Priority: P3)
+
+**Goal**: Deployment plans committed by `rad deployment create` are clear and auditable.
+
+**Independent Test**: Run `rad deployment create`, review committed plan files → verify they clearly document expected changes.
+
+### Implementation for User Story 10
+
+- [X] T041 [US10] Verify deploy.yaml format matches spec appendix C.1 — ensure application name, applicationDefinitionFile, environment, commit, ordered steps with resource/recipe/artifacts/expectedChanges/status, and summary are all present (FR-078 through FR-080-A, US10 scenarios 1-2, 4)
+- [X] T042 [US10] Verify deployment artifact directory structure matches spec appendix C.2 — ensure main.tf, providers.tf, variables.tf, terraform.tfvars.json, tfplan.txt, terraform-context.txt are generated in each step's `artifacts/` directory (US10 scenario 3)
+- [X] T043 [P] [US10] Verify plan summary includes totalSteps, terraformSteps, bicepSteps, totalAdd, totalChange, totalDestroy, allVersionsPinned (FR-080, US10 scenario 4)
+- [X] T044 [US10] Add comments in generated deployment artifacts documenting how to use them with external tools — e.g., `# To apply this step manually: cd .radius/deploy/<app>/<env>/<commit>/001-db-terraform/artifacts && terraform init && terraform apply` (US10 scenario 5)
+- [X] T044-A [US10] Verify deployment record structure post-apply — validate deploy.yaml includes `startedAt`, `completedAt`, `status`, git context (`commit`, `branch`, `triggeredBy`), step-level `timing`/`status`/`changes`/`capturedResources`, and execution `summary` (FR-081 through FR-083, FR-085)
+
+**Checkpoint**: Deployment plans are fully auditable and usable with external tools
+
+---
+
+## Phase 13: Polish & Cross-Cutting Concerns
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T113 [P] Add CLI help text for all new commands
-- [ ] T114 [P] Add configuration file comment headers with GitHub Secrets reference syntax (FR-112)
-- [ ] T115 Code cleanup and refactoring across pkg/cli/github/
-- [ ] T116 [P] Update make lint and make test targets to include new packages
-- [ ] T117 Run quickstart.md validation end-to-end
-- [ ] T118 [P] Add functional test for complete deployment workflow in test/functional-portable/github/deploy_test.go
+- [X] T045 [P] Add `--help` text for all new commands (rad deployment create, rad deployment apply, rad app model) with examples and flag descriptions per Cobra conventions (FR-089-A naming convention in help text)
+- [X] T046 [P] Add GitHub Secrets reference documentation in generated workflow file comments — document `${{ secrets.SECRET_NAME }}` syntax (FR-108 through FR-111)
+- [X] T047 [P] Ensure all generated GitHub Actions workflows use only trusted external actions: `actions/*`, `radius-project/*`, `aws-actions/*`, `azure/*`, `google-github-actions/*`, `hashicorp/*` (FR-089-B)
+- [X] T048 Verify workflow naming convention in all 4 generated workflows: `Radius deployment create for <app> in <env> environment`, `Radius deployment apply for ...`, `Radius destroy for ...`, `Radius authentication test for <env> environment` (FR-089-A)
+- [X] T049 [P] Add `--skip-contour-install` and `--set dashboard.enabled=false` flags to Radius installation steps in generated deployment workflows (FR-088-A)
+- [X] T050 Run quickstart.md validation — execute the end-to-end flow from specs/001-github-mode/quickstart.md and verify all steps pass
+- [X] T050-A Verify partial failure handling in generated workflows — successfully deployed resources remain in place, deployment record identifies succeeded vs failed steps, workflow exits with failure status, re-run via `rad deployment create`/`apply` works (FR-102 through FR-105)
+- [X] T050-B ⚠️ CROSS-REPO: Create `Radius.Core/applications` resource type in `radius-project/resource-types-contrib` repository with `environment` property (FR-090, FR-091) — tracked separately from this feature's implementation
 
 ---
 
@@ -296,78 +281,117 @@ Note: All OIDC/cloud setup logic was implemented directly in connect.go rather t
 
 ### Phase Dependencies
 
-- **Phase 1 (Setup)**: No dependencies - can start immediately
-- **Phase 2 (Foundational)**: Depends on Phase 1 - BLOCKS all user stories
-- **Phases 3-5 (US1, US2, US3)**: P1 priority - complete before P2/P3 user stories
-- **Phases 6-7 (US4, US5)**: P2 priority - depend on Phase 2, can parallel with each other
-- **Phases 8-10 (US6, US7, US8)**: P3 priority - depend on Phase 2, can parallel with each other
-- **Phase 10 (Polish)**: Depends on all desired user stories being complete
+- **Setup (Phase 1)**: No dependencies — can start immediately
+- **Foundational (Phase 2)**: Depends on Setup completion — BLOCKS all user stories
+- **User Stories (Phases 3-12)**: All depend on Foundational phase completion
+  - P1 stories (Phases 3-8) form the MVP and should be completed first
+  - P2 stories (Phases 9-10) add environment lifecycle and pipeline config
+  - P3 stories (Phases 11-12) add workspace management and plan auditability
+- **Polish (Phase 13)**: Depends on all desired user stories being complete
 
 ### User Story Dependencies
 
-| Story | Priority | Depends On | Can Parallel With |
-|-------|----------|------------|-------------------|
-| US1 - rad init | P1 | Phase 2 | US2 |
-| US2 - rad environment connect | P1 | Phase 2 | US1 |
-| US3 - rad pr create | P2 | US1, US2 | US4 |
-| US4 - rad pr merge | P2 | US3 | US5-US7 |
-| US5 - rad pr destroy | P3 | US4 | US6, US7 |
-| US6 - Workspace management | P3 | US1 | US5, US7 |
-| US7 - Plan readability | P3 | US3 | US5, US6 |
+- **US1 (rad init)**: Can start after Foundational — No dependencies on other stories
+- **US2 (rad env create)**: Can start after Foundational — Independent of US1 at code level (but logically runs after init)
+- **US3 (rad app model)**: Can start after Foundational — Depends on T012 wiring only
+- **US4 (rad deployment create)**: Can start after Foundational — Uses shared infra from Phase 2
+- **US5 (rad deployment apply)**: Can start after Foundational — Same pattern as US4, independent code
+- **US6 (rad app delete)**: Can start after Foundational — Extends existing delete command
+- **US7 (rad env delete)**: Can start after Foundational — Extends existing delete command
+- **US8 (pipeline config)**: Depends on T010 (workflow generation) — lightweight documentation task
+- **US9 (workspaces)**: Can start after T001-T003 — verification of existing switching logic
+- **US10 (plan review)**: Depends on T010 and T025-T027 — verification of generated plan format
 
-### MVP Scope (P1 Only)
+### Within Each User Story
 
-For minimum viable product, complete:
-1. Phase 1: Setup (T001-T010)
-2. Phase 2: Foundational (T011-T020)
-3. Phase 3: User Story 1 - rad init (T021-T038)
-4. Phase 4: User Story 2 - rad environment connect (T039-T058)
-
-**MVP delivers**: Repository initialization + OIDC authentication setup
+- `Validate()` before `Run()` implementation
+- Core flow before edge cases
+- Command implementation before wiring
 
 ### Parallel Opportunities
 
-```bash
-# Phase 1 parallel batch:
-T002, T003, T004, T005, T006, T007, T008
+- T002, T003, T004, T005, T006, T007 can all run in parallel (Phase 1 — different files)
+- T009, T010, T011 can all run in parallel (Phase 2 — different files)
+- Once Foundational completes: US1 through US6 can all start in parallel (different command packages)
+- US7 and US8 can run in parallel with each other
+- US9 and US10 can run in parallel with each other
 
-# Phase 2 parallel batch:
-T012, T013, T014, T016, T017, T018, T020
+---
 
-# US1 tests parallel:
-T037, T038
+## Parallel Example: Phase 1 (Setup)
 
-# US2 AWS/Azure parallel:
-T042-T048 (AWS) || T049-T053 (Azure)
+```
+# Launch all parallelizable setup tasks together:
+Task T002: "Add GitHub connection validation in pkg/cli/workspaces/connection.go"
+Task T003: "Create IsGitHubWorkspace() helper in pkg/cli/workspaces/github.go"
+Task T004: "Leverage existing IsDirty() and add GetHeadCommitHash() in pkg/cli/github/git.go"
+Task T005: "Add HasUnpushedCommits() to pkg/cli/github/git.go"
+Task T006: "Add default resource group fallback"
+Task T007: "Add rad deploy GitHub-mode guard"
+```
 
-# US3/US4 can run in parallel by different developers
-# US5/US6/US7 can run in parallel by different developers
+## Parallel Example: Phase 2 (Foundational)
+
+```
+# Launch all parallelizable foundational tasks together:
+Task T009: "Create animated progress indicator in pkg/cli/github/progress.go"
+Task T010: "Add workflow generation functions in pkg/cli/github/workflows.go"
+Task T011: "Add DispatchAndWatch() to pkg/cli/github/client.go"
+```
+
+## Parallel Example: P1 User Stories (after Foundational)
+
+```
+# Different developers can work on different stories simultaneously:
+Developer A: US1 (T013-T016) — rad init
+Developer B: US2 (T017-T021) — rad environment create
+Developer C: US4 (T025-T027) — rad deployment create
+Developer D: US5 (T028-T030) — rad deployment apply
 ```
 
 ---
 
-## Task Summary
+## Implementation Strategy
 
-| Phase | User Story | Task Count | Parallel | Sequential |
-|-------|-----------|------------|----------|------------|
-| 1 | Setup | 10 | 7 | 3 |
-| 2 | Foundational | 10 | 6 | 4 |
-| 3 | US1 - rad init | 18 | 2 | 16 |
-| 4 | US2 - rad environment connect | 20 | 9 | 11 |
-| 5 | US3 - rad pr create | 15 | 2 | 13 |
-| 6 | US4 - rad pr merge | 15 | 2 | 13 |
-| 7 | US5 - rad pr destroy | 13 | 2 | 11 |
-| 8 | US6 - Workspace management | 6 | 1 | 5 |
-| 9 | US7 - Plan readability | 5 | 1 | 4 |
-| 10 | Polish | 6 | 4 | 2 |
-| **Total** | | **118** | **36** | **82** |
+### MVP First (P1 User Stories Only)
+
+1. Complete Phase 1: Setup (T001-T007)
+2. Complete Phase 2: Foundational (T008-T012)
+3. Complete Phases 3-8: All P1 user stories (US1-US6)
+4. **STOP and VALIDATE**: Test full lifecycle: init → env create → app model → deployment create → deployment apply → app delete
+5. Deploy/demo if ready
+
+### Incremental Delivery
+
+1. Setup + Foundational → Foundation ready
+2. US1 (rad init) → Initialize a real GitHub repo (first visible output)
+3. US2 (rad env create) → Set up cloud environment with OIDC
+4. US3 (rad app model) → Create application definition
+5. US4 + US5 (deployment create + apply) → Full deployment works (core MVP!)
+6. US6 (app delete) → Cleanup works
+7. US7 (env delete) → Full lifecycle management
+8. US8 (pipeline config) → Production-ready workflow customization
+9. US9 + US10 → Multi-workspace and auditability polish
+
+### Parallel Team Strategy
+
+With multiple developers:
+
+1. Team completes Setup + Foundational together
+2. Once Foundational is done:
+   - Developer A: US1 (rad init) + US3 (rad app model) — setup commands
+   - Developer B: US2 (rad env create) + US7 (rad env delete) — environment lifecycle
+   - Developer C: US4 (deployment create) + US5 (deployment apply) — core deployment
+   - Developer D: US6 (app delete) + US8 (pipeline config) — cleanup and docs
+3. Stories complete and integrate independently
 
 ---
 
 ## Notes
 
-- All tasks follow existing Radius CLI patterns (Cobra commands, gomock testing)
-- Tests use `radcli.SharedCommandValidation` and `radcli.SharedValidateValidation` helpers
-- GitHub CLI integration via `exec.Command("gh", ...)` per research.md decision
-- YAML generation via `goccy/go-yaml` per research.md decision
-- Commit after each logical task group with relevant `Radius-Action:` trailer
+- [P] tasks = different files, no dependencies on incomplete tasks in this phase
+- [Story] label maps task to specific user story for traceability
+- Each user story should be independently completable and testable after Foundational phase
+- Commit after each task or logical group
+- Stop at any checkpoint to validate story independently
+- All file paths are relative to repository root

@@ -25,6 +25,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Client wraps the GitHub CLI (gh) for Radius operations.
@@ -365,4 +367,109 @@ func (c *Client) GetWorkflowRunLogs(runID int64) (string, error) {
 	}
 
 	return output, nil
+}
+
+// DispatchAndWatch dispatches a workflow and polls until a matching run is found.
+// It returns the run ID once the workflow run begins (queued or in_progress).
+// FR-100: If the workflow is queued behind another run, the queuedCallback is called.
+func (c *Client) DispatchAndWatch(workflowFile string, ref string, inputs map[string]string, queuedCallback func()) (int64, string, error) {
+	// Dispatch the workflow
+	err := c.RunWorkflow(workflowFile, ref, inputs)
+	if err != nil {
+		return 0, "", err
+	}
+
+	// Poll for the run to appear (it takes a few seconds after dispatch)
+	var runID int64
+	var runURL string
+	maxAttempts := 30
+	for i := 0; i < maxAttempts; i++ {
+		time.Sleep(2 * time.Second)
+
+		run, err := c.GetPendingWorkflowRun(workflowFile)
+		if err != nil {
+			return 0, "", fmt.Errorf("failed to find workflow run after dispatch: %w", err)
+		}
+
+		if run != nil {
+			runID = run.ID
+			runURL = run.URL
+
+			// FR-100: If the run is queued (not yet in_progress), check for concurrency queue
+			if run.Status == "queued" && queuedCallback != nil {
+				queuedCallback()
+			}
+			break
+		}
+	}
+
+	if runID == 0 {
+		return 0, "", fmt.Errorf("timed out waiting for workflow run to appear for %s", workflowFile)
+	}
+
+	return runID, runURL, nil
+}
+
+// GetWorkflowRunStatus retrieves the current status of a workflow run.
+// Returns a WorkflowStatusMsg for use with the progress model.
+func (c *Client) GetWorkflowRunStatus(runID int64) (*WorkflowRun, error) {
+	output, err := c.runCommand(
+		"run", "view",
+		fmt.Sprintf("%d", runID),
+		"--json", "databaseId,name,status,conclusion,url,headBranch,event",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workflow run status: %w", err)
+	}
+
+	var run WorkflowRun
+	if err := json.Unmarshal([]byte(output), &run); err != nil {
+		return nil, fmt.Errorf("failed to parse workflow run: %w", err)
+	}
+
+	return &run, nil
+}
+
+// CreatePollFunc creates a polling function suitable for use with ProgressModel.
+// It polls the workflow run status and returns appropriate tea.Msg types.
+func (c *Client) CreatePollFunc(runID int64) func() tea.Msg {
+	return func() tea.Msg {
+		run, err := c.GetWorkflowRunStatus(runID)
+		if err != nil {
+			return WorkflowErrorMsg{Err: err}
+		}
+
+		switch run.Status {
+		case "completed":
+			state := ProgressStateCompleted
+			message := "Workflow completed successfully"
+			if run.Conclusion == "failure" {
+				state = ProgressStateFailed
+				message = "Workflow failed"
+			} else if run.Conclusion == "cancelled" {
+				state = ProgressStateFailed
+				message = "Workflow was cancelled"
+			}
+			return WorkflowStatusMsg{
+				State:   state,
+				RunID:   run.ID,
+				RunURL:  run.URL,
+				Message: message,
+			}
+		case "queued", "waiting":
+			return WorkflowStatusMsg{
+				State:   ProgressStateQueued,
+				RunID:   run.ID,
+				RunURL:  run.URL,
+				Message: "Another deployment is in progress, this run is queued...",
+			}
+		default: // in_progress, requested, pending
+			return WorkflowStatusMsg{
+				State:   ProgressStateRunning,
+				RunID:   run.ID,
+				RunURL:  run.URL,
+				Message: "Workflow running...",
+			}
+		}
+	}
 }

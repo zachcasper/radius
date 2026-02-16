@@ -60,17 +60,17 @@ A developer wants to use Radius with their existing GitHub repository. They run 
 
 **Acceptance Scenarios**:
 
-1. **Given** a cloned GitHub repository without Radius configuration, **When** the user runs `rad init`, **Then** the system creates `.radius/applications/` and `.radius/deploy/` directories (with `.gitkeep` files), generates GitHub Actions workflow files, uses the GitHub API to create a repository environment variable `RADIUS_RESOURCE_TYPES_MANIFEST` with the default value `https://github.com/zachcasper/radius-config/types.yaml`, updates `~/.rad/config.yaml` with a `github` kind workspace, commits changes with trailer `Radius-Action: init`, and pushes to the remote.
+1. **Given** a cloned GitHub repository without Radius configuration, **When** the user runs `rad init --github`, **Then** the system creates `.radius/applications/` and `.radius/deploy/` directories (with `.gitkeep` files), generates GitHub Actions workflow files, uses the GitHub API to create a repository variable `RADIUS_RESOURCE_TYPES_MANIFEST` with the default value `https://github.com/zachcasper/radius-config/types.yaml`, updates `~/.rad/config.yaml` with a `github` kind workspace, commits changes with trailer `Radius-Action: init`, and pushes to the remote.
 
-2. **Given** a cloned GitHub repository, **When** the user runs `rad init --resource-types-manifest https://github.com/myorg/radius-config/types.yaml`, **Then** the system sets `RADIUS_RESOURCE_TYPES_MANIFEST` to `https://github.com/myorg/radius-config/types.yaml`.
+2. **Given** a cloned GitHub repository, **When** the user runs `rad init --github --resource-types-manifest https://github.com/myorg/radius-config/types.yaml`, **Then** the system sets `RADIUS_RESOURCE_TYPES_MANIFEST` to `https://github.com/myorg/radius-config/types.yaml`.
 
-3. **Given** a directory that is not a Git repository, **When** the user runs `rad init`, **Then** the system displays an error message instructing the user to initialize a Git repository first or clone from GitHub.
+3. **Given** a directory that is not a Git repository, **When** the user runs `rad init --github`, **Then** the system displays an error message instructing the user to initialize a Git repository first or clone from GitHub.
 
-4. **Given** a Git repository without a GitHub remote (origin), **When** the user runs `rad init`, **Then** the system displays an error message instructing the user to add a GitHub remote.
+4. **Given** a Git repository without a GitHub remote (origin), **When** the user runs `rad init --github`, **Then** the system displays an error message instructing the user to add a GitHub remote.
 
-5. **Given** the user is not authenticated with the GitHub CLI, **When** the user runs `rad init`, **Then** the system verifies `gh auth status` and displays an error instructing the user to authenticate using `gh auth login`.
+5. **Given** the user is not authenticated with the GitHub CLI, **When** the user runs `rad init --github`, **Then** the system verifies `gh auth status` and displays an error instructing the user to authenticate using `gh auth login`.
 
-6. **Given** a repository already initialized with Radius, **When** the user runs `rad init`, **Then** the system warns that Radius is already initialized and offers to reinitialize.
+6. **Given** a repository already initialized with Radius, **When** the user runs `rad init --github`, **Then** the system warns that Radius is already initialized and offers to reinitialize.
 
 7. **Given** `rad init` no longer takes `--provider` or `--deployment-tool`, **When** the user passes those flags, **Then** the system returns an error indicating they are no longer supported.
 
@@ -106,7 +106,7 @@ A platform engineer needs to create a deployment target for an application. They
 
 10. **Given** the authentication test workflow fails, **When** the CLI displays the result, **Then** the error message identifies the likely OIDC misconfiguration (e.g., wrong audience, wrong subject claim) and suggests remediation steps.
 
-9. **Given** the current directory is not a GitHub workspace, **When** the user runs `rad environment create`, **Then** the system displays an error message indicating the command requires a GitHub workspace.
+11. **Given** the current directory is not a GitHub workspace, **When** the user runs `rad environment create`, **Then** the system displays an error message indicating the command requires a GitHub workspace.
 
 ---
 
@@ -226,7 +226,11 @@ A platform engineer wants to remove a deployment target. They run `rad environme
 
 3. **Given** a Kubernetes workspace, **When** the user runs `rad environment delete dev`, **Then** the system retains the existing Kubernetes-mode delete functionality.
 
-4. **Given** applications are currently deployed to the "dev" environment, **When** the user runs `rad environment delete dev`, **Then** the system prompts the user to (1) delete the environment and the applications deployed (the default); (2) delete the environment and leave the deployed applications but manage them outside of Radius. Asks for confirmation before proceeding with either options..
+4. **Given** applications are currently deployed to the "dev" environment, **When** the user runs `rad environment delete dev`, **Then** the system prompts the user to (1) delete the environment and the applications deployed (the default); (2) delete the environment and leave the deployed applications but manage them outside of Radius. Asks for confirmation before proceeding with either options.
+
+5. **Given** the environment was configured with `--provider azure`, **When** the user runs `rad environment delete dev`, **Then** the system prompts whether to delete the Azure AD app registration and federated credential used for OIDC authentication. If the user confirms, the system deletes the app registration via `az ad app delete`. If declined, the system displays the app registration details for manual cleanup.
+
+6. **Given** the environment was configured with `--provider aws`, **When** the user runs `rad environment delete dev`, **Then** the system prompts whether to delete the AWS IAM OIDC provider and IAM role used for OIDC authentication. If the user confirms, the system deletes the resources via AWS CLI. If declined, the system displays the IAM role ARN and OIDC provider ARN for manual cleanup.
 
 ---
 
@@ -322,7 +326,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-002**: `rad init` MUST NOT create a `.radius/types.yaml` manifest file.
 - **FR-003**: `rad init` MUST NOT create a `.radius/recipes.yaml` manifest file.
 - **FR-004**: `rad init` MUST NOT create a `.radius/env.*.yaml` environment file.
-- **FR-005**: `rad init` MUST use the GitHub API to create a repository-level environment variable named `RADIUS_RESOURCE_TYPES_MANIFEST`.
+- **FR-005**: `rad init --github` MUST use the GitHub API to create a repository variable named `RADIUS_RESOURCE_TYPES_MANIFEST`.
 - **FR-006**: `RADIUS_RESOURCE_TYPES_MANIFEST` MUST default to `https://github.com/zachcasper/radius-config/types.yaml`.
 - **FR-007**: `rad init` MUST accept a `--resource-types-manifest` flag that overrides the default resource types manifest URL. When specified, `RADIUS_RESOURCE_TYPES_MANIFEST` is set to the provided URL.
 - **FR-008**: System MUST validate the current directory is a Git repository by checking for `.git` directory.
@@ -377,6 +381,11 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-030-B**: `rad environment delete <name>` MUST delete the GitHub Environment from the repository using the GitHub API when the workspace kind is GitHub.
 - **FR-030-C**: When the workspace kind is Kubernetes, `rad environment delete` MUST retain the existing Kubernetes-mode delete functionality.
 - **FR-030-D**: `rad environment delete` MUST warn the user if resources may still be deployed to the environment and ask for confirmation.
+- **FR-030-J**: After confirming environment deletion, `rad environment delete` MUST prompt the user whether to also delete the OIDC configuration from the cloud provider.
+- **FR-030-K**: For Azure environments, if the user confirms OIDC cleanup, the system MUST delete the Azure AD app registration and its federated credential using the Azure CLI (`az ad app delete --id <CLIENT_ID>`). The `AZURE_CLIENT_ID` stored in the GitHub Environment variables MUST be used to identify the app registration.
+- **FR-030-L**: For AWS environments, if the user confirms OIDC cleanup, the system MUST delete the IAM role and OIDC identity provider using the AWS CLI (`aws iam delete-role` and `aws iam delete-open-id-connect-provider`). The `AWS_IAM_ROLE_NAME` stored in the GitHub Environment variables MUST be used to identify the resources.
+- **FR-030-M**: If the user declines OIDC cleanup, the system MUST display the cloud provider resource identifiers (Azure app registration client ID or AWS IAM role ARN and OIDC provider ARN) so the user can clean them up manually.
+- **FR-030-N**: OIDC cleanup MUST occur before the GitHub Environment is deleted, since the environment variables contain the identifiers needed to locate the cloud resources.
 
 #### CLI Commands: rad pr create, rad pr merge, rad pr destroy (Removed)
 
@@ -425,8 +434,8 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-064**: Recipes manifest MUST be stored as a GitHub Environment-scoped variable `RADIUS_RECIPES_MANIFEST` set during `rad environment create`.
 - **FR-065**: The `RADIUS_RECIPES_MANIFEST` variable MUST contain the URL to the appropriate recipes manifest file in the config repository based on cloud provider and deployment tool (e.g., `https://github.com/zachcasper/radius-config/recipes-aws-terraform.yaml`).
 - **FR-066**: Cloud provider configuration MUST be stored as GitHub Environment-scoped variables set during `rad environment create`.
-- **FR-067**: Azure environment variables MUST include: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP_NAME`, `AKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`.
-- **FR-067-A**: AWS environment variables MUST include: `AWS_ACCOUNT_ID`, `AWS_REGION`, `AWS_IAM_ROLE_NAME`, `EKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`.
+- **FR-067**: Azure environment variables MUST include the variables listed in FR-025: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP_NAME`, `AKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`.
+- **FR-067-A**: AWS environment variables MUST include the variables listed in FR-029: `AWS_ACCOUNT_ID`, `AWS_REGION`, `AWS_IAM_ROLE_NAME`, `EKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`.
 - **FR-067-B**: Environment files (`.radius/env.*.yaml`) MUST NOT be used; all environment configuration is stored in GitHub Environment variables.
 - **FR-067-C**: Resource types files (`.radius/types.yaml`) MUST NOT be used; the types manifest reference is stored as a GitHub repository variable.
 - **FR-068**: Application Definitions MUST be stored in `.radius/applications/<APP_NAME>.bicep`.
@@ -498,7 +507,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-094**: The `rad environment create` command MUST configure or create the state backend storage as part of OIDC setup.
 - **FR-095**: State backend credentials MUST use the same OIDC authentication configured for deployments.
 - **FR-096**: State backend MUST support state locking to prevent concurrent modification conflicts.
-- **FR-097**: State backend location MUST be stored as a GitHub Environment-scoped variable.
+- **FR-097**: State backend location MUST be stored as GitHub Environment-scoped variables: `TF_STATE_BACKEND_TYPE` (value: `s3` or `azurerm`), `TF_STATE_BACKEND_CONFIG` (JSON-encoded backend configuration including bucket/container name, region, and key prefix).
 - **FR-097-A**: Azure Storage account for Terraform state MUST be named `tfstateradius<org><repo>` (lowercase alphanumeric, max 24 characters).
 - **FR-097-B**: AWS S3 bucket for Terraform state MUST be named `tfstate-<org>-<repo>` (lowercase with hyphens).
 
@@ -575,7 +584,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **SC-006**: Failed deployments provide actionable error messages that identify the failing resource, step, and root cause.
 - **SC-007**: Deployment plans and artifacts are committed to the repository, providing complete audit trail with expected changes, Terraform/Bicep configurations, and after apply, captured resource definitions.
 - **SC-008**: Users can delete an environment and its associated resources using `rad environment delete`.
-- **SC-009**: 90% of users can complete their first deployment without external documentation beyond CLI help text.
+- **SC-009**: First deployment should be completable using only CLI help text and generated workflow comments, without requiring external documentation.
 - **SC-010**: Workspace switching between GitHub and Kubernetes modes works seamlessly with appropriate command behavior.
 
 ## Assumptions
@@ -984,7 +993,7 @@ environment: default
 plan_changed: true
 ```
 
-**tf-plan.txt:** Contains the text output from `terraform plan` showing resources to be created/modified/destroyed.
+**tfplan.txt:** Contains the text output from `terraform plan` showing resources to be created/modified/destroyed.
 
 **bicep-what-if.txt:** Contains the text output from `az deployent --what-if` showing resources to be created/modified/destroyed.
 

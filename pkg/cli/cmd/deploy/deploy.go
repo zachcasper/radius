@@ -186,6 +186,11 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 
 	r.Workspace = workspace
 
+	// FR-036, FR-037: Block rad deploy in GitHub mode — direct users to two-phase deployment commands.
+	if workspace.IsGitHubWorkspace() {
+		return clierrors.Message("The 'rad deploy' command is not supported in GitHub mode. Use 'rad deployment create' to generate a deployment plan and 'rad deployment apply' to execute it.")
+	}
+
 	// Allow --group to override the scope
 	scope, err := cli.RequireScope(cmd, *workspace)
 	if err != nil {

@@ -1,12 +1,12 @@
 # Data Model: Radius on GitHub
 
 **Phase**: 1 (Design & Contracts)  
-**Date**: 2026-02-12  
+**Date**: 2026-02-16 (updated from 2026-02-12)  
 **Plan**: [plan.md](plan.md)
 
 ## Overview
 
-This document defines the data model for "Radius on GitHub" feature, extracting entities from the feature specification and mapping to Go types following existing Radius patterns.
+This document defines the data model for "Radius on GitHub" feature, extracting entities from the feature specification and mapping to Go types following existing Radius patterns. Updated to reflect the two-phase deployment model, GitHub Environment variables (replacing local env files), and commit-hash scoped deployment artifacts.
 
 ---
 
@@ -53,155 +53,95 @@ type Connection struct {
 
 ---
 
-### 2. ResourceTypesManifest
+### 2. GitHub Environment (External)
 
-**Purpose**: Declares available resource types in the repository.
+**Purpose**: Stores cloud provider configuration and recipes manifest reference as GitHub Environment-scoped variables. Replaces local `.radius/env.<name>.yaml` files.
 
-**Location**: `.radius/types.yaml`
-
-**Structure**:
-```go
-// ResourceTypesManifest defines resource types available in the repository
-type ResourceTypesManifest struct {
-    Types map[string]ResourceTypeEntry `yaml:"types"`
-}
-
-// ResourceTypeEntry defines a single resource type reference
-type ResourceTypeEntry struct {
-    DefinitionLocation string `yaml:"definitionLocation"` // git:: URL format
-}
-```
-
-**Example**:
-```yaml
-types:
-  Radius.Core/applications:
-    definitionLocation: git::https://github.com/radius-project/resource-types-contrib.git//Core/applications/applications.yaml?ref=v0.54.0
-  Radius.Compute/containers:
-    definitionLocation: git::https://github.com/radius-project/resource-types-contrib.git//Compute/containers/container.yaml?ref=v0.54.0
-```
-
-**Validation Rules**:
-- `definitionLocation` must be a valid git URL with `git::` prefix
-- Must include `?ref=` version specifier for reproducibility
-- Resource type names must follow `<Namespace>/<Type>` format
-
----
-
-### 3. RecipesManifest
-
-**Purpose**: Declares recipes (implementation templates) for provisioning resources.
-
-**Location**: `.radius/recipes.yaml` or referenced file
+**Location**: GitHub Environments API (not stored locally)
 
 **Structure**:
 ```go
-// RecipesManifest defines recipes available for resource provisioning
-type RecipesManifest struct {
-    Recipes map[string]RecipeEntry `yaml:"recipes"`
-}
-
-// RecipeEntry defines a single recipe reference
-type RecipeEntry struct {
-    RecipeKind     string `yaml:"recipeKind"`     // "terraform" or "bicep"
-    RecipeLocation string `yaml:"recipeLocation"` // git:: URL or OCI registry URL
+// GitHubEnvironment represents the environment configuration stored in GitHub.
+// This is not persisted locally — it is read/written via the GitHub API.
+type GitHubEnvironment struct {
+    Name      string                     // GitHub Environment name (e.g., "dev", "prod")
+    Provider  string                     // "aws" or "azure"
+    Variables map[string]string           // Environment-scoped variables
 }
 ```
 
-**Example**:
-```yaml
-recipes:
-  Radius.Compute/containers:
-    recipeKind: terraform
-    recipeLocation: git::https://github.com/radius-project/resource-types-contrib.git//Compute/containers/recipes/aws/terraform?ref=v0.54.0
-```
+**Azure Variables** (FR-025):
+| Variable | Example |
+|----------|--------|
+| `AZURE_SUBSCRIPTION_ID` | `12345678-1234-...` |
+| `AZURE_RESOURCE_GROUP_NAME` | `rg-radius-dev` |
+| `AKS_CLUSTER_NAME` | `aks-dev-cluster` |
+| `KUBERNETES_NAMESPACE` | `default` |
+| `AZURE_TENANT_ID` | `87654321-4321-...` |
+| `AZURE_CLIENT_ID` | `abcdefgh-abcd-...` |
+| `RADIUS_RECIPES_MANIFEST` | `https://github.com/zachcasper/radius-config/recipes-azure-bicep.yaml` |
+
+**AWS Variables** (FR-029):
+| Variable | Example |
+|----------|--------|
+| `AWS_ACCOUNT_ID` | `123456789012` |
+| `AWS_REGION` | `us-east-1` |
+| `AWS_IAM_ROLE_NAME` | `radius-github-oidc` |
+| `EKS_CLUSTER_NAME` | `eks-staging-cluster` |
+| `KUBERNETES_NAMESPACE` | `default` |
+| `RADIUS_RECIPES_MANIFEST` | `https://github.com/zachcasper/radius-config/recipes-aws-terraform.yaml` |
 
 **Validation Rules**:
-- `recipeKind` must be `"terraform"` or `"bicep"`
-- For Terraform: `recipeLocation` must be a `git::` URL
-- For Bicep: `recipeLocation` must be an OCI registry URL (https://...)
+- Provider determined by variable presence (`AZURE_CLIENT_ID` → Azure, `AWS_IAM_ROLE_NAME` → AWS)
+- All variables for the selected provider must be present
+- `RADIUS_RECIPES_MANIFEST` must be a valid URL
 
 ---
 
-### 4. Environment
+### 3. ResourceTypesManifest (Repository Variable)
 
-**Purpose**: Defines a target deployment context with cloud provider configuration.
+**Purpose**: References the external manifest of available resource types.
 
-**Location**: `.radius/env.<NAME>.yaml`
+**Location**: GitHub repository variable `RADIUS_RESOURCE_TYPES_MANIFEST` (set during `rad init`)
 
-**Structure**:
-```go
-// Environment defines a deployment target environment
-type Environment struct {
-    Name             string                       `yaml:"name"`
-    Kind             string                       `yaml:"kind"`             // "aws" or "azure"
-    Recipes          string                       `yaml:"recipes"`          // Path to recipes file
-    RecipeParameters map[string]map[string]any   `yaml:"recipeParameters,omitempty"`
-    Provider         ProviderConfig               `yaml:"provider"`
-}
+**Value**: URL to types.yaml in config repository (e.g., `https://github.com/zachcasper/radius-config/types.yaml`)
 
-// ProviderConfig holds cloud provider-specific configuration
-type ProviderConfig struct {
-    AWS   *AWSProviderConfig   `yaml:"aws,omitempty"`
-    Azure *AzureProviderConfig `yaml:"azure,omitempty"`
-}
-
-// AWSProviderConfig holds AWS-specific environment configuration
-type AWSProviderConfig struct {
-    AccountID    string `yaml:"accountId"`
-    Region       string `yaml:"region"`
-    OIDCRoleARN  string `yaml:"oidcRoleARN"`
-    // Terraform state backend
-    StateBackend *AWSStateBackend `yaml:"stateBackend,omitempty"`
-}
-
-// AWSStateBackend holds AWS S3 state backend configuration
-type AWSStateBackend struct {
-    Bucket        string `yaml:"bucket"`
-    Region        string `yaml:"region"`
-    DynamoDBTable string `yaml:"dynamoDBTable"` // For state locking
-}
-
-// AzureProviderConfig holds Azure-specific environment configuration
-type AzureProviderConfig struct {
-    SubscriptionID    string `yaml:"subscriptionId"`
-    TenantID          string `yaml:"tenantId"`
-    ClientID          string `yaml:"clientId"`
-    ResourceGroupName string `yaml:"resourceGroupName"`
-    OIDCEnabled       bool   `yaml:"oidcEnabled"`
-    // Terraform state backend
-    StateBackend *AzureStateBackend `yaml:"stateBackend,omitempty"`
-}
-
-// AzureStateBackend holds Azure Storage state backend configuration
-type AzureStateBackend struct {
-    StorageAccountName string `yaml:"storageAccountName"`
-    ContainerName      string `yaml:"containerName"`
-}
-```
+**Note**: The types.yaml file itself is hosted externally, not stored in the repository. The repository variable is a URL reference only.
 
 **Validation Rules**:
-- `Kind` must be `"aws"` or `"azure"`
-- The provider config matching `Kind` must be populated
-- State backend is required after `rad environment connect` completes
+- Resource type names must follow `<Namespace>/<Type>` format (in the external manifest)
+- The manifest URL must be accessible from GitHub Actions runners
 
 ---
 
-### 5. DeploymentPlan
+### RecipesManifest (Environment Variable)
 
-**Purpose**: Ordered sequence of resource provisioning steps.
+**Purpose**: References the external recipes manifest for a specific environment.
 
-**Location**: `.radius/plan/<APP>/<ENV>/plan.yaml`
+**Location**: GitHub Environment variable `RADIUS_RECIPES_MANIFEST` (per-environment)
+
+**Value**: URL to recipes.yaml in config repository (e.g., `https://github.com/zachcasper/radius-config/recipes-aws-terraform.yaml`)
+
+**Note**: The recipes manifest is referenced by URL in the GitHub Environment variable, not stored locally. The manifest is only read at workflow execution time by the Radius control plane.
+
+---
+
+### 4. DeploymentPlan
+
+**Purpose**: Ordered sequence of resource provisioning steps generated by `rad deployment create`.
+
+**Location**: `.radius/deploy/<APP>/<ENV>/<COMMIT_HASH>/deploy.yaml`
 
 **Structure**:
 ```go
 // DeploymentPlan defines the deployment plan for an application
 type DeploymentPlan struct {
-    Application          string            `yaml:"application"`
-    ApplicationModelFile string            `yaml:"applicationModelFile"`
-    Environment          string            `yaml:"environment"`
-    Steps                []DeploymentStep  `yaml:"steps"`
-    Summary              PlanSummary       `yaml:"summary"`
+    Application              string            `yaml:"application"`
+    ApplicationDefinitionFile string           `yaml:"applicationDefinitionFile"`
+    Environment              string            `yaml:"environment"`
+    Commit                   string            `yaml:"commit"`             // Short commit hash
+    Steps                    []DeploymentStep  `yaml:"steps"`
+    Summary                  PlanSummary       `yaml:"summary"`
 }
 
 // DeploymentStep defines a single step in the deployment plan
@@ -211,7 +151,7 @@ type DeploymentStep struct {
     Recipe              RecipeReference    `yaml:"recipe"`
     DeploymentArtifacts string             `yaml:"deploymentArtifacts"` // Directory path
     ExpectedChanges     ChangeCount        `yaml:"expectedChanges"`
-    Status              string             `yaml:"status"` // "planned", "executing", "succeeded", "failed", "skipped"
+    Status              string             `yaml:"status"` // "planned", "deployed", "destroyed", "failed"
 }
 
 // ResourceReference identifies the resource being deployed
@@ -248,129 +188,143 @@ type PlanSummary struct {
 ```
 
 **State Transitions**:
-- `planned` → `executing` → `succeeded` | `failed`
-- `planned` → `skipped` (if dependency failed)
+- `planned` → `deployed` → `destroyed`
+- `planned` → `failed` (if deployment fails)
 
 ---
 
-### 6. DeploymentRecord
+### 5. DeploymentRecord
 
-**Purpose**: Complete audit of a deployment execution.
+**Purpose**: Complete audit of a deployment execution, stored as updated deploy.yaml.
 
-**Location**: `.radius/deploy/<APP>/<ENV>/<COMMIT>/deploy-<COMMIT>.json`
+**Location**: `.radius/deploy/<APP>/<ENV>/<COMMIT_HASH>/deploy.yaml` (same file as plan, updated after apply)
 
 **Structure**:
 ```go
 // DeploymentRecord captures the full deployment execution audit
 type DeploymentRecord struct {
-    Application  string            `json:"application"`
-    Environment  EnvironmentInfo   `json:"environment"`
-    StartedAt    time.Time         `json:"startedAt"`
-    CompletedAt  time.Time         `json:"completedAt"`
-    Status       string            `json:"status"` // "succeeded", "failed", "partial"
-    Git          GitContext        `json:"git"`
-    Plan         PlanReference     `json:"plan"`
-    Steps        []ExecutedStep    `json:"steps"`
-    Resources    []ResourceInfo    `json:"resources"`
-    Summary      ExecutionSummary  `json:"summary"`
+    Application  string            `yaml:"application"`
+    Environment  EnvironmentInfo   `yaml:"environment"`
+    StartedAt    time.Time         `yaml:"startedAt"`
+    CompletedAt  time.Time         `yaml:"completedAt"`
+    Status       string            `yaml:"status"` // "succeeded", "failed", "partial"
+    Git          GitContext        `yaml:"git"`
+    Plan         PlanReference     `yaml:"plan"`
+    Steps        []ExecutedStep    `yaml:"steps"`
+    Resources    []ResourceInfo    `yaml:"resources"`
+    Summary      ExecutionSummary  `yaml:"summary"`
 }
 
 // EnvironmentInfo provides environment context for the deployment
 type EnvironmentInfo struct {
-    Name                  string `json:"name"`
-    EnvironmentFile       string `json:"environmentFile"`
-    KubernetesContext     string `json:"kubernetesContext,omitempty"`
-    KubernetesNamespace   string `json:"kubernetesNamespace,omitempty"`
+    Name                  string `yaml:"name"`
+    KubernetesContext     string `yaml:"kubernetesContext,omitempty"`
+    KubernetesNamespace   string `yaml:"kubernetesNamespace,omitempty"`
 }
 
 // GitContext provides git information at deployment time
 type GitContext struct {
-    Commit      string `json:"commit"`
-    CommitShort string `json:"commitShort"`
-    Branch      string `json:"branch"`
-    IsDirty     bool   `json:"isDirty"`
+    Commit      string `yaml:"commit"`
+    CommitShort string `yaml:"commitShort"`
+    Branch      string `yaml:"branch"`
+    IsDirty     bool   `yaml:"isDirty"`
 }
 
 // PlanReference links back to the plan used
 type PlanReference struct {
-    PlanFile    string    `json:"planFile"`
-    PlanCommit  string    `json:"planCommit"`
-    GeneratedAt time.Time `json:"generatedAt"`
+    PlanFile    string    `yaml:"planFile"`
+    PlanCommit  string    `yaml:"planCommit"`
+    GeneratedAt time.Time `yaml:"generatedAt"`
 }
 
 // ExecutedStep records execution details for a deployment step
 type ExecutedStep struct {
-    Sequence          int                    `json:"sequence"`
-    Name              string                 `json:"name"`
-    ResourceType      string                 `json:"resourceType"`
-    Tool              string                 `json:"tool"` // "terraform" or "bicep"
-    Status            string                 `json:"status"`
-    StartedAt         time.Time              `json:"startedAt"`
-    CompletedAt       time.Time              `json:"completedAt"`
-    Duration          time.Duration          `json:"duration"`
-    Changes           ChangeCount            `json:"changes"`
-    Outputs           map[string]any         `json:"outputs,omitempty"`
-    CapturedResources []CapturedResource     `json:"capturedResources,omitempty"`
-    Error             *ErrorInfo             `json:"error,omitempty"`
+    Sequence          int                    `yaml:"sequence"`
+    Name              string                 `yaml:"name"`
+    ResourceType      string                 `yaml:"resourceType"`
+    Tool              string                 `yaml:"tool"` // "terraform" or "bicep"
+    Status            string                 `yaml:"status"`
+    StartedAt         time.Time              `yaml:"startedAt"`
+    CompletedAt       time.Time              `yaml:"completedAt"`
+    Duration          time.Duration          `yaml:"duration"`
+    Changes           ChangeCount            `yaml:"changes"`
+    Outputs           map[string]any         `yaml:"outputs,omitempty"`
+    CapturedResources []CapturedResource     `yaml:"capturedResources,omitempty"`
+    Error             *ErrorInfo             `yaml:"error,omitempty"`
 }
 
 // CapturedResource links to the captured resource definition
 type CapturedResource struct {
-    ResourceID             string `json:"resourceId"`
-    ResourceDefinitionFile string `json:"resourceDefinitionFile"`
+    ResourceID             string `yaml:"resourceId"`
+    ResourceDefinitionFile string `yaml:"resourceDefinitionFile"`
 }
 
 // ErrorInfo captures error details when a step fails
 type ErrorInfo struct {
-    Message    string `json:"message"`
-    Details    string `json:"details,omitempty"`
-    LogFile    string `json:"logFile,omitempty"`
+    Message    string `yaml:"message"`
+    Details    string `yaml:"details,omitempty"`
+    LogFile    string `yaml:"logFile,omitempty"`
 }
 
 // ExecutionSummary aggregates execution statistics
 type ExecutionSummary struct {
-    TotalSteps          int `json:"totalSteps"`
-    SucceededSteps      int `json:"succeededSteps"`
-    FailedSteps         int `json:"failedSteps"`
-    SkippedSteps        int `json:"skippedSteps"`
-    TotalResources      int `json:"totalResources"`
-    ResourcesAdded      int `json:"resourcesAdded"`
-    ResourcesChanged    int `json:"resourcesChanged"`
-    ResourcesDestroyed  int `json:"resourcesDestroyed"`
+    TotalSteps          int `yaml:"totalSteps"`
+    SucceededSteps      int `yaml:"succeededSteps"`
+    FailedSteps         int `yaml:"failedSteps"`
+    SkippedSteps        int `yaml:"skippedSteps"`
+    TotalResources      int `yaml:"totalResources"`
+    ResourcesAdded      int `yaml:"resourcesAdded"`
+    ResourcesChanged    int `yaml:"resourcesChanged"`
+    ResourcesDestroyed  int `yaml:"resourcesDestroyed"`
 }
 ```
 
 ---
 
-### 7. DestructionRecord
+### 6. DestructionRecord
 
 **Purpose**: Audit record for resource teardown.
 
-**Location**: `.radius/deploy/<APP>/<ENV>/<COMMIT>/destroy-<COMMIT>.json`
+**Location**: `.radius/deploy/<APP>/<ENV>/<COMMIT_HASH>/deploy.yaml` (same file, steps status changed to `destroyed`)
 
-**Structure**: Same as `DeploymentRecord` with `status` reflecting destruction outcome.
+**Structure**: Same as `DeploymentRecord` with step `status` fields updated to `destroyed`.
 
 ---
 
 ## Relationships
 
 ```
-┌─────────────────┐     ┌────────────────────┐
-│    Workspace    │────▶│   Environment      │
-│  (config.yaml)  │     │ (env.<name>.yaml)  │
-└─────────────────┘     └────────────────────┘
-                               │
-                               ▼
-┌─────────────────┐     ┌────────────────────┐
-│  ResourceTypes  │◀────│   RecipesManifest  │
-│  (types.yaml)   │     │  (recipes.yaml)    │
-└─────────────────┘     └────────────────────┘
-                               │
-                               ▼
-┌─────────────────┐     ┌────────────────────┐
-│ DeploymentPlan  │────▶│ DeploymentRecord   │
-│   (plan.yaml)   │     │ (deploy-*.json)    │
-└─────────────────┘     └────────────────────┘
+┌─────────────────┐     ┌─────────────────────────┐
+│    Workspace    │────▶│  GitHub Environment     │
+│  (config.yaml)  │     │  (GitHub API variables) │
+└─────────────────┘     └─────────────────────────┘
+        │                        │
+        │                        ▼
+        │               ┌─────────────────────────┐
+        │               │  RADIUS_RECIPES_MANIFEST│
+        │               │  (env-scoped variable)  │
+        │               └─────────────────────────┘
+        │
+        ▼
+┌─────────────────┐     ┌─────────────────────────┐
+│  RADIUS_RESOURCE│     │  Application Definition │
+│  _TYPES_MANIFEST│     │ (.radius/applications/) │
+│  (repo variable)│     └─────────────────────────┘
+└─────────────────┘              │
+                                 ▼
+                        ┌─────────────────────────┐
+                        │   DeploymentPlan        │
+                        │ (.radius/deploy/<app>/  │
+                        │  <env>/<commit>/        │
+                        │  deploy.yaml)           │
+                        └─────────────────────────┘
+                                 │
+                          ┌──────┴──────┐
+                          ▼             ▼
+                   ┌──────────┐  ┌──────────┐
+                   │ Artifacts│  │ Resources│
+                   │ (*.tf)   │  │ (*.yaml) │
+                   └──────────┘  └──────────┘
 ```
 
 ---
@@ -380,31 +334,39 @@ type ExecutionSummary struct {
 ```
 repository/
 ├── .radius/
-│   ├── types.yaml              # ResourceTypesManifest
-│   ├── recipes.yaml            # RecipesManifest
-│   ├── env.default.yaml        # Environment (default)
-│   ├── env.production.yaml     # Environment (production)
-│   ├── model/
-│   │   └── <app>.bicep         # Application models
-│   ├── plan/
-│   │   └── <app>/
-│   │       └── <env>/
-│   │           ├── plan.yaml   # DeploymentPlan
-│   │           └── 001-<res>-terraform/
-│   │               ├── main.tf
-│   │               ├── providers.tf
-│   │               ├── variables.tf
-│   │               ├── terraform.tfvars.json
-│   │               ├── tfplan.txt
-│   │               ├── terraform-context.txt
-│   │               └── .terraform.lock.hcl
+│   ├── applications/
+│   │   └── <app>.bicep              # Application definitions
 │   └── deploy/
 │       └── <app>/
 │           └── <env>/
-│               └── <commit>/
-│                   ├── deploy-<commit>.json  # DeploymentRecord
-│                   ├── destroy-<commit>.json # DestructionRecord
-│                   └── *.yaml                # Captured resources
+│               └── <commit_hash>/
+│                   ├── deploy.yaml           # DeploymentPlan / DeploymentRecord
+│                   ├── 001-<res>-terraform/
+│                   │   ├── artifacts/
+│                   │   │   ├── main.tf
+│                   │   │   ├── providers.tf
+│                   │   │   ├── variables.tf
+│                   │   │   ├── terraform.tfvars.json
+│                   │   │   ├── tfplan.txt
+│                   │   │   ├── terraform-context.txt
+│                   │   │   └── .terraform.lock.hcl
+│                   │   └── resources/        # Captured resources (after apply)
+│                   │       ├── deployment-db.yaml
+│                   │       └── service-db.yaml
+│                   └── 002-<res>-terraform/
+│                       ├── artifacts/
+│                       └── resources/
+├── .github/
+│   └── workflows/
+│       ├── radius-deployment-create.yml
+│       ├── radius-deployment-apply.yml
+│       ├── radius-destroy.yml
+│       └── radius-auth-test.yml
 └── ~/.rad/
-    └── config.yaml              # WorkspaceSection with Workspaces
+    └── config.yaml                   # WorkspaceSection with Workspaces
 ```
+
+**External Storage** (not in repository):
+- GitHub Environment variables (cloud config, recipes manifest URL)
+- GitHub repository variable `RADIUS_RESOURCE_TYPES_MANIFEST`
+- Terraform state (S3 for AWS, Azure Storage for Azure)

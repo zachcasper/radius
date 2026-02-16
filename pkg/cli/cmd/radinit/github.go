@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/radius-project/radius/pkg/cli/config"
 	"github.com/radius-project/radius/pkg/cli/github"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
@@ -31,14 +30,8 @@ import (
 
 // githubInitOptions holds options specific to GitHub mode initialization.
 type githubInitOptions struct {
-	// Provider specifies the cloud provider (aws or azure).
-	Provider string
-
-	// DeploymentTool specifies the infrastructure tool (terraform or bicep).
-	DeploymentTool string
-
-	// EnvironmentName specifies the name of the environment to create.
-	EnvironmentName string
+	// ResourceTypesManifest is the URL to the resource types manifest.
+	ResourceTypesManifest string
 
 	// RepoPath is the path to the git repository root.
 	RepoPath string
@@ -115,8 +108,11 @@ func findGitRoot(startPath string) (string, error) {
 	}
 }
 
+// DefaultResourceTypesManifestURL is the default URL for the resource types manifest.
+const DefaultResourceTypesManifestURL = "https://raw.githubusercontent.com/radius-project/resource-types-contrib/main/types.yaml"
+
 // initializeRadiusDirectory creates the .radius/ directory structure.
-// FR-014-A: Creates model/, plan/, deploy/ subdirectories with .gitkeep files.
+// FR-014-A: Creates applications/ and deploy/ subdirectories with .gitkeep files.
 func initializeRadiusDirectory(repoPath string) error {
 	radiusDir := filepath.Join(repoPath, ".radius")
 
@@ -126,7 +122,8 @@ func initializeRadiusDirectory(repoPath string) error {
 	}
 
 	// Create subdirectories with .gitkeep files (FR-014-A)
-	subdirs := []string{"model", "plan", "deploy"}
+	// Only applications/ and deploy/ — no types.yaml, recipes.yaml, or env files
+	subdirs := []string{"applications", "deploy"}
 	for _, dir := range subdirs {
 		path := filepath.Join(radiusDir, dir)
 		if err := os.MkdirAll(path, 0755); err != nil {
@@ -143,8 +140,10 @@ func initializeRadiusDirectory(repoPath string) error {
 }
 
 // initializeGitHubWorkflows creates the .github/workflows/ directory
-// and generates the workflow files.
-func initializeGitHubWorkflows(repoPath, provider string) error {
+// and generates the 4 workflow files for the two-phase deployment model.
+// FR-112: Generates radius-deployment-create.yaml, radius-deployment-apply.yaml,
+// radius-destroy.yaml, and radius-auth-test.yaml
+func initializeGitHubWorkflows(repoPath string) error {
 	workflowsDir := filepath.Join(repoPath, ".github", "workflows")
 
 	// Create workflows directory
@@ -152,25 +151,32 @@ func initializeGitHubWorkflows(repoPath, provider string) error {
 		return fmt.Errorf("failed to create workflows directory: %w", err)
 	}
 
-	// Generate deploy workflow
-	deployWorkflow := github.GenerateDeployWorkflow(provider)
-	deployPath := filepath.Join(workflowsDir, "radius-deploy.yaml")
-	if err := github.SaveWorkflow(deployPath, deployWorkflow); err != nil {
-		return fmt.Errorf("failed to save deploy workflow: %w", err)
+	// Generate deployment create workflow
+	createWorkflow := github.GenerateDeploymentCreateWorkflow()
+	createPath := filepath.Join(workflowsDir, github.DeploymentCreateWorkflowFile)
+	if err := github.SaveWorkflow(createPath, createWorkflow); err != nil {
+		return fmt.Errorf("failed to save deployment create workflow: %w", err)
+	}
+
+	// Generate deployment apply workflow
+	applyWorkflow := github.GenerateDeploymentApplyWorkflow()
+	applyPath := filepath.Join(workflowsDir, github.DeploymentApplyWorkflowFile)
+	if err := github.SaveWorkflow(applyPath, applyWorkflow); err != nil {
+		return fmt.Errorf("failed to save deployment apply workflow: %w", err)
 	}
 
 	// Generate destroy workflow
-	destroyWorkflow := github.GenerateDestroyWorkflow(provider)
-	destroyPath := filepath.Join(workflowsDir, "radius-destroy.yaml")
+	destroyWorkflow := github.GenerateDestroyWorkflowV2()
+	destroyPath := filepath.Join(workflowsDir, github.DestroyWorkflowFile)
 	if err := github.SaveWorkflow(destroyPath, destroyWorkflow); err != nil {
 		return fmt.Errorf("failed to save destroy workflow: %w", err)
 	}
 
-	// Generate plan workflow
-	planWorkflow := github.GeneratePlanWorkflow(provider)
-	planPath := filepath.Join(workflowsDir, "radius-plan.yaml")
-	if err := github.SaveWorkflow(planPath, planWorkflow); err != nil {
-		return fmt.Errorf("failed to save plan workflow: %w", err)
+	// Generate auth test workflow
+	authTestWorkflow := github.GenerateAuthTestWorkflowV2()
+	authTestPath := filepath.Join(workflowsDir, github.AuthTestWorkflowFile)
+	if err := github.SaveWorkflow(authTestPath, authTestWorkflow); err != nil {
+		return fmt.Errorf("failed to save auth test workflow: %w", err)
 	}
 
 	return nil
@@ -204,34 +210,18 @@ func commitRadiusInit(repoPath string) error {
 
 // validateGitHubMode validates the GitHub mode flags and prerequisites.
 func (r *Runner) validateGitHubMode(cmd *cobra.Command) error {
-	// Validate provider flag
-	if r.Provider == "" {
-		return fmt.Errorf("--provider flag is required for GitHub mode (use 'aws' or 'azure')")
-	}
-	if r.Provider != "aws" && r.Provider != "azure" {
-		return fmt.Errorf("--provider must be 'aws' or 'azure', got: %s", r.Provider)
-	}
-
-	// Validate deployment tool flag
-	if r.DeploymentTool != "terraform" && r.DeploymentTool != "bicep" {
-		return fmt.Errorf("--deployment-tool must be 'terraform' or 'bicep', got: %s", r.DeploymentTool)
-	}
-
-	// Validate environment name
-	if r.EnvironmentName == "" {
-		r.EnvironmentName = "default"
-	}
-
-	// Check GitHub prerequisites
+	// Check GitHub prerequisites (FR-008: git repo, FR-009: GitHub remote, FR-010: gh auth)
 	opts, err := validateGitHubPrerequisites(cmd.Context(), r.Output)
 	if err != nil {
 		return err
 	}
 
-	// Store options for use in Run
-	opts.Provider = r.Provider
-	opts.DeploymentTool = r.DeploymentTool
-	opts.EnvironmentName = r.EnvironmentName
+	// Set resource types manifest URL
+	if r.ResourceTypesManifest != "" {
+		opts.ResourceTypesManifest = r.ResourceTypesManifest
+	} else {
+		opts.ResourceTypesManifest = DefaultResourceTypesManifestURL
+	}
 
 	// Store in runner for access in Run
 	r.githubOpts = opts
@@ -240,6 +230,8 @@ func (r *Runner) validateGitHubMode(cmd *cobra.Command) error {
 }
 
 // runGitHubInit executes the GitHub mode initialization.
+// FR-001 through FR-014: Sets up repository, workflows, repo variable, workspace config.
+// FR-002/FR-003/FR-004: Does NOT create types.yaml, recipes.yaml, or env files.
 func (r *Runner) runGitHubInit(ctx context.Context) error {
 	opts := r.githubOpts
 	if opts == nil {
@@ -248,74 +240,81 @@ func (r *Runner) runGitHubInit(ctx context.Context) error {
 
 	r.Output.LogInfo("Initializing Radius for GitHub repository: %s/%s", opts.Owner, opts.Repo)
 
-	// Step 1: Create .radius/ directory structure
+	// T016: Check for re-initialization — if .radius/ already exists, warn user
+	radiusDir := filepath.Join(opts.RepoPath, ".radius")
+	if _, err := os.Stat(radiusDir); err == nil {
+		r.Output.LogInfo("")
+		r.Output.LogInfo("Warning: .radius/ directory already exists in this repository.")
+		r.Output.LogInfo("Reinitializing will overwrite existing workflow files.")
+		r.Output.LogInfo("")
+
+		confirmed, err := r.Prompter.GetListInput([]string{"Yes, reinitialize", "No, cancel"}, "Reinitialize Radius?")
+		if err != nil {
+			return err
+		}
+		if confirmed != "Yes, reinitialize" {
+			r.Output.LogInfo("Initialization cancelled.")
+			return nil
+		}
+	}
+
+	// Step 1: Create .radius/applications/ and .radius/deploy/ directories (FR-014-A)
 	r.Output.LogInfo("Creating .radius/ directory structure...")
 	if err := initializeRadiusDirectory(opts.RepoPath); err != nil {
 		return err
 	}
 
-	radiusDir := filepath.Join(opts.RepoPath, ".radius")
-
-	// Step 2: Generate types.yaml (FR-008: fetch from resource-types-contrib)
-	r.Output.LogInfo("Fetching resource types from radius-project/resource-types-contrib...")
-	typesManifest, err := r.fetchTypesManifest(ctx)
-	if err != nil {
-		r.Output.LogInfo("Warning: Failed to fetch resource types, using defaults: %v", err)
-		typesManifest = config.DefaultTypesManifest()
-	}
-	r.Output.LogInfo("Generating types.yaml...")
-	if err := config.WriteTypesManifestWithHeader(radiusDir, typesManifest); err != nil {
-		return err
-	}
-
-	// Step 3: Generate recipes.yaml (FR-009-A: recipe for each type in types.yaml)
-	r.Output.LogInfo("Generating recipes.yaml...")
-	recipesManifest := config.RecipesManifestFromTypes(typesManifest, opts.Provider, opts.DeploymentTool)
-	if err := config.WriteRecipesManifestWithHeader(radiusDir, recipesManifest); err != nil {
-		return err
-	}
-
-	// Step 4: Generate environment file
-	r.Output.LogInfo("Generating env.%s.yaml...", opts.EnvironmentName)
-	env := config.DefaultEnvironment(opts.EnvironmentName, opts.Provider)
-	if err := config.WriteEnvironmentWithHeader(radiusDir, env); err != nil {
-		return err
-	}
-
-	// Step 5: Generate GitHub Actions workflows
+	// Step 2: Generate 4 GitHub Actions workflow files (FR-112)
 	r.Output.LogInfo("Generating GitHub Actions workflows...")
-	if err := initializeGitHubWorkflows(opts.RepoPath, opts.Provider); err != nil {
+	if err := initializeGitHubWorkflows(opts.RepoPath); err != nil {
 		return err
 	}
 
-	// Step 6: Commit changes
+	// Step 3: Set RADIUS_RESOURCE_TYPES_MANIFEST repo variable (FR-005, FR-006)
+	r.Output.LogInfo("Setting repository variable RADIUS_RESOURCE_TYPES_MANIFEST...")
+	ghClient := github.NewClient()
+	if err := ghClient.SetRepoVariable("RADIUS_RESOURCE_TYPES_MANIFEST", opts.ResourceTypesManifest); err != nil {
+		return fmt.Errorf("failed to set RADIUS_RESOURCE_TYPES_MANIFEST: %w", err)
+	}
+
+	// Step 4: Commit and push (FR-013)
 	r.Output.LogInfo("Committing changes...")
 	if err := commitRadiusInit(opts.RepoPath); err != nil {
 		return err
 	}
 
-	// Step 7: Update local workspace config
+	r.Output.LogInfo("Pushing to GitHub...")
+	gitHelper, err := github.NewGitHelper(opts.RepoPath)
+	if err != nil {
+		return fmt.Errorf("failed to access git repository: %w", err)
+	}
+	if err := gitHelper.Push(); err != nil {
+		return fmt.Errorf("failed to push changes: %w", err)
+	}
+
+	// Step 5: Update local workspace config (FR-011)
 	r.Output.LogInfo("Updating workspace configuration...")
 	if err := r.updateGitHubWorkspace(ctx, opts); err != nil {
 		return err
 	}
 
 	r.Output.LogInfo("")
-	r.Output.LogInfo("✅ Radius initialized successfully!")
+	r.Output.LogInfo("Radius initialized successfully!")
 	r.Output.LogInfo("")
 	r.Output.LogInfo("Next steps:")
-	r.Output.LogInfo("  1. Run 'rad environment connect' to configure OIDC authentication")
-	r.Output.LogInfo("  2. Run 'git push' to push the changes to GitHub")
-	r.Output.LogInfo("  3. Run 'rad model' to create an application model")
+	r.Output.LogInfo("  1. Run 'rad environment create <name> --provider <aws|azure>' to set up a cloud environment")
+	r.Output.LogInfo("  2. Run 'rad app model' to create an application definition")
+	r.Output.LogInfo("  3. Run 'rad deployment create' to generate a deployment plan")
+	r.Output.LogInfo("  4. Run 'rad deployment apply' to execute the deployment")
 
 	return nil
 }
 
 // updateGitHubWorkspace updates the local workspace configuration for GitHub mode.
 func (r *Runner) updateGitHubWorkspace(ctx context.Context, opts *githubInitOptions) error {
-	config := r.ConfigFileInterface.ConfigFromContext(ctx)
+	cfg := r.ConfigFileInterface.ConfigFromContext(ctx)
 
-	// Create GitHub workspace per Appendix C.4 - only connection with url and kind
+	// Create GitHub workspace — only connection with url and kind (FR-011)
 	repoURL := fmt.Sprintf("https://github.com/%s/%s", opts.Owner, opts.Repo)
 	ws := &workspaces.Workspace{
 		Name: opts.Repo,
@@ -324,76 +323,18 @@ func (r *Runner) updateGitHubWorkspace(ctx context.Context, opts *githubInitOpti
 			"url":  repoURL,
 		},
 		// Note: GitHub workspaces do not have Environment or Scope properties.
-		// Environment info is stored in .radius/env.<name>.yaml files.
+		// Environment info is stored as GitHub Environment variables.
 	}
 
 	// Use EditWorkspaces to update the config file
-	if err := r.ConfigFileInterface.EditWorkspaces(ctx, config, ws); err != nil {
+	if err := r.ConfigFileInterface.EditWorkspaces(ctx, cfg, ws); err != nil {
 		return fmt.Errorf("failed to save workspace config: %w", err)
 	}
 
-	// Set as the default workspace
-	if err := r.ConfigFileInterface.SetDefaultWorkspace(ctx, config, ws.Name); err != nil {
-		return fmt.Errorf("failed to set default workspace: %w", err)
+	// Set as the current workspace
+	if err := r.ConfigFileInterface.SetDefaultWorkspace(ctx, cfg, ws.Name); err != nil {
+		return fmt.Errorf("failed to set current workspace: %w", err)
 	}
 
 	return nil
-}
-
-// fetchTypesManifest fetches resource types from radius-project/resource-types-contrib
-// per FR-008 and converts them to a types manifest.
-func (r *Runner) fetchTypesManifest(ctx context.Context) (*config.ResourceTypesManifest, error) {
-	ghClient := github.NewClient()
-	fetcher := github.NewResourceTypeFetcher(ghClient)
-
-	// Fetch resource types using sparse checkout
-	// Pass empty string for targetDir - we don't need schema files copied
-	types, err := fetcher.FetchResourceTypes(ctx, "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch resource types: %w", err)
-	}
-
-	if len(types) == 0 {
-		return nil, fmt.Errorf("no resource types found in repository")
-	}
-
-	// Convert fetched types to the manifest format
-	fetchedTypes := make([]config.FetchedResourceType, 0, len(types))
-	for _, rt := range types {
-		// Parse namespace from type (e.g., "Radius.Compute/containers" -> "Radius.Compute")
-		namespace := ""
-		name := rt.Name
-		if idx := len(rt.Type) - len(rt.Name) - 1; idx > 0 && rt.Type != "" {
-			namespace = rt.Type[:idx]
-		}
-
-		// Build relative path based on type structure
-		// e.g., "Radius.Compute/containers" -> "Compute/containers/containers.yaml"
-		relativePath := rt.SchemaPath
-		if relativePath == "" {
-			// Generate path from type name if not provided
-			parts := []string{}
-			if namespace != "" {
-				// Extract category from namespace (e.g., "Radius.Compute" -> "Compute")
-				if dotIdx := len("Radius."); dotIdx < len(namespace) {
-					parts = append(parts, namespace[dotIdx:])
-				}
-			}
-			if name != "" {
-				parts = append(parts, name, name+".yaml")
-			}
-			if len(parts) > 0 {
-				relativePath = filepath.Join(parts...)
-			}
-		}
-
-		fetchedTypes = append(fetchedTypes, config.FetchedResourceType{
-			Type:         rt.Type,
-			Name:         rt.Name,
-			Namespace:    namespace,
-			RelativePath: relativePath,
-		})
-	}
-
-	return config.TypesManifestFromFetched(fetchedTypes), nil
 }

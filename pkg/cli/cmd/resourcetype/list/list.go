@@ -18,18 +18,25 @@ package list
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 	"slices"
 	"strings"
 
 	"github.com/radius-project/radius/pkg/cli"
+	"github.com/radius-project/radius/pkg/cli/clierrors"
 	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/cmd/resourcetype/common"
+	"github.com/radius-project/radius/pkg/cli/config"
 	"github.com/radius-project/radius/pkg/cli/connections"
 	"github.com/radius-project/radius/pkg/cli/framework"
+	"github.com/radius-project/radius/pkg/cli/github"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
 	"github.com/spf13/cobra"
 	"golang.org/x/exp/maps"
+	"gopkg.in/yaml.v3"
 )
 
 // NewCommand creates an instance of the `rad resource-type list` command and runner.
@@ -92,6 +99,65 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 
 // Run runs the `rad resource-type list` command.
 func (r *Runner) Run(ctx context.Context) error {
+	if r.Workspace.IsGitHubWorkspace() {
+		return r.runGitHubMode(ctx)
+	}
+
+	return r.runKubernetesMode(ctx)
+}
+
+// runGitHubMode lists resource types from the RADIUS_RESOURCE_TYPES_MANIFEST URL.
+// FR-073: Operate against the manifest URL instead of UCP.
+func (r *Runner) runGitHubMode(ctx context.Context) error {
+	ghClient := github.NewClient()
+
+	// Get the manifest URL from the repo variable
+	manifestURL, err := ghClient.GetRepoVariable("RADIUS_RESOURCE_TYPES_MANIFEST")
+	if err != nil {
+		return clierrors.Message("Failed to get RADIUS_RESOURCE_TYPES_MANIFEST: %v. Run 'rad init --github' to set up the repository.", err)
+	}
+
+	// Fetch the manifest
+	manifest, err := fetchManifest(manifestURL)
+	if err != nil {
+		return clierrors.Message("Failed to fetch resource types manifest from %s: %v", manifestURL, err)
+	}
+
+	// Convert to output format
+	type githubResourceType struct {
+		Name               string `json:"name"`
+		DefinitionLocation string `json:"definitionLocation"`
+	}
+
+	var resourceTypes []githubResourceType
+	for name, entry := range manifest.Types {
+		resourceTypes = append(resourceTypes, githubResourceType{
+			Name:               name,
+			DefinitionLocation: entry.DefinitionLocation,
+		})
+	}
+
+	slices.SortFunc(resourceTypes, func(a, b githubResourceType) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+
+	tableFormat := output.FormatterOptions{
+		Columns: []output.Column{
+			{Heading: "TYPE", JSONPath: "{ .name }"},
+			{Heading: "DEFINITION", JSONPath: "{ .definitionLocation }"},
+		},
+	}
+
+	err = r.Output.WriteFormatted(r.Format, resourceTypes, tableFormat)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// runKubernetesMode lists resource types from UCP.
+func (r *Runner) runKubernetesMode(ctx context.Context) error {
 	client, err := r.ConnectionFactory.CreateApplicationsManagementClient(ctx, *r.Workspace)
 	if err != nil {
 		return err
@@ -124,4 +190,40 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// fetchManifest fetches a ResourceTypesManifest from a URL.
+func fetchManifest(url string) (*config.ResourceTypesManifest, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("manifest fetch returned HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read manifest body: %w", err)
+	}
+
+	var manifest config.ResourceTypesManifest
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest: %w", err)
+	}
+
+	return &manifest, nil
+}
+
+// parseGitHubURL extracts owner and repo from a GitHub URL.
+func parseGitHubURL(url string) (owner, repo string) {
+	url = strings.TrimSuffix(url, ".git")
+	parts := strings.Split(url, "/")
+	if len(parts) >= 2 {
+		repo = parts[len(parts)-1]
+		owner = parts[len(parts)-2]
+	}
+	return owner, repo
 }

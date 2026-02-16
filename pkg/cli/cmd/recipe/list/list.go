@@ -18,18 +18,25 @@ package list
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 	"sort"
 
 	"github.com/radius-project/radius/pkg/cli"
+	"github.com/radius-project/radius/pkg/cli/clierrors"
 	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	types "github.com/radius-project/radius/pkg/cli/cmd/recipe"
 	"github.com/radius-project/radius/pkg/cli/cmd/recipe/common"
+	"github.com/radius-project/radius/pkg/cli/config"
 	"github.com/radius-project/radius/pkg/cli/connections"
 	"github.com/radius-project/radius/pkg/cli/framework"
+	"github.com/radius-project/radius/pkg/cli/github"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
 	corerp "github.com/radius-project/radius/pkg/corerp/api/v20231001preview"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // NewCommand creates an instance of the command and runner for the `rad recipe list` command.
@@ -104,11 +111,64 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 }
 
 // Run runs the `rad recipe list` command.
-//
-
-// Run retrieves environment recipes from the given workspace and writes them to the output in the specified format.
-// It returns an error if the connection to the workspace fails or if there is an error writing to the output.
 func (r *Runner) Run(ctx context.Context) error {
+	if r.Workspace.IsGitHubWorkspace() {
+		return r.runGitHubMode(ctx)
+	}
+
+	return r.runKubernetesMode(ctx)
+}
+
+// runGitHubMode lists recipes from the RADIUS_RECIPES_MANIFEST stored in the GitHub Environment.
+// FR-073: Operate against the manifest URL instead of UCP.
+func (r *Runner) runGitHubMode(ctx context.Context) error {
+	repoURL, _ := r.Workspace.Connection["url"].(string)
+	owner, repo := parseGitHubURL(repoURL)
+	envName := r.Workspace.Environment
+
+	ghClient := github.NewClient()
+
+	// Get environment variables to find the recipes manifest URL
+	envVars, err := ghClient.GetEnvironmentVariables(owner, repo, envName)
+	if err != nil {
+		return clierrors.Message("Failed to get environment variables for '%s': %v. Run 'rad init --github' to set up the repository.", envName, err)
+	}
+
+	manifestURL, ok := envVars["RADIUS_RECIPES_MANIFEST"]
+	if !ok || manifestURL == "" {
+		return clierrors.Message("No RADIUS_RECIPES_MANIFEST variable found in environment '%s'. Register recipes using 'rad recipe register'.", envName)
+	}
+
+	// Fetch and parse the manifest
+	manifest, err := fetchRecipesManifest(manifestURL)
+	if err != nil {
+		return clierrors.Message("Failed to fetch recipes manifest from %s: %v", manifestURL, err)
+	}
+
+	// Convert manifest entries to the standard recipe output format
+	var envRecipes []types.EnvironmentRecipe
+	for name, entry := range manifest.Recipes {
+		envRecipes = append(envRecipes, types.EnvironmentRecipe{
+			Name:         name,
+			TemplatePath: entry.RecipeLocation,
+			TemplateKind: entry.RecipeKind,
+		})
+	}
+
+	sort.Slice(envRecipes, func(i, j int) bool {
+		return envRecipes[i].Name < envRecipes[j].Name
+	})
+
+	err = r.Output.WriteFormatted(r.Format, envRecipes, common.RecipeFormat())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// runKubernetesMode lists recipes from the UCP environment resource.
+func (r *Runner) runKubernetesMode(ctx context.Context) error {
 	client, err := r.ConnectionFactory.CreateApplicationsManagementClient(ctx, *r.Workspace)
 	if err != nil {
 		return err
@@ -151,4 +211,55 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// fetchRecipesManifest fetches a RecipesManifest from a URL.
+func fetchRecipesManifest(url string) (*config.RecipesManifest, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("manifest fetch returned HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read manifest body: %w", err)
+	}
+
+	var manifest config.RecipesManifest
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest: %w", err)
+	}
+
+	return &manifest, nil
+}
+
+// parseGitHubURL extracts owner and repo from a GitHub URL.
+func parseGitHubURL(rawURL string) (owner, repo string) {
+	trimmed := rawURL
+	if len(trimmed) > 4 && trimmed[len(trimmed)-4:] == ".git" {
+		trimmed = trimmed[:len(trimmed)-4]
+	}
+	// Split by "/" and take the last two segments
+	lastSlash := -1
+	secondLastSlash := -1
+	for i := len(trimmed) - 1; i >= 0; i-- {
+		if trimmed[i] == '/' {
+			if lastSlash == -1 {
+				lastSlash = i
+			} else {
+				secondLastSlash = i
+				break
+			}
+		}
+	}
+	if lastSlash > 0 && secondLastSlash >= 0 {
+		owner = trimmed[secondLastSlash+1 : lastSlash]
+		repo = trimmed[lastSlash+1:]
+	}
+	return owner, repo
 }
