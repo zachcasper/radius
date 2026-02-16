@@ -199,7 +199,13 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 		return clierrors.Message("Environment '%s' does not exist or could not be accessed: %v", r.EnvironmentName, err)
 	}
 
-	cloudProvider := envVars["RADIUS_CLOUD_PROVIDER"]
+	// Infer cloud provider from environment variables
+	var cloudProvider string
+	if envVars["AZURE_CLIENT_ID"] != "" {
+		cloudProvider = "azure"
+	} else if envVars["AWS_IAM_ROLE_NAME"] != "" {
+		cloudProvider = "aws"
+	}
 
 	// Prompt user to confirm deletion
 	if !r.Confirm {
@@ -222,6 +228,7 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 	}
 
 	// FR-030-B/FR-036: Delete GitHub Environment
+	r.Output.LogInfo("")
 	r.Output.LogInfo("Deleting GitHub Environment '%s'...", r.EnvironmentName)
 	err = ghClient.DeleteEnvironment(owner, repo, r.EnvironmentName)
 	if err != nil {

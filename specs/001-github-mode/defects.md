@@ -533,3 +533,173 @@ Each defect should include:
 - **Resolution**: FIXED - Removed the unused `clierrors` import from `pkg/cli/clivalidation.go`.
 - **Files Changed**: `pkg/cli/clivalidation.go`
 - **Spec Impact**: None - build hygiene fix.
+
+---
+
+### D035: Duplicate OIDC setup log message in `rad env create` ✅ FIXED
+- **Phase/Task**: Phase 4 (US2 — rad env create)
+- **Category**: Implementation bug
+- **Description**: Running `rad env create dev --provider azure` printed two OIDC setup messages: `"Setting up azure OIDC authentication..."` (lowercase, from `create.go`) followed by `"Setting up Azure OIDC authentication..."` (capitalized, from `oidc.go`). The first message was redundant since `oidc.go` already prints the properly capitalized message at the start of each OIDC flow.
+- **Root Cause**: `pkg/cli/cmd/env/create/create.go` added its own `LogInfo("Setting up %s OIDC authentication...", r.Provider)` before calling `oidcSetup.SetupAzureOIDC()` or `oidcSetup.SetupAWSOIDC()`, but those functions already print the same message with correct capitalization.
+- **Resolution**: FIXED - Removed the duplicate `LogInfo` call from `create.go`. The OIDC setup functions in `oidc.go` remain the single source of the log message.
+- **Files Changed**: `pkg/cli/cmd/env/create/create.go`
+- **Spec Impact**: None - log output cleanup.
+
+---
+
+### D036: Environment variables API uses environment ID instead of repository ID (HTTP 404) ✅ FIXED
+- **Phase/Task**: Phase 4 (US2 — rad env create)
+- **Category**: Implementation bug
+- **Description**: Running `rad env create dev --provider azure` failed with `exit status 1: gh: Not Found (HTTP 404)` when setting environment variables (e.g., `AZURE_TENANT_ID`). The GitHub REST API path `repositories/{id}/environments/{env_name}/variables` requires the **repository** ID, but the code was passing the **environment** ID extracted from `GET /repos/{owner}/{repo}/environments/{env_name}`.
+- **Root Cause**: `SetEnvironmentVariable()` and `GetEnvironmentVariables()` in `pkg/cli/github/environment.go` fetched the environment object and used its `id` field as the `{repository_id}` in the variables API path. The environment `id` is different from the repository `id`, causing a 404.
+- **Resolution**: FIXED - Added a `getRepoID()` helper that fetches the repository ID from `GET /repos/{owner}/{repo}` and updated `SetEnvironmentVariable()`, `GetEnvironmentVariables()`, and related helper functions to use the repository ID instead of the environment ID.
+- **Files Changed**: `pkg/cli/github/environment.go`
+- **Spec Impact**: None - API implementation bug.
+
+---
+
+### D037: Vague "Setting environment variables..." log message ✅ FIXED
+- **Phase/Task**: Phase 4 (US2 — rad env create)
+- **Category**: UX / Log clarity
+- **Description**: `rad env create dev --provider azure` printed `"Setting environment variables..."` without specifying which GitHub Environment the variables were being set in. Users need to know exactly where variables are being stored.
+- **Root Cause**: The log message in `pkg/cli/cmd/env/create/create.go` used a generic string instead of including the environment name.
+- **Resolution**: FIXED - Changed both AWS and Azure log messages to `"Setting GitHub Environment variables for '<name>'..."` to clearly identify the target GitHub Environment.
+- **Files Changed**: `pkg/cli/cmd/env/create/create.go`
+- **Spec Impact**: None - log output clarity improvement.
+
+---
+
+### D038: `rad init` should not create `.radius/` directory or use `.gitkeep` ✅ FIXED
+- **Phase/Task**: Phase 3 (US1 — rad init)
+- **Category**: Spec/implementation change
+- **Description**: `rad init --github` was creating a `.radius/` directory with a `.gitkeep` file. Directories should only be created when necessary by the commands that actually use them (e.g., `rad app model` creates `.radius/applications/`, `rad deployment create` creates `.radius/deploy/`). `.gitkeep` files should never be used.
+- **Root Cause**: Original FR-014-A specified that `rad init` should create the `.radius/` directory structure upfront. This was changed to defer all directory creation to the commands that need them.
+- **Resolution**: FIXED — Removed `initializeRadiusDirectory()` entirely. `rad init` no longer creates `.radius/` or any `.gitkeep` files. Updated re-init detection to check for workflow files instead. Updated commit logic to only stage `.github/workflows/`.
+- **Files Changed**: `specs/001-github-mode/spec.md`, `specs/001-github-mode/tasks.md`, `pkg/cli/cmd/radinit/github.go`
+- **Spec Impact**: FR-014-A rewritten; FR-068-B and FR-047-A added.
+
+### D039: `rad deployment create` treats untracked files as uncommitted changes ✅ FIXED
+- **Phase/Task**: Phase 6 (US4 — rad deployment create)
+- **Category**: Bug
+- **Description**: `rad deployment create` uses `IsDirty()` to check for uncommitted changes before proceeding. The go-git `worktree.Status().IsClean()` method considers untracked files as dirty, causing a false positive "Working directory has uncommitted changes" error when the only difference is an untracked file (e.g., the `rad` binary itself).
+- **Root Cause**: `go-git`'s `IsClean()` returns `false` for untracked files. The dirty check should only consider modifications to tracked files.
+- **Resolution**: FIXED — Replaced `go-git` worktree status check with `git status --porcelain` and filtering out lines starting with `??` (untracked files).
+- **Files Changed**: `pkg/cli/github/git.go`
+- **Spec Impact**: None.
+
+### D040: Remove redundant `RADIUS_CLOUD_PROVIDER` environment variable ✅ FIXED
+- **Phase/Task**: Phase 4 (US2 — rad env create OIDC setup)
+- **Category**: Cleanup
+- **Description**: `RADIUS_CLOUD_PROVIDER` was set as a GitHub Environment variable during OIDC setup (value `"aws"` or `"azure"`) and consumed only by `rad env delete` to route OIDC cleanup. The variable is redundant because the provider can be inferred from the presence of provider-specific variables (`AZURE_CLIENT_ID` → Azure, `AWS_IAM_ROLE_NAME` → AWS).
+- **Root Cause**: Original implementation stored the provider explicitly rather than inferring it from existing environment variables.
+- **Resolution**: FIXED — Removed `RADIUS_CLOUD_PROVIDER` from `SetAWSEnvironmentVariables()` and `SetAzureEnvironmentVariables()` in `oidc.go`. Updated `promptOIDCCleanup()` in `delete.go` to infer the provider from `AZURE_CLIENT_ID` or `AWS_IAM_ROLE_NAME` presence.
+- **Files Changed**: `pkg/cli/github/oidc.go`, `pkg/cli/cmd/env/delete/delete.go`
+- **Spec Impact**: None — `RADIUS_CLOUD_PROVIDER` was not referenced in any workflow files or spec FRs.
+
+### D041: Rename `RADIUS_K8S_CLUSTER` and `RADIUS_K8S_NAMESPACE` environment variables ✅ FIXED
+- **Phase/Task**: Phase 4 (US2 — rad env create OIDC setup)
+- **Category**: Naming convention
+- **Description**: The GitHub Environment variables `RADIUS_K8S_CLUSTER` and `RADIUS_K8S_NAMESPACE` used a `RADIUS_K8S_` prefix. These should be named `KUBERNETES_CLUSTER` and `KUBERNETES_NAMESPACE` for clarity and consistency with other environment variable naming.
+- **Root Cause**: Original naming used a Radius-specific prefix for Kubernetes configuration.
+- **Resolution**: FIXED — Renamed to `KUBERNETES_CLUSTER` and `KUBERNETES_NAMESPACE` in both `SetAWSEnvironmentVariables()` and `SetAzureEnvironmentVariables()` in `oidc.go`.
+- **Files Changed**: `pkg/cli/github/oidc.go`
+- **Spec Impact**: None — these variable names were not referenced in spec, plan, or tasks.
+
+### D042: `rad init` fails with "cannot create empty commit" on re-initialization ✅ FIXED
+- **Phase/Task**: Phase 3 (US1 — rad init)
+- **Category**: Bug
+- **Description**: Running `rad init --github` a second time (or after `.radius/` creation was removed) fails with `failed to create commit: cannot create empty commit: clean working tree` because the workflow files already exist unchanged and there's nothing to stage.
+- **Root Cause**: `go-git`'s `worktree.Commit()` errors on an empty commit. After removing `.radius/` directory creation (D038), the only files staged are workflow files — if they haven't changed, the staging area is empty.
+- **Resolution**: FIXED — `CommitWithTrailer()` now checks for staged changes via `git diff --cached --quiet` before committing; returns empty hash if nothing to commit. `commitRadiusInit()` returns a bool indicating whether a commit was created. `runGitHubInit()` skips push and prints "No changes to commit." when no commit was made.
+- **Files Changed**: `pkg/cli/github/git.go`, `pkg/cli/cmd/radinit/github.go`
+- **Spec Impact**: None.
+
+### D043: Implementation does not match FR-030-G ✅ FIXED
+- **Phase/Task**: Phase 4 (US2 — rad env create)
+- **Category**: Implementation gap
+- **Description**: FR-030-G specifies "Creating authentication test workflow..." with animated progress indicator showing "Testing authentication to <provider>..." and `L` key support for real-time log streaming. The original implementation displayed "Dispatching authentication test workflow..." and used a simple `DispatchAndWatch` pattern without animated progress or `L` key log streaming.
+- **Root Cause**: Implementation used a simpler dispatch-and-wait pattern instead of the spec's animated UX.
+- **Resolution**: FIXED — Updated `dispatchAuthTest()` to: display "Creating authentication test workflow...", use `ProgressModel` with "Testing authentication to <provider>..." label and `L` key support, report success per FR-030-I ("Authentication test passed! Environment is ready for deployments."), report failure per FR-030-H with common OIDC misconfiguration hints and re-test command.
+- **Files Changed**: `pkg/cli/cmd/env/create/create.go`
+- **Spec Impact**: None — spec is correct as-is.
+
+### D044: Workflow detect-provider steps fail because GitHub Environment variables aren't exposed as shell env vars ✅ FIXED
+- **Phase/Task**: Phase 11 (Workflow generation)
+- **Category**: Bug
+- **Description**: All 4 "detect provider" steps in generated workflows (`radius-deployment-create.yaml`, `radius-deployment-apply.yaml`, `radius-destroy.yaml`, `radius-auth-test.yaml`) use `$AZURE_CLIENT_ID` and `$AWS_IAM_ROLE_NAME` as shell environment variables to detect the cloud provider. However, GitHub Environment **variables** (set via `vars.*`) are not automatically available as shell env vars — they require an explicit `env:` mapping in the step.
+- **Root Cause**: GitHub Environment variables are accessed via the `${{ vars.* }}` context, not as shell env vars. The detect-provider shell scripts referenced bare `$AZURE_CLIENT_ID` / `$AWS_IAM_ROLE_NAME` without an `env:` mapping.
+- **Resolution**: FIXED — Added `env:` blocks to all 4 detect-provider steps mapping `${{ vars.AZURE_CLIENT_ID }}` → `AZURE_CLIENT_ID` and `${{ vars.AWS_IAM_ROLE_NAME }}` → `AWS_IAM_ROLE_NAME`.
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: None.
+
+### D045: Azure federated credential subject uses `ref:refs/heads/main` instead of `environment:<name>` ✅ FIXED
+- **Phase/Task**: Phase 4 (US2 — Azure OIDC setup)
+- **Category**: Bug
+- **Description**: The Azure AD federated credential was created with subject `repo:OWNER/REPO:ref:refs/heads/main`, but all generated workflows run with a GitHub Environment (`environment: ${{ inputs.environment }}`). When a job uses a GitHub Environment, GitHub presents the subject as `repo:OWNER/REPO:environment:ENV_NAME`, which doesn't match the `ref:refs/heads/main` credential, causing OIDC login to fail with `AADSTS700213: No matching federated identity record found`.
+- **Root Cause**: Federated credential subject was hardcoded to `ref:refs/heads/main` instead of using the environment-scoped subject.
+- **Resolution**: FIXED — Changed federated credential subject to `repo:OWNER/REPO:environment:ENV_NAME`. Threaded `envName` parameter through `SetupAzureOIDC()` → `createAzureApp()`. Credential name now includes environment name (`github-actions-ENV_NAME`) to support multiple environments.
+- **Files Changed**: `pkg/cli/github/oidc.go`, `pkg/cli/cmd/env/create/create.go`
+- **Spec Impact**: None.
+
+### D046: L key does not stream logs and q key allows premature quit ✅ FIXED
+- **Phase/Task**: Phase 4 (FR-089-E, FR-089-F — CLI Workflow Dispatch UX)
+- **Category**: Bug
+- **Description**: Two issues: (1) Pressing `L` during workflow progress toggled the ShowLogs flag but no log data was ever fetched — `CreatePollFunc` only polls status, never sends `WorkflowLogMsg`. (2) The `q` key allowed the user to quit prematurely during workflow execution, which should not be permitted — the user must wait for success or failure.
+- **Root Cause**: (1) No log polling mechanism existed. `WorkflowLogMsg` type was defined but never sent. (2) `q` key handler was present in `ProgressModel.Update` alongside `ctrl+c`.
+- **Resolution**: FIXED — (1) Added `CreateLogPollFunc(runID)` to `Client` that fetches logs via `gh run view <id> --log`, tracks previously seen lines, and returns only new lines as `WorkflowLogMsg`. Added `LogPollFunc` field to `ProgressModel`. When `L` is pressed, starts a 2-second log polling loop. `WorkflowLogMsg` handler appends lines and continues polling while ShowLogs is active. (2) Removed `q` key from handler (kept `ctrl+c` for emergency). Updated help text to show only "Press L to show/hide logs".
+- **Files Changed**: `pkg/cli/github/progress.go`, `pkg/cli/github/client.go`, `pkg/cli/cmd/env/create/create.go`, `pkg/cli/cmd/deployment/create/create.go`, `pkg/cli/cmd/deployment/apply/apply.go`, `pkg/cli/cmd/app/delete/delete.go`
+- **Spec Impact**: Updated FR-089-E (no quit option, user must wait) and FR-089-F (logs via `gh run view --log` polling).
+
+### D047: L key shows no output during in-progress workflow runs ✅ FIXED
+- **Phase/Task**: Phase 4 (FR-089-E, FR-089-F — CLI Workflow Dispatch UX)
+- **Category**: Bug
+- **Description**: Pressing `L` during a running workflow appeared to do nothing. Logs only appeared after the workflow completed. Root cause: `CreateLogPollFunc` used `gh run view <id> --log`, which only returns output for completed runs. For in-progress runs, `--log` returns an error/empty output, so no `WorkflowLogMsg` lines were ever sent while the workflow was running.
+- **Root Cause**: `gh run view --log` only works for completed GitHub Actions runs. Pressing `L` toggled `ShowLogs` but the log poll returned empty results for in-progress runs. Additionally, `WorkflowLogMsg` appended lines instead of replacing them, which caused duplicate entries if the same data was fetched multiple times.
+- **Resolution**: FIXED — Changed `CreateLogPollFunc` to use `gh run view <id> --json jobs` which returns real-time job/step status for both in-progress and completed runs. Step status is formatted with icons: `✓` (success), `✗` (failure), `●` (in progress), `○` (pending). Changed `WorkflowLogMsg` handling from append to replace (each poll returns a full snapshot of step statuses). Updated View header from "Workflow Logs" to "Workflow Steps".
+- **Files Changed**: `pkg/cli/github/client.go`, `pkg/cli/github/progress.go`
+- **Spec Impact**: None (FR-089-F already updated in D046 to specify polling mechanism).
+
+### D048: L key shows step status icons instead of actual logs on completed runs ✅ FIXED
+- **Phase/Task**: Phase 4 (FR-089-F — CLI Workflow Dispatch UX)
+- **Category**: Bug
+- **Description**: When pressing `L` during or after a workflow run, the display showed step status icons (✓/✗/●/○) instead of actual log content. The `CreateLogPollFunc` only used `gh run view --json jobs` which returns step names and status but not log output. The user expected to see actual step logs (command output, authentication details, etc.).
+- **Root Cause**: `CreateLogPollFunc` only used `--json jobs` for step status. It never tried `gh run view --log` which returns actual log output for completed runs.
+- **Resolution**: FIXED — Implemented hybrid approach in `CreateLogPollFunc`: tries `gh run view --log` first (returns actual logs for completed runs), parses tab-separated output into step-grouped formatted lines with timestamps stripped. If `--log` is not available (in-progress runs), falls back to `--json jobs` step status with icons. Added `parseWorkflowLogs()` helper that groups log lines by step, filters internal steps (Set up job, Complete job, Post *), and caps output at 15 lines per step.
+- **Files Changed**: `pkg/cli/github/client.go`
+- **Spec Impact**: Updated FR-089-F to describe hybrid log/step-status behavior.
+
+### D049: Replace L key toggle with automatic step status display ✅ FIXED
+- **Phase/Task**: Phase 4 (FR-089-E, FR-089-F — CLI Workflow Dispatch UX)
+- **Category**: UX improvement
+- **Description**: The L key to toggle log streaming was unreliable — `gh run view --log` only works for completed runs, making it appear broken during in-progress workflows. The step status display (via `--json jobs`) works reliably in all states and provides useful real-time feedback. Simplification: show steps automatically, remove L key toggle entirely, and direct users to the workflow run URL for detailed logs.
+- **Root Cause**: `gh run view --log` is inherently unavailable for in-progress runs. The L key toggle added complexity without reliable value.
+- **Resolution**: FIXED — Removed `ShowLogs` field, `LogPollFunc` field, L key handler, and help text from `ProgressModel`. Added `StepPollFunc` field that is polled automatically from `Init()`. Steps are always displayed below the spinner. Renamed `CreateLogPollFunc` to `CreateStepPollFunc`, simplified to only use `--json jobs`. Removed `parseWorkflowLogs()` and `logTimestampRegex`. Added `⊘` icon for skipped steps. Updated all 4 callers (env/create, deployment/create, deployment/apply, app/delete) to use `StepPollFunc`.
+- **Files Changed**: `pkg/cli/github/progress.go`, `pkg/cli/github/client.go`, `pkg/cli/cmd/env/create/create.go`, `pkg/cli/cmd/deployment/create/create.go`, `pkg/cli/cmd/deployment/apply/apply.go`, `pkg/cli/cmd/app/delete/delete.go`
+- **Spec Impact**: Updated FR-030-G, FR-089-E, FR-089-F, FR-106-D, and Q&A to replace L key toggle with automatic step status display.
+
+### D050: Azure AD Application prompt should be a single merged list ✅ FIXED
+- **Phase/Task**: Phase 4 (FR-026 — Azure OIDC setup)
+- **Category**: UX improvement
+- **Description**: The Azure AD Application prompt used a two-step flow: first asking "Create new" vs "Use existing", then listing apps or prompting for ID. This was inconsistent with the resource group prompt which shows "Create new" as the first option in a single list of existing items.
+- **Root Cause**: Original implementation used separate choice prompt and app list prompt instead of a merged single-list approach.
+- **Resolution**: FIXED — Merged into a single `GetListInput` prompt: "Create new Azure AD application" as the first option, followed by existing apps from `az ad app list`. Applied to both `pkg/cli/github/oidc.go` (`promptForAzureApp`) and `pkg/cli/cmd/env/connect/connect.go` (`promptForAzureApp`, replacing old `promptForExistingAzureApp`). Updated test expectations in `connect_test.go`.
+- **Files Changed**: `pkg/cli/github/oidc.go`, `pkg/cli/cmd/env/connect/connect.go`, `pkg/cli/cmd/env/connect/connect_test.go`
+- **Spec Impact**: None.
+
+### D051: Duplicate workflow URL displayed before progress model ✅ FIXED
+- **Phase/Task**: Phase 4 (FR-089-D — CLI Workflow Dispatch UX)
+- **Category**: Bug
+- **Description**: After dispatching a workflow, `LogInfo("Workflow started: %s", runURL)` was printed before the progress model started. The progress model also displays "View run: URL". This resulted in duplicate URL display.
+- **Root Cause**: Redundant `LogInfo` calls added before progress model, which already renders the run URL in its view.
+- **Resolution**: FIXED — Removed `r.Output.LogInfo("Workflow started: %s", runURL)` and any following blank `LogInfo("")` from all 4 workflow-dispatching commands.
+- **Files Changed**: `pkg/cli/cmd/env/create/create.go`, `pkg/cli/cmd/deployment/create/create.go`, `pkg/cli/cmd/deployment/apply/apply.go`, `pkg/cli/cmd/app/delete/delete.go`
+- **Spec Impact**: None.
+
+### D052: `rad app model` fails with "Radius not initialized" after `rad env create` ✅ FIXED
+- **Phase/Task**: Phase 4 (E2E testing)
+- **Category**: Bug
+- **Description**: After successfully running `rad env create`, running `rad app model` failed with "Radius not initialized. Run 'rad init' first to initialize the repository." The `Validate` method checked for a `.radius/` directory, but `rad init --github` no longer creates it (removed in D038). The workspace-kind check (GitHub vs Kubernetes) was the proper init guard.
+- **Root Cause**: Stale `.radius/` directory check in `model.go` `Validate()` was not updated when D038 removed `.radius/` creation from `rad init --github`. `rad app model` itself creates `.radius/applications/` via `os.MkdirAll` in `Run()`, making the pre-check unnecessary.
+- **Resolution**: FIXED — Removed the `.radius/` directory existence check from `Validate()`. The workspace-kind validation (lines 144-148) is sufficient. Updated model tests to reflect that validation passes without `.radius/` directory.
+- **Files Changed**: `pkg/cli/cmd/model/model.go`, `pkg/cli/cmd/model/model_test.go`
+- **Spec Impact**: None.

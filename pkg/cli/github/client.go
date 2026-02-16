@@ -430,6 +430,60 @@ func (c *Client) GetWorkflowRunStatus(runID int64) (*WorkflowRun, error) {
 	return &run, nil
 }
 
+// CreateStepPollFunc creates a polling function that fetches real-time workflow step status.
+// It uses `gh run view --json jobs` to get job/step status, which works for both
+// in-progress and completed runs.
+func (c *Client) CreateStepPollFunc(runID int64) func() tea.Msg {
+	type stepInfo struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+	}
+	type jobInfo struct {
+		Name       string     `json:"name"`
+		Status     string     `json:"status"`
+		Conclusion string     `json:"conclusion"`
+		Steps      []stepInfo `json:"steps"`
+	}
+	type runJobs struct {
+		Jobs []jobInfo `json:"jobs"`
+	}
+
+	return func() tea.Msg {
+		output, err := c.runCommand("run", "view", fmt.Sprintf("%d", runID), "--json", "jobs")
+		if err != nil || strings.TrimSpace(output) == "" {
+			return WorkflowLogMsg{}
+		}
+
+		var result runJobs
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			return WorkflowLogMsg{}
+		}
+
+		var lines []string
+		for _, job := range result.Jobs {
+			for _, step := range job.Steps {
+				var icon string
+				switch {
+				case step.Status == "completed" && step.Conclusion == "success":
+					icon = "✓"
+				case step.Status == "completed" && step.Conclusion == "failure":
+					icon = "✗"
+				case step.Status == "completed" && step.Conclusion == "skipped":
+					icon = "⊘"
+				case step.Status == "in_progress":
+					icon = "●"
+				default:
+					icon = "○"
+				}
+				lines = append(lines, fmt.Sprintf("%s %s", icon, step.Name))
+			}
+		}
+
+		return WorkflowLogMsg{Lines: lines}
+	}
+}
+
 // CreatePollFunc creates a polling function suitable for use with ProgressModel.
 // It polls the workflow run status and returns appropriate tea.Msg types.
 func (c *Client) CreatePollFunc(runID int64) func() tea.Msg {

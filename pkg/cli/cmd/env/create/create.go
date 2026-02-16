@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	corerp "github.com/radius-project/radius/pkg/corerp/api/v20231001preview"
 	"github.com/radius-project/radius/pkg/to"
 	"github.com/spf13/cobra"
@@ -264,7 +265,6 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 	oidcSetup := github.NewOIDCSetup(r.Output, r.Prompter, r.CommandRunner, owner, repo)
 
 	r.Output.LogInfo("")
-	r.Output.LogInfo("Setting up %s OIDC authentication...", r.Provider)
 
 	switch r.Provider {
 	case "aws":
@@ -275,20 +275,20 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 
 		// Step 3: Set environment variables (FR-025)
 		r.Output.LogInfo("")
-		r.Output.LogInfo("Setting environment variables...")
+		r.Output.LogInfo("Setting GitHub Environment variables for '%s'...", r.EnvironmentName)
 		if err := oidcSetup.SetAWSEnvironmentVariables(r.EnvironmentName, result); err != nil {
 			return err
 		}
 
 	case "azure":
-		result, err := oidcSetup.SetupAzureOIDC(ctx)
+		result, err := oidcSetup.SetupAzureOIDC(ctx, r.EnvironmentName)
 		if err != nil {
 			return err
 		}
 
 		// Step 3: Set environment variables (FR-029)
 		r.Output.LogInfo("")
-		r.Output.LogInfo("Setting environment variables...")
+		r.Output.LogInfo("Setting GitHub Environment variables for '%s'...", r.EnvironmentName)
 		if err := oidcSetup.SetAzureEnvironmentVariables(r.EnvironmentName, result); err != nil {
 			return err
 		}
@@ -307,8 +307,8 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 
 	// Step 5: Dispatch auth test workflow (FR-030-E through FR-030-I)
 	r.Output.LogInfo("")
-	r.Output.LogInfo("Dispatching authentication test workflow...")
-	if err := r.dispatchAuthTest(ctx, r.EnvironmentName); err != nil {
+	r.Output.LogInfo("Creating authentication test workflow...")
+	if err := r.dispatchAuthTest(ctx, r.EnvironmentName, r.Provider); err != nil {
 		// Don't fail the command if auth test dispatch fails
 		r.Output.LogInfo("Warning: could not dispatch auth test: %v", err)
 		r.Output.LogInfo("You can manually run the auth test workflow from GitHub Actions.")
@@ -325,16 +325,17 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 }
 
 // dispatchAuthTest dispatches the auth test workflow and shows animated progress.
-// FR-030-E through FR-030-I: Dispatch, watch, report success/failure with hints.
-func (r *Runner) dispatchAuthTest(ctx context.Context, envName string) error {
+// FR-030-E through FR-030-I: Dispatch, watch with animated progress and L key support,
+// report success/failure with hints.
+func (r *Runner) dispatchAuthTest(ctx context.Context, envName string, provider string) error {
 	ghClient := github.NewClient()
 
 	inputs := map[string]string{
 		"environment": envName,
 	}
 
-	// Dispatch and watch with progress
-	_, _, err := ghClient.DispatchAndWatch(
+	// FR-030-E/FR-030-F: Dispatch and get run ID
+	runID, runURL, err := ghClient.DispatchAndWatch(
 		github.AuthTestWorkflowFile,
 		"main",
 		inputs,
@@ -344,6 +345,40 @@ func (r *Runner) dispatchAuthTest(ctx context.Context, envName string) error {
 	)
 	if err != nil {
 		return err
+	}
+
+	// FR-030-G: Animated progress with auto step display
+	pollFunc := ghClient.CreatePollFunc(runID)
+	model := github.NewProgressModel(fmt.Sprintf("Testing authentication to %s", provider), pollFunc)
+	model.RunURL = runURL
+	model.StepPollFunc = ghClient.CreateStepPollFunc(runID)
+
+	p := tea.NewProgram(model)
+	finalModel, err := r.Prompter.RunProgram(p)
+	if err != nil {
+		return fmt.Errorf("progress display error: %w", err)
+	}
+
+	// FR-030-H/FR-030-I: Report success or failure
+	if pm, ok := finalModel.(github.ProgressModel); ok {
+		if pm.State == github.ProgressStateFailed {
+			r.Output.LogInfo("")
+			r.Output.LogInfo("Authentication test failed.")
+			r.Output.LogInfo("See workflow logs: %s", runURL)
+			r.Output.LogInfo("")
+			r.Output.LogInfo("Common causes:")
+			r.Output.LogInfo("  - OIDC federation not configured correctly")
+			r.Output.LogInfo("  - Incorrect client ID, tenant ID, or subscription ID")
+			r.Output.LogInfo("  - IAM role trust policy does not allow the GitHub repository")
+			r.Output.LogInfo("")
+			r.Output.LogInfo("The environment and variables have been preserved so you can fix the issue and re-run.")
+			r.Output.LogInfo("To re-test: gh workflow run %s -f environment=%s", github.AuthTestWorkflowFile, envName)
+			return fmt.Errorf("authentication test failed")
+		}
+
+		// FR-030-I: Success
+		r.Output.LogInfo("")
+		r.Output.LogInfo("Authentication test passed! Environment %q is ready for deployments.", envName)
 	}
 
 	return nil

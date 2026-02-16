@@ -272,13 +272,11 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 		return fmt.Errorf("failed to dispatch destroy workflow: %w", err)
 	}
 
-	r.Output.LogInfo("Workflow started: %s", runURL)
-	r.Output.LogInfo("")
-
-	// FR-106-D: Show animated progress with L key log streaming
+	// FR-106-D: Show animated progress with step status
 	pollFunc := ghClient.CreatePollFunc(runID)
 	model := github.NewProgressModel("Destroying application", pollFunc)
 	model.RunURL = runURL
+	model.StepPollFunc = ghClient.CreateStepPollFunc(runID)
 
 	p := tea.NewProgram(model)
 	finalModel, err := r.InputPrompter.RunProgram(p)

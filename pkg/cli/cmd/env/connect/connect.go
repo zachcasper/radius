@@ -369,35 +369,10 @@ func (r *Runner) connectAzure(ctx context.Context, env *config.Environment, radi
 		return err
 	}
 
-	// FR-026: Prompt whether to create new app or use existing
-	createNewApp, err := r.InputPrompter.GetListInput([]string{"Create new Azure AD application", "Use existing Azure AD application"}, "Azure AD Application")
+	// FR-026: Prompt for Azure AD application - list existing or create new
+	clientID, err := r.promptForAzureApp(ctx, subscriptionID, resourceGroupName)
 	if err != nil {
 		return err
-	}
-
-	var clientID string
-	if createNewApp == "Use existing Azure AD application" {
-		// FR-026: List existing applications for selection
-		clientID, err = r.promptForExistingAzureApp(ctx)
-		if err != nil {
-			return err
-		}
-	} else {
-		// Set the subscription context to ensure we're in the correct tenant
-		// This is required because Azure AD app creation uses the current tenant context
-		r.Output.LogInfo("Setting subscription context...")
-		_, err = r.CommandRunner.RunCommand(ctx, "az", "account", "set",
-			"--subscription", subscriptionID,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to set subscription context: %w", err)
-		}
-
-		// Create new Azure AD app with federated credentials
-		clientID, err = r.createAzureApp(ctx, subscriptionID, resourceGroupName)
-		if err != nil {
-			return err
-		}
 	}
 
 	// Create state backend (Azure Storage)
@@ -636,15 +611,12 @@ func parseAzureResourceGroups(jsonStr string) ([]azureResourceGroup, error) {
 	return groups, nil
 }
 
-// promptForExistingAzureApp prompts the user to select from existing Azure AD applications.
-// Implements FR-026: display list of applications from az ad app list.
-func (r *Runner) promptForExistingAzureApp(ctx context.Context) (string, error) {
-	// Get list of applications - use --all to include apps user has access to but doesn't own
-	// Limit to 50 results to avoid loading thousands of apps in enterprise environments
+// promptForAzureApp prompts the user to select from existing Azure AD applications or create a new one.
+// Implements FR-026: display "Create new" option first, then existing applications from az ad app list.
+func (r *Runner) promptForAzureApp(ctx context.Context, subscriptionID, resourceGroupName string) (string, error) {
+	// Get list of applications
 	r.Output.LogInfo("Fetching Azure AD applications...")
 	appsJSON, err := r.CommandRunner.RunCommand(ctx, "az", "ad", "app", "list",
-		"--all",
-		"--query", "[?starts_with(displayName, 'radius-')]", // Filter for radius apps first
 		"--output", "json",
 	)
 
@@ -653,40 +625,28 @@ func (r *Runner) promptForExistingAzureApp(ctx context.Context) (string, error) 
 		apps, _ = parseAzureApplications(appsJSON)
 	}
 
-	// If no radius-prefixed apps found, try listing all recent apps
-	if len(apps) == 0 {
-		appsJSON, err = r.CommandRunner.RunCommand(ctx, "az", "ad", "app", "list",
-			"--all",
-			"--top", "50",
-			"--output", "json",
-		)
-		if err == nil {
-			apps, _ = parseAzureApplications(appsJSON)
-		}
-	}
-
-	if len(apps) == 0 {
-		// If we still can't list apps, fall back to text input
-		r.Output.LogInfo("No applications found, prompting for ID")
-		return r.InputPrompter.GetTextInput("Azure AD Application (Client) ID", prompt.TextInputOptions{})
-	}
-
-	// Build options list
-	enterManualOption := "Enter application ID manually"
-	options := make([]string, 0, len(apps)+1)
+	// Build options list with "Create new" first
+	options := []string{"Create new Azure AD application"}
 	for _, app := range apps {
 		options = append(options, fmt.Sprintf("%s (%s)", app.DisplayName, app.AppID))
 	}
-	options = append(options, enterManualOption)
 
-	// Prompt user to select
 	selected, err := r.InputPrompter.GetListInput(options, "Select Azure AD Application")
 	if err != nil {
 		return "", err
 	}
 
-	if selected == enterManualOption {
-		return r.InputPrompter.GetTextInput("Azure AD Application (Client) ID", prompt.TextInputOptions{})
+	if selected == "Create new Azure AD application" {
+		// Set the subscription context to ensure we're in the correct tenant
+		r.Output.LogInfo("Setting subscription context...")
+		_, err = r.CommandRunner.RunCommand(ctx, "az", "account", "set",
+			"--subscription", subscriptionID,
+		)
+		if err != nil {
+			return "", fmt.Errorf("failed to set subscription context: %w", err)
+		}
+
+		return r.createAzureApp(ctx, subscriptionID, resourceGroupName)
 	}
 
 	// Extract the application ID from the selection
@@ -697,7 +657,6 @@ func (r *Runner) promptForExistingAzureApp(ctx context.Context) (string, error) 
 		}
 	}
 
-	// Fallback
 	return "", clierrors.Message("Failed to match selected application")
 }
 

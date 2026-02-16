@@ -144,7 +144,16 @@ func (g *GitHelper) AddAll() error {
 }
 
 // CommitWithTrailer creates a commit with the given message and Radius-Action trailer.
+// Returns the commit hash and an error. Returns empty string and nil if there are no staged changes.
 func (g *GitHelper) CommitWithTrailer(message string, action string) (string, error) {
+	// Check if there are staged changes
+	cmd := exec.Command("git", "diff", "--cached", "--quiet")
+	cmd.Dir = g.repoPath
+	if err := cmd.Run(); err == nil {
+		// Exit code 0 means no staged changes
+		return "", nil
+	}
+
 	worktree, err := g.repo.Worktree()
 	if err != nil {
 		return "", fmt.Errorf("failed to get worktree: %w", err)
@@ -207,19 +216,30 @@ func (g *GitHelper) GetCurrentCommitShort() (string, error) {
 	return sha, nil
 }
 
-// IsDirty returns true if the working tree has uncommitted changes.
+// IsDirty returns true if the working tree has uncommitted changes to tracked files.
+// Untracked files are ignored.
 func (g *GitHelper) IsDirty() (bool, error) {
-	worktree, err := g.repo.Worktree()
-	if err != nil {
-		return false, fmt.Errorf("failed to get worktree: %w", err)
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = g.repoPath
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		return false, fmt.Errorf("failed to check worktree status: %w", err)
 	}
 
-	status, err := worktree.Status()
-	if err != nil {
-		return false, fmt.Errorf("failed to get status: %w", err)
+	// Check each line — skip untracked files (lines starting with "??")
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "??") {
+			return true, nil
+		}
 	}
 
-	return !status.IsClean(), nil
+	return false, nil
 }
 
 // HasUnpushedCommits checks if the current branch has commits that haven't been pushed to origin.

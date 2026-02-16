@@ -151,17 +151,6 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	// Get --yes flag
 	r.Yes, _ = cmd.Flags().GetBool("yes")
 
-	// Verify we're in a git repository with .radius/ directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return clierrors.Message("Failed to get current directory: %v", err)
-	}
-
-	radiusDir := filepath.Join(cwd, ".radius")
-	if _, err := os.Stat(radiusDir); os.IsNotExist(err) {
-		return clierrors.Message("Radius not initialized. Run 'rad init' first to initialize the repository.")
-	}
-
 	return nil
 }
 

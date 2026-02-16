@@ -983,6 +983,10 @@ func generateDeploymentCreateSteps() []WorkflowStep {
 		{
 			Name: "Configure cloud credentials",
 			ID:   "auth",
+			Env: map[string]string{
+				"AZURE_CLIENT_ID":   "${{ vars.AZURE_CLIENT_ID }}",
+				"AWS_IAM_ROLE_NAME": "${{ vars.AWS_IAM_ROLE_NAME }}",
+			},
 			Run: `# Detect provider from environment variables
 if [ -n "$AZURE_CLIENT_ID" ]; then
   echo "provider=azure" >> $GITHUB_OUTPUT
@@ -1110,6 +1114,10 @@ func generateDeploymentApplySteps() []WorkflowStep {
 		{
 			Name: "Configure cloud credentials",
 			ID:   "auth",
+			Env: map[string]string{
+				"AZURE_CLIENT_ID":   "${{ vars.AZURE_CLIENT_ID }}",
+				"AWS_IAM_ROLE_NAME": "${{ vars.AWS_IAM_ROLE_NAME }}",
+			},
 			Run: `# Detect provider from environment variables
 if [ -n "$AZURE_CLIENT_ID" ]; then
   echo "provider=azure" >> $GITHUB_OUTPUT
@@ -1231,6 +1239,10 @@ func generateDestroyStepsV2() []WorkflowStep {
 		{
 			Name: "Configure cloud credentials",
 			ID:   "auth",
+			Env: map[string]string{
+				"AZURE_CLIENT_ID":   "${{ vars.AZURE_CLIENT_ID }}",
+				"AWS_IAM_ROLE_NAME": "${{ vars.AWS_IAM_ROLE_NAME }}",
+			},
 			Run: `# Detect provider from environment variables
 if [ -n "$AZURE_CLIENT_ID" ]; then
   echo "provider=azure" >> $GITHUB_OUTPUT
@@ -1298,6 +1310,10 @@ func generateAuthTestStepsV2() []WorkflowStep {
 		{
 			Name: "Detect provider",
 			ID:   "provider",
+			Env: map[string]string{
+				"AZURE_CLIENT_ID":   "${{ vars.AZURE_CLIENT_ID }}",
+				"AWS_IAM_ROLE_NAME": "${{ vars.AWS_IAM_ROLE_NAME }}",
+			},
 			Run: `if [ -n "$AZURE_CLIENT_ID" ]; then
   echo "type=azure" >> $GITHUB_OUTPUT
 elif [ -n "$AWS_IAM_ROLE_NAME" ]; then

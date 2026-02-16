@@ -17,7 +17,7 @@
 
 ### Session 2026-02-15
 
-- Q: How should the CLI behave while a dispatched GitHub Action workflow runs? → A: CLI shows contextual message (e.g., "Creating deployment..."), then displays an animated progress indicator. User can press L to toggle real-time log streaming.
+- Q: How should the CLI behave while a dispatched GitHub Action workflow runs? → A: CLI shows contextual message (e.g., "Creating deployment..."), then displays an animated progress indicator with automatic step-level status updates showing each workflow step's progress.
 - Q: How should concurrent deployments to the same app/environment be locked? → A: GitHub Actions concurrency groups using the `concurrency:` key in workflow YAML scoped to app-env.
 - Q: How does `rad app delete` execute in GitHub mode? → A: Dispatches a GitHub Action workflow that runs destroy operations using stored deployment artifacts and cloud OIDC credentials, consistent with `rad deployment create`/`apply`.
 - Q: How is the commit hash resolved for `rad deployment create` and `rad deployment apply`? → A: Both default to the latest plan under `.radius/deploy/<APP>/<ENV>/`; user can specify `--git-commit <hash>` to target a specific commit.
@@ -60,7 +60,7 @@ A developer wants to use Radius with their existing GitHub repository. They run 
 
 **Acceptance Scenarios**:
 
-1. **Given** a cloned GitHub repository without Radius configuration, **When** the user runs `rad init --github`, **Then** the system creates `.radius/applications/` and `.radius/deploy/` directories (with `.gitkeep` files), generates GitHub Actions workflow files, uses the GitHub API to create a repository variable `RADIUS_RESOURCE_TYPES_MANIFEST` with the default value `https://github.com/zachcasper/radius-config/types.yaml`, updates `~/.rad/config.yaml` with a `github` kind workspace, commits changes with trailer `Radius-Action: init`, and pushes to the remote.
+1. **Given** a cloned GitHub repository without Radius configuration, **When** the user runs `rad init --github`, **Then** the system generates GitHub Actions workflow files, uses the GitHub API to create a repository variable `RADIUS_RESOURCE_TYPES_MANIFEST` with the default value `https://github.com/zachcasper/radius-config/types.yaml`, updates `~/.rad/config.yaml` with a `github` kind workspace, commits changes with trailer `Radius-Action: init`, and pushes to the remote.
 
 2. **Given** a cloned GitHub repository, **When** the user runs `rad init --github --resource-types-manifest https://github.com/myorg/radius-config/types.yaml`, **Then** the system sets `RADIUS_RESOURCE_TYPES_MANIFEST` to `https://github.com/myorg/radius-config/types.yaml`.
 
@@ -336,7 +336,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-012**: System MUST rename the workspace config property `default` to `current` for clarity.
 - **FR-013**: System MUST commit changes with `git add` and `git commit` including the trailer `Radius-Action: init`, then push to the remote with `git push`.
 - **FR-014**: System MUST NOT be interactive; all configuration comes from command-line flags.
-- **FR-014-A**: System MUST create empty directories `.radius/applications/` and `.radius/deploy/` for storing application definitions and deployment artifacts respectively. Each directory MUST contain a `.gitkeep` file to ensure the directories are tracked by Git.
+- **FR-014-A**: `rad init` MUST NOT create any `.radius/` directory or subdirectories, and MUST NOT use `.gitkeep` files. Directories are created on demand by the commands that need them: `rad app model` creates `.radius/applications/`, `rad deployment create` creates `.radius/deploy/`.
 
 #### CLI Command: rad environment create (replaces rad environment connect)
 
@@ -372,7 +372,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-030-A**: System MUST NOT store cloud secret keys locally; only OIDC-related identifiers are stored as GitHub Environment variables.
 - **FR-030-E**: After storing environment variables, `rad environment create` MUST dispatch a lightweight GitHub Action authentication test workflow that verifies OIDC federation works by authenticating to the cloud provider.
 - **FR-030-F**: The authentication test workflow MUST use the same GitHub Environment and OIDC credentials that deployment workflows will use.
-- **FR-030-G**: The CLI MUST display "Creating authentication test workflow..." followed by an animated progress indicator showing "Testing authentication to <provider>..." with `L` key support for real-time log streaming (consistent with FR-089-C through FR-089-G).
+- **FR-030-G**: The CLI MUST display "Creating authentication test workflow..." followed by an animated progress indicator showing "Testing authentication to <provider>..." with automatic workflow step status display (consistent with FR-089-C through FR-089-G).
 - **FR-030-H**: If the authentication test fails, the CLI MUST display a clear error identifying the likely OIDC misconfiguration and suggest remediation steps. The GitHub Environment and variables MUST remain in place so the user can fix and re-run verification.
 - **FR-030-I**: If the authentication test succeeds, the CLI MUST display a success message confirming the environment is ready for deployments.
 
@@ -415,6 +415,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-045-D**: `rad deployment create` MUST accept an optional `--git-commit` flag to scope the deployment to a specific commit hash instead of the current HEAD.
 - **FR-046**: The dispatched workflow MUST read environment configuration from GitHub Environment variables (e.g., `AZURE_SUBSCRIPTION_ID`, `AKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, `RADIUS_RECIPES_MANIFEST`).
 - **FR-047**: The dispatched workflow MUST commit the generated deployment plan (`deploy.yaml`) and artifact directories to `.radius/deploy/<APP>/<ENV>/<COMMIT_HASH>/` in the repository.
+- **FR-047-A**: `rad deployment create` MUST create the `.radius/deploy/` directory structure if it does not already exist.
 - **FR-048**: `rad deployment create` MUST only be available in GitHub mode. In Kubernetes mode, the system MUST return an error indicating this command is not available.
 
 #### CLI Command: rad deployment apply (GitHub mode only)
@@ -440,6 +441,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-067-C**: Resource types files (`.radius/types.yaml`) MUST NOT be used; the types manifest reference is stored as a GitHub repository variable.
 - **FR-068**: Application Definitions MUST be stored in `.radius/applications/<APP_NAME>.bicep`.
 - **FR-068-A**: System MUST provide `rad app model` command that creates a sample application definition file at `.radius/applications/todolist.bicep` with a `Radius.Core/applications` resource, a `Radius.Compute/containers` resource, and a `Radius.Data/postgreSqlDatabases` resource. This is a placeholder for future AI-assisted modeling functionality.
+- **FR-068-B**: `rad app model` MUST create the `.radius/applications/` directory if it does not already exist.
 - **FR-069**: Deployment plans and artifacts MUST be stored in `.radius/deploy/<APP_NAME>/<ENVIRONMENT_NAME>/<COMMIT_HASH>/`.
 - **FR-070**: Deployment plan file MUST be stored as `.radius/deploy/<APP_NAME>/<ENVIRONMENT_NAME>/<COMMIT_HASH>/deploy.yaml`.
 - **FR-071**: Workspaces MUST be stored in `~/.rad/config.yaml` with `current` property (renamed from `default`).
@@ -479,8 +481,8 @@ A developer or reviewer needs to understand what changes a deployment will make 
 
 - **FR-089-C**: When a CLI command dispatches a GitHub Action workflow, the CLI MUST display a contextual status message describing the action (e.g., "Creating authentication test workflow...", "Creating deployment workflow...", "Creating deployment...", "Testing authentication to azure...").
 - **FR-089-D**: After dispatching, the CLI MUST display an animated progress indicator (e.g., spinner) with a contextual status label (e.g., "Testing authentication to azure...", "Creating deployment...").
-- **FR-089-E**: While the animated progress indicator is active, the CLI MUST prompt the user that they can press the `L` key to toggle real-time log streaming from the GitHub Action workflow run.
-- **FR-089-F**: When the user presses `L`, the CLI MUST stream the workflow run logs to the terminal in real time (similar to `gh run watch`). Pressing `L` again MUST return to the animated progress indicator view.
+- **FR-089-E**: While the animated progress indicator is active, the CLI MUST automatically display the workflow step status below the spinner, showing each step with a status icon (`✓` success, `✗` failure, `⊘` skipped, `●` in progress, `○` pending). The step display MUST update on each poll cycle. The CLI MUST NOT provide a quit option (e.g., `q` key); the user MUST wait until the workflow completes with success or failure. For detailed logs, the user can click the workflow run URL displayed above the steps.
+- **FR-089-F**: The CLI MUST poll step status via `gh run view <id> --json jobs` every 2 seconds to provide real-time step-level progress for both in-progress and completed runs.
 - **FR-089-G**: The CLI MUST display the final workflow result (success or failure) with a summary when the workflow completes, regardless of whether log streaming was active.
 
 - **FR-089-A**: All GitHub Actions workflow runs MUST be named using the following convention:
@@ -531,7 +533,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-106-A**: In GitHub mode, `rad app delete` MUST dispatch a GitHub Action workflow that executes destroy operations using the stored deployment artifacts (e.g., `terraform destroy`) and OIDC credentials from the GitHub Environment.
 - **FR-106-B**: The destroy workflow MUST update the deployment plan (`deploy.yaml`) step statuses from `deployed` to `destroyed` upon successful destruction.
 - **FR-106-C**: The destroy workflow MUST delete captured resource files from `.radius/deploy/<APP>/<ENV>/<COMMIT_HASH>/<step>/resources/` after successful destruction.
-- **FR-106-D**: The CLI MUST display an animated progress indicator and support the `L` key for real-time log streaming, consistent with other workflow-dispatching commands (FR-089-C through FR-089-G).
+- **FR-106-D**: The CLI MUST display an animated progress indicator with automatic workflow step status display, consistent with other workflow-dispatching commands (FR-089-C through FR-089-G).
 - **FR-107**: If `--application` is omitted and multiple applications exist, the command MUST error with a message listing available applications.
 
 #### Secret Management

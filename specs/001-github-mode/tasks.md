@@ -64,12 +64,12 @@
 
 - [X] T013 [US1] Update pkg/cli/cmd/radinit/init.go — remove `--provider` and `--deployment-tool` flags; add error if those flags are passed (FR-001, FR-007)
 - [X] T014 [US1] Update pkg/cli/cmd/radinit/github.go — rewrite `Run()`:
-  1. Create `.radius/applications/` and `.radius/deploy/` directories with `.gitkeep` files (FR-014-A)
-  2. Call workflow generators from T010 to produce 4 workflow files under `.github/workflows/` (FR-112, FR-114)
-  3. Call `SetRepoVariable("RADIUS_RESOURCE_TYPES_MANIFEST", url)` with default or `--resource-types-manifest` value (FR-005, FR-006, FR-007)
-  4. Create/update `~/.rad/config.yaml` with `github` workspace (FR-011)
-  5. `git add`, `git commit` with `Radius-Action: init` trailer, `git push` (FR-013)
-  6. Verify `.radius/types.yaml`, `.radius/recipes.yaml`, and `.radius/env.*.yaml` are NOT created (FR-002, FR-003, FR-004)
+  1. Call workflow generators from T010 to produce 4 workflow files under `.github/workflows/` (FR-112, FR-114)
+  2. Call `SetRepoVariable("RADIUS_RESOURCE_TYPES_MANIFEST", url)` with default or `--resource-types-manifest` value (FR-005, FR-006, FR-007)
+  3. Create/update `~/.rad/config.yaml` with `github` workspace (FR-011)
+  4. `git add`, `git commit` with `Radius-Action: init` trailer, `git push` (FR-013)
+  5. Verify `.radius/types.yaml`, `.radius/recipes.yaml`, and `.radius/env.*.yaml` are NOT created (FR-002, FR-003, FR-004)
+  6. Do NOT create `.radius/applications/` or `.radius/deploy/` directories — these are created on demand by `rad app model` and `rad deployment create` (FR-014-A)
 - [X] T015 [US1] Update `Validate()` in pkg/cli/cmd/radinit/github.go — verify git repo (FR-008), GitHub remote (FR-009), `gh auth status` (FR-010); ensure non-interactive (FR-014)
 - [X] T016 [US1] Handle re-initialization: if `.radius/` already exists, warn and offer to reinitialize (US1 scenario 6)
 - [ ] T016-T [US1] Add unit tests for pkg/cli/cmd/radinit/github.go — test Validate() checks (git repo, remote, auth), Run() output (directory creation, workflow generation, commit), re-init warning, and verify FR-002/FR-003/FR-004 negative cases (no types.yaml, no recipes.yaml, no env files created)
@@ -110,7 +110,7 @@
 ### Implementation for User Story 3
 
 - [X] T022 [US3] Move pkg/cli/cmd/model/model.go under applicationCmd — rename from `rad model` to `rad app model`; update cmd/rad/cmd/root.go wiring from T012 (FR-068-A)
-- [X] T023 [US3] Update pkg/cli/cmd/model/model.go `Run()` — generate `.radius/applications/todolist.bicep` with `extension radius`, `Radius.Core/applications@2025-08-01-preview`, `Radius.Compute/containers@2025-08-01-preview`, `Radius.Data/postgreSqlDatabases@2025-08-01-preview` resources (FR-068-A, FR-090, FR-091, FR-092, spec appendix B.5)
+- [X] T023 [US3] Update pkg/cli/cmd/model/model.go `Run()` — create `.radius/applications/` directory if it doesn't exist (FR-068-B), then generate `.radius/applications/todolist.bicep` with `extension radius`, `Radius.Core/applications@2025-08-01-preview`, `Radius.Compute/containers@2025-08-01-preview`, `Radius.Data/postgreSqlDatabases@2025-08-01-preview` resources (FR-068-A, FR-090, FR-091, FR-092, spec appendix B.5)
 - [X] T024 [US3] Add `Validate()` checks — require initialized repository (`.radius/` exists); if existing file at target path, prompt to overwrite or choose different name (US3 scenarios 4, 5)
 - [ ] T024-T [US3] Add unit tests for rad app model — test Validate() and Run() including overwrite prompt
 
@@ -135,6 +135,7 @@
   - Auto-select environment if exactly one GitHub Environment (FR-043); error if ambiguous (FR-044)
   - Resolve commit hash: `--git-commit` or HEAD (FR-045-C, FR-045-D)
 - [X] T027 [US4] Implement `Run()` in pkg/cli/cmd/deployment/create/create.go:
+  - Create `.radius/deploy/` directory if it doesn't exist (FR-047-A)
   - Dispatch `radius-deployment-create.yml` workflow with application, environment, commit inputs (FR-045)
   - Show animated progress indicator via progress model from T009 (FR-089-C through FR-089-G)
   - Display final result (success: plan generated; failure: error details) (FR-089-G)

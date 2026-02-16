@@ -15,23 +15,6 @@ limitations under the License.
 */
 
 package model
-/*
-Copyright 2023 The Radius Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-package model
 
 import (
 	"os"
@@ -55,9 +38,9 @@ func Test_Validate(t *testing.T) {
 
 	testcases := []radcli.ValidateInput{
 		{
-			Name:          "model command with github workspace (requires .radius directory)",
+			Name:          "model command with github workspace",
 			Input:         []string{},
-			ExpectedValid: false, // Will fail because .radius directory doesn't exist
+			ExpectedValid: true,
 			ConfigHolder: framework.ConfigHolder{
 				ConfigFilePath: "",
 				Config:         configWithGitHubWorkspace,
@@ -107,18 +90,18 @@ func Test_Validate_GitHubWorkspaceRequired(t *testing.T) {
 	require.Equal(t, workspaces.KindKubernetes, runner.Workspace.Connection["kind"])
 }
 
-func Test_Validate_RadiusInitRequired(t *testing.T) {
+// Test_Validate_GitHubWorkspaceNoRadiusDir verifies that validation passes
+// even when .radius/ directory doesn't exist (it's created by Run, not required by Validate).
+func Test_Validate_GitHubWorkspaceNoRadiusDir(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Do NOT create .radius directory - simulating uninitialized state
-	// Change to temp directory
+	// Do NOT create .radius directory
 	origDir, err := os.Getwd()
 	require.NoError(t, err)
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 	defer func() { _ = os.Chdir(origDir) }()
 
-	// Test with valid GitHub workspace but missing .radius directory
 	runner := &Runner{
 		ConfigHolder: &framework.ConfigHolder{ConfigFilePath: "filePath"},
 		Workspace: &workspaces.Workspace{
@@ -134,7 +117,7 @@ func Test_Validate_RadiusInitRequired(t *testing.T) {
 	_, err = os.Stat(radiusDir)
 	require.True(t, os.IsNotExist(err))
 
-	// The workspace is GitHub, but .radius doesn't exist
+	// Validation should still pass — .radius/ is created during Run, not required by Validate
 	require.Equal(t, workspaces.KindGitHub, runner.Workspace.Connection["kind"])
 }
 

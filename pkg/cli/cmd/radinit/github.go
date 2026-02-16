@@ -109,35 +109,7 @@ func findGitRoot(startPath string) (string, error) {
 }
 
 // DefaultResourceTypesManifestURL is the default URL for the resource types manifest.
-const DefaultResourceTypesManifestURL = "https://raw.githubusercontent.com/radius-project/resource-types-contrib/main/types.yaml"
-
-// initializeRadiusDirectory creates the .radius/ directory structure.
-// FR-014-A: Creates applications/ and deploy/ subdirectories with .gitkeep files.
-func initializeRadiusDirectory(repoPath string) error {
-	radiusDir := filepath.Join(repoPath, ".radius")
-
-	// Create .radius directory
-	if err := os.MkdirAll(radiusDir, 0755); err != nil {
-		return fmt.Errorf("failed to create .radius directory: %w", err)
-	}
-
-	// Create subdirectories with .gitkeep files (FR-014-A)
-	// Only applications/ and deploy/ — no types.yaml, recipes.yaml, or env files
-	subdirs := []string{"applications", "deploy"}
-	for _, dir := range subdirs {
-		path := filepath.Join(radiusDir, dir)
-		if err := os.MkdirAll(path, 0755); err != nil {
-			return fmt.Errorf("failed to create %s directory: %w", dir, err)
-		}
-		// Create .gitkeep to ensure directory is tracked by Git
-		gitkeepPath := filepath.Join(path, ".gitkeep")
-		if err := os.WriteFile(gitkeepPath, []byte{}, 0644); err != nil {
-			return fmt.Errorf("failed to create .gitkeep in %s: %w", dir, err)
-		}
-	}
-
-	return nil
-}
+const DefaultResourceTypesManifestURL = "https://raw.githubusercontent.com/zachcasper/radius-config/refs/heads/main/types.yaml"
 
 // initializeGitHubWorkflows creates the .github/workflows/ directory
 // and generates the 4 workflow files for the two-phase deployment model.
@@ -182,16 +154,12 @@ func initializeGitHubWorkflows(repoPath string) error {
 	return nil
 }
 
-// commitRadiusInit commits all .radius/ files with the Radius-Action: init trailer.
-func commitRadiusInit(repoPath string) error {
+// commitRadiusInit commits workflow files with the Radius-Action: init trailer.
+// Returns true if a commit was created, false if there were no changes to commit.
+func commitRadiusInit(repoPath string) (bool, error) {
 	gitHelper, err := github.NewGitHelper(repoPath)
 	if err != nil {
-		return fmt.Errorf("failed to access git repository: %w", err)
-	}
-
-	// Stage .radius/ directory
-	if err := gitHelper.Add(".radius"); err != nil {
-		return fmt.Errorf("failed to stage .radius directory: %w", err)
+		return false, fmt.Errorf("failed to access git repository: %w", err)
 	}
 
 	// Stage .github/workflows/ directory
@@ -199,13 +167,13 @@ func commitRadiusInit(repoPath string) error {
 		// Non-fatal - workflows might not exist yet
 	}
 
-	// Create commit with Radius-Action trailer
-	_, err = gitHelper.CommitWithTrailer("Initialize Radius configuration", "init")
+	// Create commit with Radius-Action trailer (returns empty hash if nothing to commit)
+	hash, err := gitHelper.CommitWithTrailer("Initialize Radius configuration", "init")
 	if err != nil {
-		return fmt.Errorf("failed to create commit: %w", err)
+		return false, fmt.Errorf("failed to create commit: %w", err)
 	}
 
-	return nil
+	return hash != "", nil
 }
 
 // validateGitHubMode validates the GitHub mode flags and prerequisites.
@@ -240,11 +208,11 @@ func (r *Runner) runGitHubInit(ctx context.Context) error {
 
 	r.Output.LogInfo("Initializing Radius for GitHub repository: %s/%s", opts.Owner, opts.Repo)
 
-	// T016: Check for re-initialization — if .radius/ already exists, warn user
-	radiusDir := filepath.Join(opts.RepoPath, ".radius")
-	if _, err := os.Stat(radiusDir); err == nil {
+	// T016: Check for re-initialization — if workflow files already exist, warn user
+	workflowFile := filepath.Join(opts.RepoPath, ".github", "workflows", github.DeploymentCreateWorkflowFile)
+	if _, err := os.Stat(workflowFile); err == nil {
 		r.Output.LogInfo("")
-		r.Output.LogInfo("Warning: .radius/ directory already exists in this repository.")
+		r.Output.LogInfo("Warning: Radius workflow files already exist in this repository.")
 		r.Output.LogInfo("Reinitializing will overwrite existing workflow files.")
 		r.Output.LogInfo("")
 
@@ -258,41 +226,40 @@ func (r *Runner) runGitHubInit(ctx context.Context) error {
 		}
 	}
 
-	// Step 1: Create .radius/applications/ and .radius/deploy/ directories (FR-014-A)
-	r.Output.LogInfo("Creating .radius/ directory structure...")
-	if err := initializeRadiusDirectory(opts.RepoPath); err != nil {
-		return err
-	}
-
-	// Step 2: Generate 4 GitHub Actions workflow files (FR-112)
+	// Step 1: Generate 4 GitHub Actions workflow files (FR-112)
 	r.Output.LogInfo("Generating GitHub Actions workflows...")
 	if err := initializeGitHubWorkflows(opts.RepoPath); err != nil {
 		return err
 	}
 
-	// Step 3: Set RADIUS_RESOURCE_TYPES_MANIFEST repo variable (FR-005, FR-006)
+	// Step 2: Set RADIUS_RESOURCE_TYPES_MANIFEST repo variable (FR-005, FR-006)
 	r.Output.LogInfo("Setting repository variable RADIUS_RESOURCE_TYPES_MANIFEST...")
 	ghClient := github.NewClient()
 	if err := ghClient.SetRepoVariable("RADIUS_RESOURCE_TYPES_MANIFEST", opts.ResourceTypesManifest); err != nil {
 		return fmt.Errorf("failed to set RADIUS_RESOURCE_TYPES_MANIFEST: %w", err)
 	}
 
-	// Step 4: Commit and push (FR-013)
+	// Step 3: Commit and push (FR-013)
 	r.Output.LogInfo("Committing changes...")
-	if err := commitRadiusInit(opts.RepoPath); err != nil {
+	committed, err := commitRadiusInit(opts.RepoPath)
+	if err != nil {
 		return err
 	}
 
-	r.Output.LogInfo("Pushing to GitHub...")
-	gitHelper, err := github.NewGitHelper(opts.RepoPath)
-	if err != nil {
-		return fmt.Errorf("failed to access git repository: %w", err)
-	}
-	if err := gitHelper.Push(); err != nil {
-		return fmt.Errorf("failed to push changes: %w", err)
+	if committed {
+		r.Output.LogInfo("Pushing to GitHub...")
+		gitHelper, err := github.NewGitHelper(opts.RepoPath)
+		if err != nil {
+			return fmt.Errorf("failed to access git repository: %w", err)
+		}
+		if err := gitHelper.Push(); err != nil {
+			return fmt.Errorf("failed to push changes: %w", err)
+		}
+	} else {
+		r.Output.LogInfo("No changes to commit.")
 	}
 
-	// Step 5: Update local workspace config (FR-011)
+	// Step 4: Update local workspace config (FR-011)
 	r.Output.LogInfo("Updating workspace configuration...")
 	if err := r.updateGitHubWorkspace(ctx, opts); err != nil {
 		return err

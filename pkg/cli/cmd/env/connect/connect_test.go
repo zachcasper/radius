@@ -216,6 +216,7 @@ provider: {}
 		responses: map[string]string{
 			"az account show --output json": `{"tenantId": "tenant-123", "id": "sub-456"}`,
 			"az account list --output json": `[{"id": "sub-456", "name": "Test Subscription", "tenantId": "tenant-123", "state": "Enabled", "isDefault": true}]`,
+			"az ad app list --output json":  `[{"displayName": "TestApp", "appId": "client-id-123"}]`,
 		},
 	}
 	outputSink := &output.MockOutput{}
@@ -248,15 +249,10 @@ provider: {}
 		GetTextInput("Azure Resource Group Name", gomock.Any()).
 		Return("radius-rg", nil).Times(1)
 
-	// Create new app or use existing
+	// Select existing Azure AD application
 	mockPrompter.EXPECT().
-		GetListInput([]string{"Create new Azure AD application", "Use existing Azure AD application"}, "Azure AD Application").
-		Return("Use existing Azure AD application", nil).Times(1)
-
-	// Existing app client ID prompt
-	mockPrompter.EXPECT().
-		GetTextInput("Azure AD Application (Client) ID", gomock.Any()).
-		Return("client-id-123", nil).Times(1)
+		GetListInput([]string{"Create new Azure AD application", "TestApp (client-id-123)"}, "Select Azure AD Application").
+		Return("TestApp (client-id-123)", nil).Times(1)
 
 	// Change to temp directory
 	origDir, err := os.Getwd()
@@ -284,10 +280,10 @@ provider: {}
 
 	err = runner.Run(context.Background())
 
-	// We expect an error about git operations since we don't have a real git repo
+	// We expect an error about setting GitHub secrets since we don't have a real gh CLI
 	// but we should get past the Azure config phase
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "git")
+	require.Contains(t, err.Error(), "AZURE_CLIENT_ID")
 }
 
 func Test_parseAzureSubscriptions(t *testing.T) {
