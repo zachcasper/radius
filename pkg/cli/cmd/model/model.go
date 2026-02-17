@@ -44,6 +44,8 @@ const (
 
 // todolistBicepTemplate is the sample application model template
 const todolistBicepTemplate = `extension radius
+extension radius-compute-containers
+extension radius-data-postgresqldatabases
 
 param environment string 
 
