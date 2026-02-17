@@ -74,7 +74,7 @@ pkg/cli/github/client.go                     # Add DispatchAndWatch, SetEnvironm
 pkg/cli/github/git.go                        # Add IsDirty (exists), HasUnpushedCommits, GetHeadCommitHash
 pkg/cli/github/workflows.go                  # Update workflow generators for two-phase model (create, apply, destroy, auth-test)
 pkg/cli/cmd/radinit/init.go                  # Remove --provider, --deployment-tool; simplify for GitHub mode
-pkg/cli/cmd/radinit/github.go               # Update init flow: directory structure, workflow generation, set RESOURCE_TYPES_REPO, git commit+push
+pkg/cli/cmd/radinit/github.go               # Update init flow: directory structure, workflow generation, set RADIUS_RESOURCE_TYPES_REPO, git commit+push
 pkg/cli/cmd/env/create/create.go             # Branch on workspace kind: GitHub mode → GitHub Environments API + OIDC
 pkg/cli/cmd/env/delete/delete.go             # Branch on workspace kind: GitHub mode → delete GitHub Environment + OIDC cleanup prompt
 pkg/cli/cmd/deploy/deploy.go                 # Add GitHub mode guard (error if GitHub workspace)

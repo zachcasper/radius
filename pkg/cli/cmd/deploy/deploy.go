@@ -617,7 +617,10 @@ func (r *Runner) FetchEnvironment(ctx context.Context, envNameOrID string) (*Env
 
 		radiusCoreEnv, err := r.getRadiusCoreEnvironment(ctx, radCoreEnvName)
 		if err != nil {
-			if !clients.Is404Error(err) {
+			// Treat both 404 and "resource type not found" (BadRequest) as non-fatal.
+			// The Radius.Core provider may not be registered if the control plane is an
+			// older version that only supports Applications.Core.
+			if !clients.Is404Error(err) && !isResourceTypeNotFoundError(err) {
 				return nil, err
 			}
 		}
@@ -655,6 +658,17 @@ func (r *Runner) FetchEnvironment(ctx context.Context, envNameOrID string) (*Env
 	}
 
 	return result, nil
+}
+
+// isResourceTypeNotFoundError checks if the error is a "resource type not found"
+// BadRequest response from UCP. This occurs when the resource provider (e.g. Radius.Core)
+// is not registered, which is expected for older control planes that only support
+// Applications.Core.
+func isResourceTypeNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "resource type") && strings.Contains(err.Error(), "not found")
 }
 
 // setupCloudProviders sets up AWS and Azure providers based on environment properties

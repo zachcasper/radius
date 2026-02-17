@@ -232,11 +232,11 @@ func (r *Runner) runGitHubInit(ctx context.Context) error {
 		return err
 	}
 
-	// Step 2: Set RESOURCE_TYPES_REPO repo variable (FR-005, FR-006)
-	r.Output.LogInfo("Setting repository variable RESOURCE_TYPES_REPO...")
+	// Step 2: Set RADIUS_RESOURCE_TYPES_REPO repo variable (FR-005, FR-006)
+	r.Output.LogInfo("Setting repository variable RADIUS_RESOURCE_TYPES_REPO...")
 	ghClient := github.NewClient()
-	if err := ghClient.SetRepoVariable("RESOURCE_TYPES_REPO", opts.ResourceTypesRepo); err != nil {
-		return fmt.Errorf("failed to set RESOURCE_TYPES_REPO: %w", err)
+	if err := ghClient.SetRepoVariable("RADIUS_RESOURCE_TYPES_REPO", opts.ResourceTypesRepo); err != nil {
+		return fmt.Errorf("failed to set RADIUS_RESOURCE_TYPES_REPO: %w", err)
 	}
 
 	// Step 3: Commit and push (FR-013)

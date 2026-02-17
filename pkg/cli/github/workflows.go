@@ -289,6 +289,33 @@ func generateDeploySteps(provider string) []WorkflowStep {
 				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
 			},
 		},
+		// D053: Wait for control plane readiness then create resource group.
+		// UCP registers built-in providers asynchronously after pod start;
+		// rad group create will fail until that completes.
+		{
+			Name: "Wait for Radius and create resource group",
+			Run: `echo "Waiting for Radius control plane to be ready..."
+for i in $(seq 1 30); do
+  if rad group create github 2>/dev/null; then
+    echo "Radius control plane is ready, resource group created."
+    exit 0
+  fi
+  echo "Control plane not ready yet, retrying in 5s... ($i/30)"
+  sleep 5
+done
+echo "Timed out waiting for Radius control plane"
+exit 1`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		{
+			Name: "Create environment",
+			Run:  "rad env create ${{ github.event.inputs.environment || 'default' }} --group github",
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
 	}
 
 	// Add cloud-specific authentication
@@ -316,7 +343,7 @@ func generateDeploySteps(provider string) []WorkflowStep {
 	// Add deployment step
 	steps = append(steps, WorkflowStep{
 		Name: "Run deployment",
-		Run:  "cd app && rad deploy .radius/model/*.bicep",
+		Run:  "cd app && rad deploy .radius/model/*.bicep --group github",
 		Env: map[string]string{
 			"KUBECONFIG": "/tmp/kubeconfig.yaml",
 		},
@@ -330,7 +357,7 @@ git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git add .radius/deploy/
 git commit -m "Record deployment results" --trailer "Radius-Action: deploy" || true
-git push`,
+git push origin HEAD:${{ github.ref_name }}`,
 	})
 
 	return steps
@@ -388,6 +415,33 @@ func generateDestroySteps(provider string) []WorkflowStep {
 				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
 			},
 		},
+		// D053: Wait for control plane readiness then create resource group.
+		// UCP registers built-in providers asynchronously after pod start;
+		// rad group create will fail until that completes.
+		{
+			Name: "Wait for Radius and create resource group",
+			Run: `echo "Waiting for Radius control plane to be ready..."
+for i in $(seq 1 30); do
+  if rad group create github 2>/dev/null; then
+    echo "Radius control plane is ready, resource group created."
+    exit 0
+  fi
+  echo "Control plane not ready yet, retrying in 5s... ($i/30)"
+  sleep 5
+done
+echo "Timed out waiting for Radius control plane"
+exit 1`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		{
+			Name: "Create environment",
+			Run:  "rad env create ${{ github.event.inputs.environment || 'default' }} --group github",
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
 	}
 
 	// Add cloud-specific authentication (same as deploy)
@@ -415,7 +469,7 @@ func generateDestroySteps(provider string) []WorkflowStep {
 	// Add destroy step
 	steps = append(steps, WorkflowStep{
 		Name: "Run destruction",
-		Run:  "cd app && rad destroy .radius/model/*.bicep",
+		Run:  "cd app && rad destroy .radius/model/*.bicep --group github",
 		Env: map[string]string{
 			"KUBECONFIG": "/tmp/kubeconfig.yaml",
 		},
@@ -429,7 +483,7 @@ git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git add .radius/deploy/
 git commit -m "Record destruction results" --trailer "Radius-Action: destroy" || true
-git push`,
+git push origin HEAD:${{ github.ref_name }}`,
 	})
 
 	return steps
@@ -487,6 +541,33 @@ func generatePlanSteps(provider string) []WorkflowStep {
 				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
 			},
 		},
+		// D053: Wait for control plane readiness then create resource group.
+		// UCP registers built-in providers asynchronously after pod start;
+		// rad group create will fail until that completes.
+		{
+			Name: "Wait for Radius and create resource group",
+			Run: `echo "Waiting for Radius control plane to be ready..."
+for i in $(seq 1 30); do
+  if rad group create github 2>/dev/null; then
+    echo "Radius control plane is ready, resource group created."
+    exit 0
+  fi
+  echo "Control plane not ready yet, retrying in 5s... ($i/30)"
+  sleep 5
+done
+echo "Timed out waiting for Radius control plane"
+exit 1`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		{
+			Name: "Create environment",
+			Run:  "rad env create ${{ github.event.inputs.environment }} --group github",
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
 	}
 
 	// Add cloud-specific authentication
@@ -515,7 +596,7 @@ func generatePlanSteps(provider string) []WorkflowStep {
 	// Note: rad deploy --plan generates a plan without executing deployment
 	steps = append(steps, WorkflowStep{
 		Name: "Generate deployment plan",
-		Run:  "cd app && rad deploy .radius/model/${{ github.event.inputs.application }}.bicep --plan --environment ${{ github.event.inputs.environment }} --application \"${{ github.event.inputs.application }}\" --output .radius/plan/",
+		Run:  "cd app && rad deploy .radius/model/${{ github.event.inputs.application }}.bicep --plan --environment ${{ github.event.inputs.environment }} --application \"${{ github.event.inputs.application }}\" --group github --output .radius/plan/",
 		Env: map[string]string{
 			"KUBECONFIG": "/tmp/kubeconfig.yaml",
 		},
@@ -956,11 +1037,11 @@ func generateDeploymentCreateSteps() []WorkflowStep {
 		{
 			Name: "Clone resource types repository",
 			Env: map[string]string{
-				"RESOURCE_TYPES_REPO": "${{ vars.RESOURCE_TYPES_REPO }}",
+				"RADIUS_RESOURCE_TYPES_REPO": "${{ vars.RADIUS_RESOURCE_TYPES_REPO }}",
 			},
-			Run: `# Parse RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
-REPO_PATH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
-BRANCH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
+			Run: `# Parse RADIUS_RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
+REPO_PATH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
+BRANCH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
 
 git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
 
@@ -995,7 +1076,27 @@ cp resource-types/default-config/*.tgz app/`,
 				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
 			},
 		},
-		// Step 10: Register resource types from types.yaml
+		// Step 10: Wait for control plane readiness then create resource group.
+		// D053: UCP registers built-in providers asynchronously after pod start;
+		// rad group create will fail until that completes.
+		{
+			Name: "Wait for Radius and create resource group",
+			Run: `echo "Waiting for Radius control plane to be ready..."
+for i in $(seq 1 30); do
+  if rad group create github 2>/dev/null; then
+    echo "Radius control plane is ready, resource group created."
+    exit 0
+  fi
+  echo "Control plane not ready yet, retrying in 5s... ($i/30)"
+  sleep 5
+done
+echo "Timed out waiting for Radius control plane"
+exit 1`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// Step 11: Register resource types from types.yaml
 		// FR-092-C: Read types.yaml and register each resource type in the control plane
 		{
 			Name: "Register resource types",
@@ -1008,7 +1109,18 @@ done`,
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
 		},
-		// Step 11: Cloud authentication (reads from GitHub Environment variables)
+		// Step 12: Create environment
+		// Environment is created in the Radius control plane using the GitHub Environment name.
+		// This bridges the GitHub Environment (which holds cloud credentials and config)
+		// with a Radius environment (which the control plane needs for deployment).
+		{
+			Name: "Create environment",
+			Run:  "rad env create ${{ inputs.environment }} --group github",
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// Step 13: Cloud authentication (reads from GitHub Environment variables)
 		// The workflow uses the GitHub Environment specified in the job,
 		// so environment variables are automatically available.
 		{
@@ -1061,6 +1173,7 @@ mkdir -p "$PLAN_DIR"
 rad deploy ".radius/applications/${{ inputs.application }}.bicep" \
   --application "${{ inputs.application }}" \
   --environment "${{ inputs.environment }}" \
+  --group github \
   --plan \
   --output "$PLAN_DIR"`,
 			Env: map[string]string{
@@ -1076,7 +1189,7 @@ git config user.email "github-actions[bot]@users.noreply.github.com"
 git add ".radius/deploy/${{ inputs.application }}/${{ inputs.environment }}/${{ inputs.commit }}/"
 git commit -m "Deployment plan for ${{ inputs.application }} in ${{ inputs.environment }} at ${{ inputs.commit }}" \
   --trailer "Radius-Action: deployment-create"
-git push`,
+git push origin HEAD:${{ github.ref_name }}`,
 		},
 	}
 }
@@ -1120,11 +1233,11 @@ func generateDeploymentApplySteps() []WorkflowStep {
 		{
 			Name: "Clone resource types repository",
 			Env: map[string]string{
-				"RESOURCE_TYPES_REPO": "${{ vars.RESOURCE_TYPES_REPO }}",
+				"RADIUS_RESOURCE_TYPES_REPO": "${{ vars.RADIUS_RESOURCE_TYPES_REPO }}",
 			},
-			Run: `# Parse RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
-REPO_PATH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
-BRANCH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
+			Run: `# Parse RADIUS_RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
+REPO_PATH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
+BRANCH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
 
 git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
 
@@ -1159,7 +1272,27 @@ cp resource-types/default-config/*.tgz app/`,
 				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
 			},
 		},
-		// Step 10: Register resource types from types.yaml
+		// Step 10: Wait for control plane readiness then create resource group.
+		// D053: UCP registers built-in providers asynchronously after pod start;
+		// rad group create will fail until that completes.
+		{
+			Name: "Wait for Radius and create resource group",
+			Run: `echo "Waiting for Radius control plane to be ready..."
+for i in $(seq 1 30); do
+  if rad group create github 2>/dev/null; then
+    echo "Radius control plane is ready, resource group created."
+    exit 0
+  fi
+  echo "Control plane not ready yet, retrying in 5s... ($i/30)"
+  sleep 5
+done
+echo "Timed out waiting for Radius control plane"
+exit 1`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// Step 11: Register resource types from types.yaml
 		// FR-092-C: Read types.yaml and register each resource type in the control plane
 		{
 			Name: "Register resource types",
@@ -1172,7 +1305,18 @@ done`,
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
 		},
-		// Step 11: Cloud authentication
+		// Step 12: Create environment
+		// Environment is created in the Radius control plane using the GitHub Environment name.
+		// This bridges the GitHub Environment (which holds cloud credentials and config)
+		// with a Radius environment (which the control plane needs for deployment).
+		{
+			Name: "Create environment",
+			Run:  "rad env create ${{ inputs.environment }} --group github",
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// Step 13: Cloud authentication
 		{
 			Name: "Configure cloud credentials",
 			ID:   "auth",
@@ -1225,6 +1369,7 @@ fi
 rad deploy ".radius/applications/${{ inputs.application }}.bicep" \
   --application "${{ inputs.application }}" \
   --environment "${{ inputs.environment }}" \
+  --group github \
   --apply "$PLAN_DIR"`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
@@ -1242,7 +1387,7 @@ git config user.email "github-actions[bot]@users.noreply.github.com"
 git add "$PLAN_DIR/"
 git commit -m "Deployment results for ${{ inputs.application }} in ${{ inputs.environment }} at ${{ inputs.commit }}" \
   --trailer "Radius-Action: deployment-apply" || true
-git push`,
+git push origin HEAD:${{ github.ref_name }}`,
 		},
 	}
 }
@@ -1282,11 +1427,11 @@ func generateDestroyStepsV2() []WorkflowStep {
 		{
 			Name: "Clone resource types repository",
 			Env: map[string]string{
-				"RESOURCE_TYPES_REPO": "${{ vars.RESOURCE_TYPES_REPO }}",
+				"RADIUS_RESOURCE_TYPES_REPO": "${{ vars.RADIUS_RESOURCE_TYPES_REPO }}",
 			},
-			Run: `# Parse RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
-REPO_PATH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
-BRANCH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
+			Run: `# Parse RADIUS_RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
+REPO_PATH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
+BRANCH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
 
 git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
 
@@ -1316,6 +1461,26 @@ cp resource-types/default-config/*.tgz app/`,
 				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
 			},
 		},
+		// D053: Wait for control plane readiness then create resource group.
+		// UCP registers built-in providers asynchronously after pod start;
+		// rad group create will fail until that completes.
+		{
+			Name: "Wait for Radius and create resource group",
+			Run: `echo "Waiting for Radius control plane to be ready..."
+for i in $(seq 1 30); do
+  if rad group create github 2>/dev/null; then
+    echo "Radius control plane is ready, resource group created."
+    exit 0
+  fi
+  echo "Control plane not ready yet, retrying in 5s... ($i/30)"
+  sleep 5
+done
+echo "Timed out waiting for Radius control plane"
+exit 1`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
 		// Register resource types from types.yaml
 		// FR-092-C: Read types.yaml and register each resource type in the control plane
 		{
@@ -1325,6 +1490,17 @@ for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
   echo "Registering resource type from $def_file..."
   rad resource-type create --from-file "$def_file"
 done`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// Create environment
+		// Environment is created in the Radius control plane using the GitHub Environment name.
+		// This bridges the GitHub Environment (which holds cloud credentials and config)
+		// with a Radius environment (which the control plane needs for deployment).
+		{
+			Name: "Create environment",
+			Run:  "rad env create ${{ inputs.environment }} --group github",
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
@@ -1371,6 +1547,7 @@ fi`,
 			Run: `cd app
 rad app delete "${{ inputs.application }}" \
   --environment "${{ inputs.environment }}" \
+  --group github \
   --yes`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
@@ -1388,7 +1565,7 @@ git config user.email "github-actions[bot]@users.noreply.github.com"
 git add "$DEPLOY_DIR/" 2>/dev/null || true
 git commit -m "Destroy ${{ inputs.application }} from ${{ inputs.environment }}" \
   --trailer "Radius-Action: destroy" || true
-git push`,
+git push origin HEAD:${{ github.ref_name }}`,
 		},
 	}
 }

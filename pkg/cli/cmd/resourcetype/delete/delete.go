@@ -101,7 +101,7 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 
 	// FR-073: GitHub mode uses manifest-based resource types; delete is not supported.
 	if workspace.IsGitHubWorkspace() {
-		return clierrors.Message("Resource type deletion is not supported in GitHub mode. Resource types are managed through the RESOURCE_TYPES_REPO.")
+		return clierrors.Message("Resource type deletion is not supported in GitHub mode. Resource types are managed through the RADIUS_RESOURCE_TYPES_REPO.")
 	}
 
 	format, err := cli.RequireOutput(cmd)

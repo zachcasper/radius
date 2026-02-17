@@ -703,3 +703,30 @@ Each defect should include:
 - **Resolution**: FIXED — Removed the `.radius/` directory existence check from `Validate()`. The workspace-kind validation (lines 144-148) is sufficient. Updated model tests to reflect that validation passes without `.radius/` directory.
 - **Files Changed**: `pkg/cli/cmd/model/model.go`, `pkg/cli/cmd/model/model_test.go`
 - **Spec Impact**: None.
+
+### D053: `rad deploy` fails — no resource group or environment in ephemeral k3d cluster ✅ FIXED
+- **Phase/Task**: Phase 4 (E2E testing)
+- **Category**: Bug
+- **Description**: Workflow `rad deploy` fails with "resource type 'Applications.Core/environments' not found" then "The environment 'dev' does not exist". Two issues: (1) The ephemeral k3d cluster has no resource groups or environments. (2) UCP registers built-in providers (like `Applications.Core`) asynchronously after pod start — `rad group create` and `rad env create` fail if they run before registration completes. In GitHub mode, the environment is defined in GitHub (as a GitHub Environment with cloud credentials/config), but the Radius control plane still needs a corresponding Radius environment resource created from the GitHub Environment name.
+- **Root Cause**: Missing workflow steps to create the resource group and environment. Race condition: UCP's async initializer hadn't finished registering built-in providers by the time `rad group create` ran. Also, `RequireScope()` falls back to `resourceGroups/default` but the resource group is named `github`, so `--group github` was needed on all `rad deploy`/`rad app delete` commands.
+- **Resolution**: FIXED — Added "Wait for Radius and create resource group" step that retries `rad group create github` in a polling loop (30 attempts, 5s intervals) until the control plane is ready. Added "Create environment" step (`rad env create <env> --group github`) that bridges the GitHub Environment name to a Radius environment in the control plane. Applied to all 6 workflow step generators (3 V1, 3 V2). Added `--group github` flag to all `rad deploy` and `rad app delete` commands.
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: None.
+
+### D054: `git push` fails in detached HEAD state during workflow commit steps ✅ FIXED
+- **Phase/Task**: Phase 4 (E2E testing)
+- **Category**: Bug
+- **Description**: After `rad deploy --plan` generates a deployment plan and commits results, the `git push` step fails with "fatal: You are not currently on a branch." The `actions/checkout@v4` action checks out a specific commit SHA (either `${{ github.sha }}` default or `${{ inputs.commit }}` in V2), leaving Git in detached HEAD state. A bare `git push` has no upstream branch to push to.
+- **Root Cause**: All 5 commit/push workflow steps (V1 deploy, V1 destroy, V2 deployment-create, V2 deployment-apply, V2 destroy) used bare `git push` which requires a tracking branch. The checkout step puts the working directory in detached HEAD state by checking out a commit SHA, not a branch ref.
+- **Resolution**: FIXED — Changed all 5 bare `git push` commands to `git push origin HEAD:${{ github.ref_name }}`, which explicitly pushes the current HEAD to the branch that triggered the workflow. The V1 plan generator was already correct (it creates a new branch with `git push --set-upstream origin "$BRANCH_NAME"`).
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: None.
+
+### D055: `rad deploy` fails with "resource type Radius.Core/environments not found" ✅ FIXED
+- **Phase/Task**: Phase 4 (E2E testing)
+- **Category**: Bug
+- **Description**: `rad deploy --environment dev --group github` fails with `BadRequest: resource type "Radius.Core/environments" not found`. The environment was created successfully as `Applications.Core/environments/dev` by `rad env create`, but `rad deploy`'s `FetchEnvironment()` performs a dual-lookup against both `Applications.Core` and `Radius.Core` providers. The `Radius.Core` lookup returns a `BadRequest` (not 404) when the provider isn't registered, and the error handling treated any non-404 error as fatal — aborting even though the `Applications.Core` lookup had already succeeded.
+- **Root Cause**: `FetchEnvironment()` in `deploy.go` only checked `clients.Is404Error(err)` for the `Radius.Core` lookup. A `BadRequest` response with "resource type not found" is not a 404, so it was treated as a fatal error. The `Radius.Core` provider may not be registered in control planes that only support `Applications.Core` (v20231001preview).
+- **Resolution**: FIXED — Added `isResourceTypeNotFoundError()` helper that checks if the error message contains "resource type" and "not found". The `Radius.Core` lookup in `FetchEnvironment()` now treats both 404 and "resource type not found" errors as non-fatal, falling through to use the `Applications.Core` environment.
+- **Files Changed**: `pkg/cli/cmd/deploy/deploy.go`
+- **Spec Impact**: None.
