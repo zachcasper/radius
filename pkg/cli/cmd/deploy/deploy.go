@@ -914,25 +914,39 @@ type TemplateResource struct {
 	Properties map[string]any
 }
 
-// extractTemplateResources extracts resources from a compiled Bicep template
+// extractTemplateResources extracts resources from a compiled Bicep template.
+// Bicep outputs ARM templates using the symbolic name format where "resources"
+// is a map keyed by symbolic name, not an array.
 func extractTemplateResources(template map[string]any) ([]TemplateResource, error) {
-	resources, ok := template["resources"].([]any)
+	resourcesMap, ok := template["resources"].(map[string]any)
 	if !ok {
 		return nil, nil
 	}
 
-	result := make([]TemplateResource, 0, len(resources))
-	for _, r := range resources {
+	result := make([]TemplateResource, 0, len(resourcesMap))
+	for symbolicName, r := range resourcesMap {
 		res, ok := r.(map[string]any)
 		if !ok {
 			continue
 		}
 
-		name, _ := res["name"].(string)
 		resType, _ := res["type"].(string)
-		properties, _ := res["properties"].(map[string]any)
 
-		if name != "" && resType != "" {
+		// In symbolic name format, "name" is inside the "properties" wrapper
+		var name string
+		var properties map[string]any
+		if props, ok := res["properties"].(map[string]any); ok {
+			name, _ = props["name"].(string)
+			// The actual resource properties are nested inside properties.properties
+			properties, _ = props["properties"].(map[string]any)
+		}
+
+		// Fall back to the symbolic name if no explicit name was found
+		if name == "" {
+			name = symbolicName
+		}
+
+		if resType != "" {
 			result = append(result, TemplateResource{
 				Name:       name,
 				Type:       resType,

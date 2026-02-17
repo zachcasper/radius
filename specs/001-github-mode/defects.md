@@ -730,3 +730,12 @@ Each defect should include:
 - **Resolution**: FIXED — Changed the `Radius.Core` environment lookup in `FetchEnvironment()` to treat ALL errors as non-fatal. If the lookup fails for any reason, it's silently skipped and the `Applications.Core` result (if available) is used instead.
 - **Files Changed**: `pkg/cli/cmd/deploy/deploy.go`
 - **Spec Impact**: None.
+
+### D056: `rad deploy --plan` generates empty plan (0 resources) ✅ FIXED
+- **Phase/Task**: Phase 4 (E2E testing)
+- **Category**: Bug
+- **Description**: `rad deploy --plan` generates a plan.yaml with `steps: []` and `totalSteps: 0` even though the Bicep template compiles successfully and contains resources (`Radius.Compute/containers`, `Radius.Data/postgreSqlDatabases`).
+- **Root Cause**: `extractTemplateResources()` asserted `template["resources"].([]any)` (array), but Bicep outputs ARM templates in the **symbolic name format** where `"resources"` is a `map[string]any` (object keyed by symbolic name), not an array. The type assertion silently failed, returning nil/0 resources.
+- **Resolution**: FIXED — Changed `extractTemplateResources()` to assert `template["resources"].(map[string]any)` and iterate over map values. Also updated resource name extraction to read from `properties.name` (nested in the symbolic name format) with a fallback to the symbolic name key.
+- **Files Changed**: `pkg/cli/cmd/deploy/deploy.go`
+- **Spec Impact**: None.
