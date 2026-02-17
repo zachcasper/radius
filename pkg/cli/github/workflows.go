@@ -357,6 +357,8 @@ git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git add .radius/deploy/
 git commit -m "Record deployment results" --trailer "Radius-Action: deploy" || true
+git fetch origin ${{ github.ref_name }}
+git rebase FETCH_HEAD
 git push origin HEAD:${{ github.ref_name }}`,
 	})
 
@@ -483,6 +485,8 @@ git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git add .radius/deploy/
 git commit -m "Record destruction results" --trailer "Radius-Action: destroy" || true
+git fetch origin ${{ github.ref_name }}
+git rebase FETCH_HEAD
 git push origin HEAD:${{ github.ref_name }}`,
 	})
 
@@ -1189,6 +1193,8 @@ git config user.email "github-actions[bot]@users.noreply.github.com"
 git add ".radius/deploy/${{ inputs.application }}/${{ inputs.environment }}/${{ inputs.commit }}/"
 git commit -m "Deployment plan for ${{ inputs.application }} in ${{ inputs.environment }} at ${{ inputs.commit }}" \
   --trailer "Radius-Action: deployment-create"
+git fetch origin ${{ github.ref_name }}
+git rebase FETCH_HEAD
 git push origin HEAD:${{ github.ref_name }}`,
 		},
 	}
@@ -1387,6 +1393,8 @@ git config user.email "github-actions[bot]@users.noreply.github.com"
 git add "$PLAN_DIR/"
 git commit -m "Deployment results for ${{ inputs.application }} in ${{ inputs.environment }} at ${{ inputs.commit }}" \
   --trailer "Radius-Action: deployment-apply" || true
+git fetch origin ${{ github.ref_name }}
+git rebase FETCH_HEAD
 git push origin HEAD:${{ github.ref_name }}`,
 		},
 	}
@@ -1565,6 +1573,8 @@ git config user.email "github-actions[bot]@users.noreply.github.com"
 git add "$DEPLOY_DIR/" 2>/dev/null || true
 git commit -m "Destroy ${{ inputs.application }} from ${{ inputs.environment }}" \
   --trailer "Radius-Action: destroy" || true
+git fetch origin ${{ github.ref_name }}
+git rebase FETCH_HEAD
 git push origin HEAD:${{ github.ref_name }}`,
 		},
 	}

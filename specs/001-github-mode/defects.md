@@ -739,3 +739,12 @@ Each defect should include:
 - **Resolution**: FIXED — Changed `extractTemplateResources()` to assert `template["resources"].(map[string]any)` and iterate over map values. Also updated resource name extraction to read from `properties.name` (nested in the symbolic name format) with a fallback to the symbolic name key.
 - **Files Changed**: `pkg/cli/cmd/deploy/deploy.go`
 - **Spec Impact**: None.
+
+### D057: `git push` rejected — remote branch has newer commits ✅ FIXED
+- **Phase/Task**: Phase 4 (E2E testing)
+- **Category**: Bug
+- **Description**: `git push origin HEAD:main` fails with "Updates were rejected because the remote contains work that you do not have locally." The workflow checks out a specific commit SHA (detached HEAD), makes a new commit, but the remote branch has advanced since that commit (e.g., from a previous workflow run). The push is a non-fast-forward and gets rejected.
+- **Root Cause**: The workflow commit/push steps didn't incorporate remote changes before pushing. On detached HEAD, there's no tracking branch to pull from, so `git push` fails when the remote has diverged.
+- **Resolution**: FIXED — Added `git fetch origin ${{ github.ref_name }}` and `git rebase FETCH_HEAD` before `git push origin HEAD:${{ github.ref_name }}` in all 5 commit/push steps. This rebases the local commit on top of any remote changes before pushing.
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: None.
