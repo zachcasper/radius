@@ -123,6 +123,13 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 		return clierrors.Message("Recipe registration is not supported in GitHub mode. Manage recipes by editing the recipes manifest file directly.")
 	}
 
+	// Resolve the workspace scope from the --group flag or workspace config.
+	// This ensures the environment lookup uses the correct resource group path.
+	r.Workspace.Scope, err = cli.RequireScope(cmd, *r.Workspace)
+	if err != nil {
+		return err
+	}
+
 	environment, err := cli.RequireEnvironmentName(cmd, args, *workspace)
 	if err != nil {
 		return err
