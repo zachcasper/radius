@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://radius.dev/schemas/github-mode/github-environment.json",
+  "title": "Radius GitHub Environment Variables",
+  "description": "Schema for GitHub Environment variables used by Radius on GitHub mode. These are stored as GitHub Environment-scoped variables (not local files). This schema defines the expected variable names and value formats per cloud provider.",
+  "type": "object",
+  "required": ["name", "provider"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "GitHub Environment name (e.g., dev, staging, prod)",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["aws", "azure"],
+      "description": "Cloud provider for this environment"
+    }
+  },
+  "oneOf": [
+    {
+      "title": "Azure Environment Variables",
+      "properties": {
+        "provider": { "const": "azure" },
+        "variables": {
+          "type": "object",
+          "required": [
+            "AZURE_SUBSCRIPTION_ID",
+            "AZURE_RESOURCE_GROUP_NAME",
+            "AKS_CLUSTER_NAME",
+            "KUBERNETES_NAMESPACE",
+            "AZURE_TENANT_ID",
+            "AZURE_CLIENT_ID",
+            "RADIUS_RECIPES_MANIFEST"
+          ],
+          "properties": {
+            "AZURE_SUBSCRIPTION_ID": {
+              "type": "string",
+              "description": "Azure subscription ID",
+              "format": "uuid"
+            },
+            "AZURE_RESOURCE_GROUP_NAME": {
+              "type": "string",
+              "description": "Azure resource group name"
+            },
+            "AKS_CLUSTER_NAME": {
+              "type": "string",
+              "description": "AKS cluster name"
+            },
+            "KUBERNETES_NAMESPACE": {
+              "type": "string",
+              "description": "Kubernetes namespace",
+              "default": "default"
+            },
+            "AZURE_TENANT_ID": {
+              "type": "string",
+              "description": "Azure AD tenant ID",
+              "format": "uuid"
+            },
+            "AZURE_CLIENT_ID": {
+              "type": "string",
+              "description": "Azure AD application (client) ID for OIDC",
+              "format": "uuid"
+            },
+            "RADIUS_RECIPES_MANIFEST": {
+              "type": "string",
+              "description": "URL to recipes manifest for this environment",
+              "format": "uri"
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "AWS Environment Variables",
+      "properties": {
+        "provider": { "const": "aws" },
+        "variables": {
+          "type": "object",
+          "required": [
+            "AWS_ACCOUNT_ID",
+            "AWS_REGION",
+            "AWS_IAM_ROLE_NAME",
+            "EKS_CLUSTER_NAME",
+            "KUBERNETES_NAMESPACE",
+            "RADIUS_RECIPES_MANIFEST"
+          ],
+          "properties": {
+            "AWS_ACCOUNT_ID": {
+              "type": "string",
+              "description": "AWS account ID",
+              "pattern": "^[0-9]{12}$"
+            },
+            "AWS_REGION": {
+              "type": "string",
+              "description": "AWS region",
+              "pattern": "^[a-z]{2}-[a-z]+-[0-9]$"
+            },
+            "AWS_IAM_ROLE_NAME": {
+              "type": "string",
+              "description": "IAM role name for GitHub Actions OIDC"
+            },
+            "EKS_CLUSTER_NAME": {
+              "type": "string",
+              "description": "EKS cluster name"
+            },
+            "KUBERNETES_NAMESPACE": {
+              "type": "string",
+              "description": "Kubernetes namespace",
+              "default": "default"
+            },
+            "RADIUS_RECIPES_MANIFEST": {
+              "type": "string",
+              "description": "URL to recipes manifest for this environment",
+              "format": "uri"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

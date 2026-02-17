@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -234,6 +235,18 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	r.Output.LogInfo("")
 	r.Output.LogInfo("Deployment plan created successfully!")
+
+	// Pull the plan committed by the workflow so the local repo is up to date
+	r.Output.LogInfo("Pulling deployment plan from remote...")
+	pullCmd := exec.CommandContext(ctx, "git", "pull")
+	pullCmd.Stdout = os.Stdout
+	pullCmd.Stderr = os.Stderr
+	if err := pullCmd.Run(); err != nil {
+		r.Output.LogInfo("Warning: git pull failed: %v", err)
+		r.Output.LogInfo("Run 'git pull' manually to fetch the deployment plan.")
+	}
+
+	r.Output.LogInfo("")
 	r.Output.LogInfo("Plan location: .radius/deploy/%s/%s/%s/", r.Application, r.Environment, r.GitCommit[:7])
 	r.Output.LogInfo("")
 	r.Output.LogInfo("Next step: Run 'rad deployment apply' to execute the plan")

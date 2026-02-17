@@ -1165,7 +1165,41 @@ fi`,
 				"aws-region":     "${{ vars.AWS_REGION }}",
 			},
 		},
-		// Step 10: Generate the deployment plan
+		// Install Terraform for plan generation (terraform plan output)
+		{
+			Name: "Install Terraform",
+			Uses: "hashicorp/setup-terraform@v3",
+			With: map[string]string{
+				"terraform_wrapper": "false",
+			},
+		},
+		// Register recipes from the environment's RADIUS_RECIPES_MANIFEST
+		// FR-088: Download manifest and register each recipe on the Radius environment
+		{
+			Name: "Register recipes",
+			Env: map[string]string{
+				"KUBECONFIG":              "/tmp/kubeconfig.yaml",
+				"RADIUS_RECIPES_MANIFEST": "${{ vars.RADIUS_RECIPES_MANIFEST }}",
+			},
+			Run: `if [ -z "$RADIUS_RECIPES_MANIFEST" ]; then
+  echo "No RADIUS_RECIPES_MANIFEST configured, skipping recipe registration"
+  exit 0
+fi
+curl -fsSL "$RADIUS_RECIPES_MANIFEST" -o /tmp/recipes-manifest.yaml
+echo "Registering recipes from manifest..."
+yq e '.recipes | keys | .[]' /tmp/recipes-manifest.yaml | while read -r resource_type; do
+  kind=$(yq e ".recipes.\"${resource_type}\".recipeKind" /tmp/recipes-manifest.yaml)
+  location=$(yq e ".recipes.\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
+  echo "  Registering $resource_type ($kind)..."
+  rad recipe register default \
+    --resource-type "$resource_type" \
+    --template-kind "$kind" \
+    --template-path "$location" \
+    --environment "${{ inputs.environment }}" \
+    --group github
+done`,
+		},
+		// Generate the deployment plan
 		// This step runs rad deploy in plan-only mode to produce deploy.yaml and artifacts
 		{
 			Name: "Generate deployment plan",
@@ -1323,6 +1357,32 @@ done`,
 			},
 		},
 		// Step 13: Cloud authentication
+		// Register recipes from the environment's RADIUS_RECIPES_MANIFEST
+		// FR-088: Download manifest and register each recipe on the Radius environment
+		{
+			Name: "Register recipes",
+			Env: map[string]string{
+				"KUBECONFIG":              "/tmp/kubeconfig.yaml",
+				"RADIUS_RECIPES_MANIFEST": "${{ vars.RADIUS_RECIPES_MANIFEST }}",
+			},
+			Run: `if [ -z "$RADIUS_RECIPES_MANIFEST" ]; then
+  echo "No RADIUS_RECIPES_MANIFEST configured, skipping recipe registration"
+  exit 0
+fi
+curl -fsSL "$RADIUS_RECIPES_MANIFEST" -o /tmp/recipes-manifest.yaml
+echo "Registering recipes from manifest..."
+yq e '.recipes | keys | .[]' /tmp/recipes-manifest.yaml | while read -r resource_type; do
+  kind=$(yq e ".recipes.\"${resource_type}\".recipeKind" /tmp/recipes-manifest.yaml)
+  location=$(yq e ".recipes.\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
+  echo "  Registering $resource_type ($kind)..."
+  rad recipe register default \
+    --resource-type "$resource_type" \
+    --template-kind "$kind" \
+    --template-path "$location" \
+    --environment "${{ inputs.environment }}" \
+    --group github
+done`,
+		},
 		{
 			Name: "Configure cloud credentials",
 			ID:   "auth",

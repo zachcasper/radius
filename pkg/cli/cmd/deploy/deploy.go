@@ -17,9 +17,12 @@ limitations under the License.
 package deploy
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -749,12 +752,61 @@ func (r *Runner) configureProviders() error {
 	return nil
 }
 
-// generatePlan generates a deployment plan without executing the deployment.
-// Implements FR-039-A: plan-only mode for rad deploy.
-func (r *Runner) generatePlan(ctx context.Context, template map[string]any) error {
-	r.Output.LogInfo("Generating deployment plan...")
+// createApplicationIfNeeded creates the application resource if specified and not already existing.
+// This supports both Applications.Core and Radius.Core providers.
+func (r *Runner) createApplicationIfNeeded(ctx context.Context) error {
+	if r.ApplicationName == "" || r.Providers.Radius.EnvironmentID == "" {
+		return nil
+	}
 
-	// Create output directories
+	if _, err := isApplicationsCoreProvider(r.Providers.Radius.EnvironmentID); err == nil {
+		client, err := r.ConnectionFactory.CreateApplicationsManagementClient(ctx, *r.Workspace)
+		if err != nil {
+			return err
+		}
+		return client.CreateApplicationIfNotFound(ctx, r.ApplicationName, &v20231001preview.ApplicationResource{
+			Location: to.Ptr(v1.LocationGlobal),
+			Properties: &v20231001preview.ApplicationProperties{
+				Environment: &r.Providers.Radius.EnvironmentID,
+			},
+		})
+	}
+
+	if r.RadiusCoreClientFactory == nil {
+		return nil
+	}
+
+	appClient := r.RadiusCoreClientFactory.NewApplicationsClient()
+	_, err := appClient.Get(ctx, r.ApplicationName, nil)
+	if err != nil {
+		if clients.Is404Error(err) {
+			_, err = appClient.CreateOrUpdate(ctx, r.ApplicationName, v20250801preview.ApplicationResource{
+				Location: to.Ptr(v1.LocationGlobal),
+				Properties: &v20250801preview.ApplicationProperties{
+					Environment: &r.Providers.Radius.EnvironmentID,
+				},
+			}, nil)
+			return err
+		}
+		return err
+	}
+	return nil
+}
+
+// generatePlan generates a deployment plan (deploy.yaml) and artifacts without
+// deploying any resources. It resolves recipe information from the environment's
+// registered recipes and generates Terraform configurations and plan output.
+// FR-045-E: MUST NOT perform any resource deployments.
+func (r *Runner) generatePlan(ctx context.Context, template map[string]any) error {
+	r.Output.LogInfo("Generating deployment plan (plan-only mode)...")
+
+	// Use the output directory directly — the workflow already scopes it to
+	// .radius/deploy/<app>/<env>/<commit>
+	planDir := r.PlanOutputDir
+	if err := os.MkdirAll(planDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
 	appName := r.ApplicationName
 	if appName == "" {
 		appName = "default"
@@ -764,140 +816,295 @@ func (r *Runner) generatePlan(ctx context.Context, template map[string]any) erro
 	if envName == "" {
 		envName = "default"
 	}
-
-	planDir := filepath.Join(r.PlanOutputDir, appName, envName)
-	if err := os.MkdirAll(planDir, 0755); err != nil {
-		return fmt.Errorf("failed to create plan directory: %w", err)
+	if parsed, parseErr := resources.Parse(envName); parseErr == nil {
+		envName = parsed.Name()
 	}
 
-	// Extract resources from template
-	resources, err := extractTemplateResources(template)
-	if err != nil {
-		return fmt.Errorf("failed to extract resources from template: %w", err)
+	// Resolve registered recipes from the environment (populated during Validate)
+	envRecipes := r.resolveEnvironmentRecipes()
+
+	// Parse template resources for structure, properties, and dependency ordering
+	// FR-079-A: topologically ordered based on dependsOn relationships
+	templateResources := parseTemplateResources(template)
+	sorted := topologicalSort(templateResources)
+
+	// Extract commit hash from the directory name (last path segment)
+	commit := filepath.Base(planDir)
+
+	record := DeploymentRecord{
+		Application:               appName,
+		ApplicationDefinitionFile: r.FilePath,
+		Environment:               envName,
+		Commit:                    commit,
+		Steps:                     make([]DeploymentStep, 0),
 	}
 
-	// Generate plan.yaml
-	plan := DeploymentPlan{
-		APIVersion:           "radius.dev/v1alpha1",
-		Kind:                 "DeploymentPlan",
-		Application:          appName,
-		ApplicationModelFile: r.FilePath,
-		Environment:          envName,
-		GeneratedAt:          time.Now().UTC().Format(time.RFC3339),
-		Steps:                make([]PlanStep, 0),
-		Summary: PlanSummary{
-			TotalSteps:        len(resources),
-			TerraformSteps:    len(resources), // Assume all resources use Terraform recipes
-			BicepSteps:        0,
-			TotalAdd:          len(resources),
-			TotalChange:       0,
-			TotalDestroy:      0,
-			AllVersionsPinned: true,
-		},
-	}
+	stepNum := 0
+	totalAdd := 0
+	totalChange := 0
+	totalDestroy := 0
+	terraformSteps := 0
+	bicepSteps := 0
 
-	// Generate steps for each resource
-	for i, res := range resources {
-		step := PlanStep{
-			Sequence: i + 1,
-			Resource: PlanResource{
-				Name:       res.Name,
-				Type:       res.Type,
-				Properties: res.Properties,
+	for _, tmplRes := range sorted {
+		if isControlPlaneResource(tmplRes.Type) {
+			continue
+		}
+
+		stepNum++
+
+		// Resolve recipe for this resource type from the environment
+		recipe := envRecipes[strings.ToLower(tmplRes.Type)]
+		recipeKind := "terraform"
+		recipeLocation := ""
+		recipeName := tmplRes.Type
+
+		if recipe != nil {
+			recipeKind = recipe.Kind
+			recipeLocation = recipe.Location
+			recipeName = recipe.Name
+		} else {
+			// Fallback: construct a default location from the resource type
+			modulePath := resourceTypeToModulePath(tmplRes.Type)
+			recipeLocation = "git::https://github.com/radius-project/resource-types-contrib.git//" + modulePath
+		}
+
+		// FR-079-B: NNN-<resource_name>-<recipe_kind>
+		dirName := fmt.Sprintf("%03d-%s-%s", stepNum, sanitizeName(tmplRes.Name), recipeKind)
+
+		step := DeploymentStep{
+			Sequence: stepNum,
+			Resource: StepResource{
+				Name:       tmplRes.Name,
+				Type:       tmplRes.Type,
+				Properties: tmplRes.Properties,
 			},
-			Recipe: PlanRecipe{
-				Name:     "default",
-				Kind:     "terraform",
-				Location: "git::https://github.com/radius-project/resource-types-contrib.git",
+			Recipe: StepRecipe{
+				Name:     recipeName,
+				Kind:     recipeKind,
+				Location: recipeLocation,
 			},
-			DeploymentArtifacts: filepath.Join(planDir, fmt.Sprintf("step-%d-%s", i+1, sanitizeName(res.Name))),
-			ExpectedChanges: ExpectedChanges{
-				Add:     1,
+			DeploymentArtifacts: dirName,
+			ExpectedChanges: StepChanges{
+				Add:     0,
 				Change:  0,
 				Destroy: 0,
 			},
-			Status: "pending",
+			Status: "planned", // FR-045-E: all steps must be "planned"
 		}
-		plan.Steps = append(plan.Steps, step)
 
-		// Create deployment artifacts directory
-		artifactsDir := step.DeploymentArtifacts
+		// Create artifacts directory and generate files
+		artifactsDir := filepath.Join(planDir, dirName, "artifacts")
 		if err := os.MkdirAll(artifactsDir, 0755); err != nil {
 			return fmt.Errorf("failed to create artifacts directory: %w", err)
 		}
 
-		// Generate placeholder Terraform files
-		if err := generateTerraformArtifacts(artifactsDir, res); err != nil {
-			return fmt.Errorf("failed to generate Terraform artifacts: %w", err)
+		if recipeKind == "terraform" && recipeLocation != "" {
+			if err := generateDeploymentArtifacts(artifactsDir, tmplRes, appName, envName, recipeLocation); err != nil {
+				return fmt.Errorf("failed to generate artifacts for %s: %w", tmplRes.Name, err)
+			}
+
+			// Run terraform plan to get actual plan output and change counts
+			r.Output.LogInfo("  Step %d: %s (%s)", stepNum, tmplRes.Name, tmplRes.Type)
+			planResult := runTerraformPlan(ctx, artifactsDir, r.Output)
+			step.ExpectedChanges = planResult.Changes
+			terraformSteps++
+		} else if recipeKind == "bicep" {
+			bicepSteps++
 		}
+
+		totalAdd += step.ExpectedChanges.Add
+		totalChange += step.ExpectedChanges.Change
+		totalDestroy += step.ExpectedChanges.Destroy
+		record.Steps = append(record.Steps, step)
 	}
 
-	// Write plan.yaml
-	planPath := filepath.Join(planDir, "plan.yaml")
-	planData, err := yaml.Marshal(plan)
+	record.Summary = DeploymentSummary{
+		TotalSteps:        stepNum,
+		TerraformSteps:    terraformSteps,
+		BicepSteps:        bicepSteps,
+		TotalAdd:          totalAdd,
+		TotalChange:       totalChange,
+		TotalDestroy:      totalDestroy,
+		AllVersionsPinned: false,
+	}
+
+	// Write deploy.yaml (spec appendix C.1)
+	deployPath := filepath.Join(planDir, "deploy.yaml")
+	data, err := yaml.Marshal(record)
 	if err != nil {
-		return fmt.Errorf("failed to marshal plan: %w", err)
+		return fmt.Errorf("failed to marshal deployment record: %w", err)
 	}
 
-	if err := os.WriteFile(planPath, planData, 0644); err != nil {
-		return fmt.Errorf("failed to write plan.yaml: %w", err)
+	header := fmt.Sprintf("# Radius deployment plan\n# Generated by Radius control plane\n# Generated: %s\n\n", time.Now().UTC().Format(time.RFC3339))
+	if err := os.WriteFile(deployPath, append([]byte(header), data...), 0644); err != nil {
+		return fmt.Errorf("failed to write deploy.yaml: %w", err)
 	}
 
 	r.Output.LogInfo("")
-	r.Output.LogInfo("Plan generated successfully!")
-	r.Output.LogInfo("  Plan file: %s", planPath)
-	r.Output.LogInfo("  Resources: %d", len(resources))
+	r.Output.LogInfo("Deployment plan generated!")
+	r.Output.LogInfo("  Plan file: %s", deployPath)
+	r.Output.LogInfo("  Steps:     %d", stepNum)
+	r.Output.LogInfo("  Status:    planned")
 	r.Output.LogInfo("")
-	r.Output.LogInfo("Review the plan and deployment artifacts in %s", planDir)
 
 	return nil
 }
 
-// DeploymentPlan represents a deployment plan (plan.yaml)
-type DeploymentPlan struct {
-	APIVersion           string      `yaml:"apiVersion"`
-	Kind                 string      `yaml:"kind"`
-	Application          string      `yaml:"application"`
-	ApplicationModelFile string      `yaml:"applicationModelFile"`
-	Environment          string      `yaml:"environment"`
-	GeneratedAt          string      `yaml:"generatedAt"`
-	Steps                []PlanStep  `yaml:"steps"`
-	Summary              PlanSummary `yaml:"summary"`
+// recipeInfo holds resolved recipe information from the environment.
+type recipeInfo struct {
+	Name     string
+	Kind     string
+	Location string
 }
 
-// PlanStep represents a single step in the deployment plan
-type PlanStep struct {
-	Sequence            int             `yaml:"sequence"`
-	Resource            PlanResource    `yaml:"resource"`
-	Recipe              PlanRecipe      `yaml:"recipe"`
-	DeploymentArtifacts string          `yaml:"deploymentArtifacts"`
-	ExpectedChanges     ExpectedChanges `yaml:"expectedChanges"`
-	Status              string          `yaml:"status"`
+// resolveEnvironmentRecipes extracts registered recipes from the environment resource.
+// Returns a map of resource type (lowercased) → recipe info.
+func (r *Runner) resolveEnvironmentRecipes() map[string]*recipeInfo {
+	recipes := make(map[string]*recipeInfo)
+
+	if r.EnvResult == nil {
+		return recipes
+	}
+
+	if r.EnvResult.UseApplicationsCore && r.EnvResult.ApplicationsCoreEnv != nil {
+		env := r.EnvResult.ApplicationsCoreEnv
+		if env.Properties != nil && env.Properties.Recipes != nil {
+			for resourceType, recipeMap := range env.Properties.Recipes {
+				for recipeName, recipe := range recipeMap {
+					props := recipe.GetRecipeProperties()
+					if props != nil && props.TemplateKind != nil && props.TemplatePath != nil {
+						recipes[strings.ToLower(resourceType)] = &recipeInfo{
+							Name:     recipeName,
+							Kind:     *props.TemplateKind,
+							Location: *props.TemplatePath,
+						}
+					}
+					break // Use the first recipe (typically "default")
+				}
+			}
+		}
+	}
+
+	return recipes
 }
 
-// PlanResource represents a resource in the plan
-type PlanResource struct {
+// terraformPlanResult holds the result of running terraform plan.
+type terraformPlanResult struct {
+	Output  string
+	Changes StepChanges
+}
+
+// runTerraformPlan runs terraform init and plan in the given directory,
+// captures the plan output to tfplan.txt, and returns parsed change counts.
+func runTerraformPlan(ctx context.Context, workDir string, out output.Interface) *terraformPlanResult {
+	result := &terraformPlanResult{}
+
+	// Check if terraform is available on the system
+	terraformPath, err := exec.LookPath("terraform")
+	if err != nil {
+		msg := "# Terraform is not installed - plan output unavailable\n# Install terraform to generate actual plan output\n"
+		_ = os.WriteFile(filepath.Join(workDir, "tfplan.txt"), []byte(msg), 0644)
+		out.LogInfo("    Terraform not found, skipping plan")
+		result.Output = msg
+		return result
+	}
+
+	// Run terraform init
+	out.LogInfo("    Running terraform init...")
+	initCmd := exec.CommandContext(ctx, terraformPath, "init", "-no-color", "-input=false")
+	initCmd.Dir = workDir
+	var initBuf bytes.Buffer
+	initCmd.Stdout = &initBuf
+	initCmd.Stderr = &initBuf
+	if err := initCmd.Run(); err != nil {
+		errMsg := fmt.Sprintf("# Terraform init failed:\n%s\n", initBuf.String())
+		_ = os.WriteFile(filepath.Join(workDir, "tfplan.txt"), []byte(errMsg), 0644)
+		out.LogInfo("    Terraform init failed: %v", err)
+		result.Output = errMsg
+		return result
+	}
+
+	// Run terraform plan
+	out.LogInfo("    Running terraform plan...")
+	planCmd := exec.CommandContext(ctx, terraformPath, "plan", "-no-color", "-input=false")
+	planCmd.Dir = workDir
+	var planBuf bytes.Buffer
+	planCmd.Stdout = &planBuf
+	planCmd.Stderr = &planBuf
+	_ = planCmd.Run() // Don't check error — exit code 2 means changes detected
+
+	planOutput := planBuf.String()
+	_ = os.WriteFile(filepath.Join(workDir, "tfplan.txt"), []byte(planOutput), 0644)
+
+	// Parse change counts from plan output
+	result.Output = planOutput
+	result.Changes = parsePlanChanges(planOutput)
+
+	if result.Changes.Add > 0 || result.Changes.Change > 0 || result.Changes.Destroy > 0 {
+		out.LogInfo("    Plan: %d to add, %d to change, %d to destroy",
+			result.Changes.Add, result.Changes.Change, result.Changes.Destroy)
+	}
+
+	return result
+}
+
+// parsePlanChanges extracts add/change/destroy counts from terraform plan output.
+// Looks for the standard "Plan: X to add, Y to change, Z to destroy." line.
+func parsePlanChanges(planOutput string) StepChanges {
+	changes := StepChanges{}
+	for _, line := range strings.Split(planOutput, "\n") {
+		if strings.Contains(line, "Plan:") && strings.Contains(line, "to add") {
+			fmt.Sscanf(line, "Plan: %d to add, %d to change, %d to destroy.", &changes.Add, &changes.Change, &changes.Destroy)
+			break
+		}
+	}
+	return changes
+}
+
+// DeploymentRecord represents deploy.yaml (spec appendix C.1)
+type DeploymentRecord struct {
+	Application               string            `yaml:"application"`
+	ApplicationDefinitionFile string            `yaml:"applicationDefinitionFile"`
+	Environment               string            `yaml:"environment"`
+	Commit                    string            `yaml:"commit"`
+	Steps                     []DeploymentStep  `yaml:"steps"`
+	Summary                   DeploymentSummary `yaml:"summary"`
+}
+
+// DeploymentStep represents a single step in the deployment record
+type DeploymentStep struct {
+	Sequence            int          `yaml:"sequence"`
+	Resource            StepResource `yaml:"resource"`
+	Recipe              StepRecipe   `yaml:"recipe"`
+	DeploymentArtifacts string       `yaml:"deploymentArtifacts"`
+	ExpectedChanges     StepChanges  `yaml:"expectedChanges"`
+	Status              string       `yaml:"status"`
+}
+
+// StepResource describes a resource in a deployment step
+type StepResource struct {
 	Name       string         `yaml:"name"`
 	Type       string         `yaml:"type"`
 	Properties map[string]any `yaml:"properties,omitempty"`
 }
 
-// PlanRecipe represents recipe information for a step
-type PlanRecipe struct {
+// StepRecipe describes recipe information for a deployment step
+type StepRecipe struct {
 	Name     string `yaml:"name"`
 	Kind     string `yaml:"kind"`
 	Location string `yaml:"location"`
 }
 
-// ExpectedChanges represents expected Terraform changes
-type ExpectedChanges struct {
+// StepChanges represents expected changes for a deployment step
+type StepChanges struct {
 	Add     int `yaml:"add"`
 	Change  int `yaml:"change"`
 	Destroy int `yaml:"destroy"`
 }
 
-// PlanSummary represents the plan summary
-type PlanSummary struct {
+// DeploymentSummary is the summary section of a deployment record
+type DeploymentSummary struct {
 	TotalSteps        int  `yaml:"totalSteps"`
 	TerraformSteps    int  `yaml:"terraformSteps"`
 	BicepSteps        int  `yaml:"bicepSteps"`
@@ -907,60 +1114,152 @@ type PlanSummary struct {
 	AllVersionsPinned bool `yaml:"allVersionsPinned"`
 }
 
-// TemplateResource represents a resource extracted from a Bicep template
-type TemplateResource struct {
-	Name       string
-	Type       string
-	Properties map[string]any
+// templateResourceInfo holds parsed info from a template resource including dependencies.
+type templateResourceInfo struct {
+	SymbolicName string
+	Type         string
+	Name         string
+	Properties   map[string]any
+	DependsOn    []string
 }
 
-// extractTemplateResources extracts resources from a compiled Bicep template.
-// Bicep outputs ARM templates using the symbolic name format where "resources"
-// is a map keyed by symbolic name, not an array.
-func extractTemplateResources(template map[string]any) ([]TemplateResource, error) {
+// parseTemplateResources extracts resources from a compiled Bicep template (symbolic name format)
+// including dependsOn information for topological ordering.
+func parseTemplateResources(template map[string]any) []templateResourceInfo {
 	resourcesMap, ok := template["resources"].(map[string]any)
 	if !ok {
-		return nil, nil
+		return nil
 	}
 
-	result := make([]TemplateResource, 0, len(resourcesMap))
+	result := make([]templateResourceInfo, 0, len(resourcesMap))
 	for symbolicName, r := range resourcesMap {
 		res, ok := r.(map[string]any)
 		if !ok {
 			continue
 		}
 
-		resType, _ := res["type"].(string)
+		info := templateResourceInfo{
+			SymbolicName: symbolicName,
+		}
+
+		// Get type (may include API version: "Type@Version")
+		fullType, _ := res["type"].(string)
+		if parts := strings.SplitN(fullType, "@", 2); len(parts) == 2 {
+			info.Type = parts[0]
+		} else {
+			info.Type = fullType
+		}
 
 		// In symbolic name format, "name" is inside the "properties" wrapper
-		var name string
-		var properties map[string]any
 		if props, ok := res["properties"].(map[string]any); ok {
-			name, _ = props["name"].(string)
+			info.Name, _ = props["name"].(string)
 			// The actual resource properties are nested inside properties.properties
-			properties, _ = props["properties"].(map[string]any)
+			info.Properties, _ = props["properties"].(map[string]any)
+		}
+		if info.Name == "" {
+			info.Name = symbolicName
 		}
 
-		// Fall back to the symbolic name if no explicit name was found
-		if name == "" {
-			name = symbolicName
+		// Parse dependsOn for ordering
+		if deps, ok := res["dependsOn"].([]any); ok {
+			for _, dep := range deps {
+				if depStr, ok := dep.(string); ok {
+					info.DependsOn = append(info.DependsOn, depStr)
+				}
+			}
 		}
 
-		if resType != "" {
-			result = append(result, TemplateResource{
-				Name:       name,
-				Type:       resType,
-				Properties: properties,
-			})
+		if info.Type != "" {
+			result = append(result, info)
 		}
 	}
 
-	return result, nil
+	return result
 }
 
-// sanitizeName converts a resource name to a safe directory name
+// topologicalSort orders template resources by their dependsOn relationships
+// using Kahn's algorithm. Resources with no dependencies come first.
+func topologicalSort(resources []templateResourceInfo) []templateResourceInfo {
+	if len(resources) == 0 {
+		return resources
+	}
+
+	// Build index by symbolic name
+	nameToIdx := make(map[string]int, len(resources))
+	for i, r := range resources {
+		nameToIdx[r.SymbolicName] = i
+	}
+
+	// Compute in-degree for each resource
+	inDegree := make([]int, len(resources))
+	for i, r := range resources {
+		for _, dep := range r.DependsOn {
+			if _, ok := nameToIdx[dep]; ok {
+				inDegree[i]++
+			}
+		}
+	}
+
+	// Kahn's algorithm: start with nodes that have no incoming edges
+	queue := make([]int, 0)
+	for i, d := range inDegree {
+		if d == 0 {
+			queue = append(queue, i)
+		}
+	}
+
+	sorted := make([]templateResourceInfo, 0, len(resources))
+	for len(queue) > 0 {
+		idx := queue[0]
+		queue = queue[1:]
+		sorted = append(sorted, resources[idx])
+
+		// Decrement in-degree for all dependents
+		for i, r := range resources {
+			for _, dep := range r.DependsOn {
+				if dep == resources[idx].SymbolicName {
+					inDegree[i]--
+					if inDegree[i] == 0 {
+						queue = append(queue, i)
+					}
+				}
+			}
+		}
+	}
+
+	// Append any remaining resources (cycles or unresolved deps)
+	if len(sorted) < len(resources) {
+		sortedNames := make(map[string]bool, len(sorted))
+		for _, s := range sorted {
+			sortedNames[s.SymbolicName] = true
+		}
+		for _, r := range resources {
+			if !sortedNames[r.SymbolicName] {
+				sorted = append(sorted, r)
+			}
+		}
+	}
+
+	return sorted
+}
+
+// controlPlaneResourceTypes are resource types that represent Radius control plane
+// entities and should not appear as deployment steps.
+var controlPlaneResourceTypes = map[string]bool{
+	"applications.core/applications": true,
+	"applications.core/environments": true,
+	"radius.core/applications":       true,
+	"radius.core/environments":       true,
+}
+
+// isControlPlaneResource returns true for resource types that should be excluded
+// from deployment steps (applications, environments).
+func isControlPlaneResource(resourceType string) bool {
+	return controlPlaneResourceTypes[strings.ToLower(resourceType)]
+}
+
+// sanitizeName converts a resource name to a safe directory name.
 func sanitizeName(name string) string {
-	// Remove or replace characters that are unsafe for directory names
 	safe := strings.ReplaceAll(name, "/", "-")
 	safe = strings.ReplaceAll(safe, "\\", "-")
 	safe = strings.ReplaceAll(safe, ":", "-")
@@ -973,69 +1272,182 @@ func sanitizeName(name string) string {
 	return strings.ToLower(safe)
 }
 
-// generateTerraformArtifacts creates placeholder Terraform files for a resource
-func generateTerraformArtifacts(dir string, res TemplateResource) error {
-	// main.tf
-	mainTF := fmt.Sprintf(`# Terraform configuration for %s
-# Resource type: %s
-# Generated by rad deploy --plan
+// resourceTypeToModulePath converts a Radius resource type to a Terraform module path.
+// e.g. "Radius.Data/postgreSqlDatabases" → "Data/postgreSqlDatabases/recipes/kubernetes/terraform"
+func resourceTypeToModulePath(resourceType string) string {
+	parts := strings.SplitN(resourceType, "/", 2)
+	if len(parts) != 2 {
+		return resourceType
+	}
+	provider := parts[0]
+	typeName := parts[1]
 
-# This file will be populated by the Radius control plane
-# with the actual Terraform configuration from the recipe.
-`, res.Name, res.Type)
+	// Strip the provider prefix ("Radius.", "Applications." etc.)
+	if dotIdx := strings.Index(provider, "."); dotIdx >= 0 {
+		provider = provider[dotIdx+1:]
+	}
+
+	return provider + "/" + typeName + "/recipes/kubernetes/terraform"
+}
+
+// generateDeploymentArtifacts creates Terraform artifact files for a deployment step.
+// These files represent the Radius recipe configuration for plan review.
+func generateDeploymentArtifacts(dir string, res templateResourceInfo, appName, envName, recipeLocation string) error {
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	safeName := sanitizeName(res.Name)
+
+	// main.tf — module source pointing to the recipe Terraform module
+	mainTF := fmt.Sprintf(`# Radius resource deployment plan
+# Generated by Radius control plane
+# Resource: %s (%s)
+# Generated: %s
+
+module "%s" {
+  source = "%s"
+
+  # Pass the Radius context to the recipe module
+  context = var.context
+}
+
+# Outputs from the recipe module
+output "result" {
+  description = "Result output from the recipe module"
+  value       = try(module.%s.result, null)
+  sensitive   = true
+}
+`, res.Name, res.Type, timestamp, safeName, recipeLocation, safeName)
 
 	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(mainTF), 0644); err != nil {
 		return err
 	}
 
-	// providers.tf
-	providersTF := `# Provider configuration
-# Generated by rad deploy --plan
+	// providers.tf — required providers for the recipe
+	providersTF := fmt.Sprintf(`# Radius resource deployment plan
+# Generated by Radius control plane
+# Resource: %s (%s)
+# Generated: %s
 
 terraform {
   required_providers {
-    # Providers will be configured by the recipe
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.0"
+    }
   }
 }
-`
+
+provider "kubernetes" {
+  # Provider configuration is managed by the Radius control plane
+}
+`, res.Name, res.Type, timestamp)
+
 	if err := os.WriteFile(filepath.Join(dir, "providers.tf"), []byte(providersTF), 0644); err != nil {
 		return err
 	}
 
-	// variables.tf
-	variablesTF := `# Variables configuration
-# Generated by rad deploy --plan
+	// variables.tf — the recipe context variable type definition
+	variablesTF := fmt.Sprintf(`# Radius resource deployment plan
+# Generated by Radius control plane
+# Variables for resource: %s (%s)
+# Generated: %s
 
-# Variables will be populated by the Radius control plane
-`
+variable "context" {
+  description = "Radius recipe context containing resource, application, environment, and runtime information"
+  type = object({
+    resource = object({
+      name       = string
+      type       = string
+      properties = any
+      connections = optional(map(object({
+        id         = string
+        name       = string
+        type       = string
+        properties = optional(any)
+      })), {})
+    })
+    application = object({
+      name = string
+    })
+    environment = object({
+      name = string
+    })
+    runtime = object({
+      kubernetes = optional(object({
+        namespace            = string
+        environmentNamespace = string
+      }))
+    })
+    azure = optional(object({
+      resourceGroup = object({
+        name = string
+      })
+      subscription = object({
+        subscriptionId = string
+      })
+    }))
+    aws = optional(object({
+      region  = string
+      account = string
+    }))
+  })
+}
+`, res.Name, res.Type, timestamp)
+
 	if err := os.WriteFile(filepath.Join(dir, "variables.tf"), []byte(variablesTF), 0644); err != nil {
 		return err
 	}
 
-	// terraform.tfvars.json
-	tfvars := `{}
-`
-	if err := os.WriteFile(filepath.Join(dir, "terraform.tfvars.json"), []byte(tfvars), 0644); err != nil {
+	// terraform.tfvars.json — actual context values for this resource
+	contextMap := map[string]any{
+		"context": map[string]any{
+			"resource": map[string]any{
+				"name":        res.Name,
+				"type":        res.Type,
+				"properties":  res.Properties,
+				"connections": map[string]any{},
+			},
+			"application": map[string]any{
+				"name": appName,
+			},
+			"environment": map[string]any{
+				"name": envName,
+			},
+			"runtime": map[string]any{
+				"kubernetes": map[string]any{
+					"namespace":            "default",
+					"environmentNamespace": "default",
+				},
+			},
+			"azure": nil,
+			"aws":   nil,
+		},
+	}
+	tfvarsData, err := json.MarshalIndent(contextMap, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "terraform.tfvars.json"), append(tfvarsData, '\n'), 0644); err != nil {
 		return err
 	}
 
-	// tfplan.txt (placeholder)
-	tfplan := fmt.Sprintf(`# Terraform plan preview for %s
-# This file will be populated with actual plan output.
+	// terraform-context.txt — human-readable deployment context
+	contextTxt := fmt.Sprintf(`# Terraform Context
+# Generated by Radius control plane
+# Generated: %s
 
-+ 1 to add
-~ 0 to change
-- 0 to destroy
-`, res.Name)
-	if err := os.WriteFile(filepath.Join(dir, "tfplan.txt"), []byte(tfplan), 0644); err != nil {
-		return err
-	}
+## Resource Context
 
-	// terraform-context.txt
-	contextTxt := fmt.Sprintf(`Resource: %s
-Type: %s
-Status: pending
-`, res.Name, res.Type)
+resource_name: %s
+resource_type: %s
+recipe_location: %s
+application: %s
+environment: %s
+
+## Plan Status
+
+status: planned
+`, timestamp, res.Name, res.Type, recipeLocation, appName, envName)
+
 	if err := os.WriteFile(filepath.Join(dir, "terraform-context.txt"), []byte(contextTxt), 0644); err != nil {
 		return err
 	}
