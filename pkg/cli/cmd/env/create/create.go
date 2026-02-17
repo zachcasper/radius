@@ -297,8 +297,16 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 	// Step 4: Set RADIUS_RECIPES_MANIFEST env variable (FR-026, FR-027, FR-030)
 	recipesManifest := r.Recipes
 	if recipesManifest == "" {
-		// Use default recipes manifest based on provider
-		recipesManifest = fmt.Sprintf("https://raw.githubusercontent.com/radius-project/recipes-contrib/main/%s/recipes.yaml", r.Provider)
+		// Use default recipes manifest from resource-types-contrib repo based on provider
+		// AWS always uses terraform; Azure defaults to bicep
+		switch r.Provider {
+		case "aws":
+			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-aws-terraform.yaml"
+		case "azure":
+			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-bicep.yaml"
+		default:
+			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-bicep.yaml"
+		}
 	}
 	r.Output.LogInfo("  Setting RADIUS_RECIPES_MANIFEST...")
 	if err := ghClient.SetEnvironmentVariable(owner, repo, r.EnvironmentName, "RADIUS_RECIPES_MANIFEST", recipesManifest); err != nil {

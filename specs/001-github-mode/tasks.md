@@ -28,7 +28,7 @@
 - [X] T007 [P] Add `rad deploy` GitHub-mode guard in pkg/cli/cmd/deploy/deploy.go — error with message directing to `rad deployment create`/`apply` when workspace kind is `github` (FR-036, FR-037)
 - [X] T007-A [P] Remove `rad pr` command group (cmd/rad/cmd/pr.go, pkg/cli/cmd/pr/) — `rad pr create`, `rad pr merge`, `rad pr destroy` are replaced by `rad deployment create`/`apply` (FR-032, FR-033, FR-034, FR-035)
 - [X] T007-B [P] Rename `rad environment connect` to `rad environment create` — remove pkg/cli/cmd/env/connect/ and update command wiring in cmd/rad/cmd/root.go (FR-015)
-- [X] T007-C [P] Add GitHub-mode routing in `rad resource-type` commands — when workspace kind is `github`, operate against `RADIUS_RESOURCE_TYPES_MANIFEST` URL instead of UCP (FR-073)
+- [X] T007-C [P] Add GitHub-mode routing in `rad resource-type` commands — when workspace kind is `github`, operate against `RESOURCE_TYPES_REPO` URL instead of UCP (FR-073)
 - [X] T007-D [P] Add GitHub-mode routing in `rad recipe` commands — when workspace kind is `github`, operate against environment's `RADIUS_RECIPES_MANIFEST` variable instead of UCP (FR-075)
 
 **Checkpoint**: Shared infrastructure ready — user story implementation can begin
@@ -56,7 +56,7 @@
 
 ## Phase 3: User Story 1 — Initialize Repository for Radius (Priority: P1) 🎯 MVP
 
-**Goal**: `rad init` sets up `.radius/` directory structure, generates 4 GitHub Actions workflows, sets `RADIUS_RESOURCE_TYPES_MANIFEST` repo variable, creates GitHub workspace in `~/.rad/config.yaml`, commits and pushes.
+**Goal**: `rad init` sets up `.radius/` directory structure, generates 4 GitHub Actions workflows, sets `RESOURCE_TYPES_REPO` repo variable, creates GitHub workspace in `~/.rad/config.yaml`, commits and pushes.
 
 **Independent Test**: Run `rad init` on a fresh GitHub repo clone → verify workspace registered, workflows created, repo variable set, changes committed.
 
@@ -65,7 +65,7 @@
 - [X] T013 [US1] Update pkg/cli/cmd/radinit/init.go — remove `--provider` and `--deployment-tool` flags; add error if those flags are passed (FR-001, FR-007)
 - [X] T014 [US1] Update pkg/cli/cmd/radinit/github.go — rewrite `Run()`:
   1. Call workflow generators from T010 to produce 4 workflow files under `.github/workflows/` (FR-112, FR-114)
-  2. Call `SetRepoVariable("RADIUS_RESOURCE_TYPES_MANIFEST", url)` with default or `--resource-types-manifest` value (FR-005, FR-006, FR-007)
+  2. Call `SetRepoVariable("RESOURCE_TYPES_REPO", url)` with default or `--resource-types-repo` value (FR-005, FR-006, FR-007)
   3. Create/update `~/.rad/config.yaml` with `github` workspace (FR-011)
   4. `git add`, `git commit` with `Radius-Action: init` trailer, `git push` (FR-013)
   5. Verify `.radius/types.yaml`, `.radius/recipes.yaml`, and `.radius/env.*.yaml` are NOT created (FR-002, FR-003, FR-004)

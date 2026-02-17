@@ -30,8 +30,8 @@ import (
 
 // githubInitOptions holds options specific to GitHub mode initialization.
 type githubInitOptions struct {
-	// ResourceTypesManifest is the URL to the resource types manifest.
-	ResourceTypesManifest string
+	// ResourceTypesRepo is the URL to the resource types repository.
+	ResourceTypesRepo string
 
 	// RepoPath is the path to the git repository root.
 	RepoPath string
@@ -108,8 +108,8 @@ func findGitRoot(startPath string) (string, error) {
 	}
 }
 
-// DefaultResourceTypesManifestURL is the default URL for the resource types manifest.
-const DefaultResourceTypesManifestURL = "https://raw.githubusercontent.com/zachcasper/radius-config/refs/heads/main/types.yaml"
+// DefaultResourceTypesRepoURL is the default URL for the resource types repository.
+const DefaultResourceTypesRepoURL = "https://github.com/zachcasper/resource-types-contrib/tree/github-radius"
 
 // initializeGitHubWorkflows creates the .github/workflows/ directory
 // and generates the 4 workflow files for the two-phase deployment model.
@@ -184,11 +184,11 @@ func (r *Runner) validateGitHubMode(cmd *cobra.Command) error {
 		return err
 	}
 
-	// Set resource types manifest URL
-	if r.ResourceTypesManifest != "" {
-		opts.ResourceTypesManifest = r.ResourceTypesManifest
+	// Set resource types repo URL
+	if r.ResourceTypesRepo != "" {
+		opts.ResourceTypesRepo = r.ResourceTypesRepo
 	} else {
-		opts.ResourceTypesManifest = DefaultResourceTypesManifestURL
+		opts.ResourceTypesRepo = DefaultResourceTypesRepoURL
 	}
 
 	// Store in runner for access in Run
@@ -232,11 +232,11 @@ func (r *Runner) runGitHubInit(ctx context.Context) error {
 		return err
 	}
 
-	// Step 2: Set RADIUS_RESOURCE_TYPES_MANIFEST repo variable (FR-005, FR-006)
-	r.Output.LogInfo("Setting repository variable RADIUS_RESOURCE_TYPES_MANIFEST...")
+	// Step 2: Set RESOURCE_TYPES_REPO repo variable (FR-005, FR-006)
+	r.Output.LogInfo("Setting repository variable RESOURCE_TYPES_REPO...")
 	ghClient := github.NewClient()
-	if err := ghClient.SetRepoVariable("RADIUS_RESOURCE_TYPES_MANIFEST", opts.ResourceTypesManifest); err != nil {
-		return fmt.Errorf("failed to set RADIUS_RESOURCE_TYPES_MANIFEST: %w", err)
+	if err := ghClient.SetRepoVariable("RESOURCE_TYPES_REPO", opts.ResourceTypesRepo); err != nil {
+		return fmt.Errorf("failed to set RESOURCE_TYPES_REPO: %w", err)
 	}
 
 	// Step 3: Commit and push (FR-013)

@@ -11,7 +11,7 @@ Radius on GitHub adds a new operational mode where environment configuration is 
 
 **Language/Version**: Go 1.25.7
 **Primary Dependencies**: Cobra (CLI framework), Viper (config), `gh` CLI (GitHub API), `go-git/v5` (Git operations), `gopkg.in/yaml.v3` (YAML marshaling), `go.uber.org/mock` (test mocks)
-**Storage**: GitHub Environments API (env variables), GitHub repository variables, Git repository (`.radius/` directory tree), cloud backends (S3/Azure Storage for Terraform state)
+**Storage**: GitHub Environments API (env variables), GitHub repository variables, Git repository (`.radius/` directory tree), resource types repository (`resource-types-contrib`), cloud backends (S3/Azure Storage for Terraform state)
 **Testing**: `go test` via `make test`; Cobra command tests using `test/radcli/shared.go` harness (`SharedCommandValidation`, `SharedValidateValidation`); `gomock` for interface mocking
 **Target Platform**: macOS, Linux (CLI binary); GitHub Actions runners (workflow execution)
 **Project Type**: Single Go module (monorepo with CLI + packages)
@@ -74,7 +74,7 @@ pkg/cli/github/client.go                     # Add DispatchAndWatch, SetEnvironm
 pkg/cli/github/git.go                        # Add IsDirty (exists), HasUnpushedCommits, GetHeadCommitHash
 pkg/cli/github/workflows.go                  # Update workflow generators for two-phase model (create, apply, destroy, auth-test)
 pkg/cli/cmd/radinit/init.go                  # Remove --provider, --deployment-tool; simplify for GitHub mode
-pkg/cli/cmd/radinit/github.go               # Update init flow: directory structure, workflow generation, git commit+push
+pkg/cli/cmd/radinit/github.go               # Update init flow: directory structure, workflow generation, set RESOURCE_TYPES_REPO, git commit+push
 pkg/cli/cmd/env/create/create.go             # Branch on workspace kind: GitHub mode → GitHub Environments API + OIDC
 pkg/cli/cmd/env/delete/delete.go             # Branch on workspace kind: GitHub mode → delete GitHub Environment + OIDC cleanup prompt
 pkg/cli/cmd/deploy/deploy.go                 # Add GitHub mode guard (error if GitHub workspace)

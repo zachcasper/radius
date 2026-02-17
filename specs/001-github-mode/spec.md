@@ -35,7 +35,7 @@ This mode complements the existing "Radius on Kubernetes" mode, giving users the
 |---------|---------------------|-----------------|
 | **Environments** | Created via `rad environment create`; stored in the Radius control plane | Created via `rad environment create`; stored using GitHub Environments API |
 | **Credentials** | Created via `rad credential register` | OIDC configured automatically as part of `rad environment create` |
-| **Resource Types** | Created via `rad resource-type create` | A manifest of resource type definitions is specified in a GitHub repository variable (`RADIUS_RESOURCE_TYPES_MANIFEST`), set during `rad init` |
+| **Resource Types** | Created via `rad resource-type create` | A resource types repository is specified in a GitHub repository variable (`RESOURCE_TYPES_REPO`), set during `rad init`. The repo contains resource type definitions (`types.yaml`), pre-built Bicep extensions (`.tgz` files), and a `bicepconfig.json`. |
 | **Recipes** | Recipe Packs stored in the control plane and referenced in the Environment resource | An environment-scoped variable (`RADIUS_RECIPES_MANIFEST`) points to a manifest of recipes for each resource type |
 | **Resource Groups** | Managed via `rad group` commands | No Radius resource groups |
 | **Workspaces** | Points to a kube context describing the Kubernetes cluster running Radius | A URL to the GitHub repository |
@@ -43,7 +43,7 @@ This mode complements the existing "Radius on Kubernetes" mode, giving users the
 ### Key Characteristics
 
 - **Two-phase deployment**: `rad deployment create` generates a deployment plan and artifacts; `rad deployment apply` executes the plan. This separation enables review, auditability, and incremental adoption (users can generate plans with Radius but deploy with their own tools).
-- **GitHub API storage**: Environment configuration stored as GitHub Environment-scoped variables; resource types manifest referenced via GitHub repository variable
+- **GitHub API storage**: Environment configuration stored as GitHub Environment-scoped variables; resource types repository referenced via GitHub repository variable
 - **GitHub Actions execution**: Both `rad deployment create` and `rad deployment apply` dispatch GitHub Action workflows that run in ephemeral k3d clusters
 - **OIDC authentication**: Secure, credential-free authentication to AWS and Azure via OIDC federation
 - **CLI-driven**: Familiar `rad` CLI commands: `rad init --github`, `rad environment create`, `rad deployment create`, `rad deployment apply`
@@ -56,13 +56,13 @@ A developer wants to use Radius with their existing GitHub repository. They run 
 
 **Why this priority**: This is the entry point for all Radius on GitHub functionality. Without initialization, no other features can be used.
 
-**Independent Test**: Can be fully tested by running `rad init` on a fresh GitHub repository clone and verifying the workspace is registered, GitHub Actions workflows are created, the RADIUS_RESOURCE_TYPES_MANIFEST variable is set, and changes are committed.
+**Independent Test**: Can be fully tested by running `rad init` on a fresh GitHub repository clone and verifying the workspace is registered, GitHub Actions workflows are created, the RESOURCE_TYPES_REPO variable is set, and changes are committed.
 
 **Acceptance Scenarios**:
 
-1. **Given** a cloned GitHub repository without Radius configuration, **When** the user runs `rad init --github`, **Then** the system generates GitHub Actions workflow files, uses the GitHub API to create a repository variable `RADIUS_RESOURCE_TYPES_MANIFEST` with the default value `https://github.com/zachcasper/radius-config/types.yaml`, updates `~/.rad/config.yaml` with a `github` kind workspace, commits changes with trailer `Radius-Action: init`, and pushes to the remote.
+1. **Given** a cloned GitHub repository without Radius configuration, **When** the user runs `rad init --github`, **Then** the system generates GitHub Actions workflow files, uses the GitHub API to create a repository variable `RESOURCE_TYPES_REPO` with the default value `https://github.com/zachcasper/resource-types-contrib/tree/github-radius`, updates `~/.rad/config.yaml` with a `github` kind workspace, commits changes with trailer `Radius-Action: init`, and pushes to the remote.
 
-2. **Given** a cloned GitHub repository, **When** the user runs `rad init --github --resource-types-manifest https://github.com/myorg/radius-config/types.yaml`, **Then** the system sets `RADIUS_RESOURCE_TYPES_MANIFEST` to `https://github.com/myorg/radius-config/types.yaml`.
+2. **Given** a cloned GitHub repository, **When** the user runs `rad init --github --resource-types-repo https://github.com/myorg/resource-types-contrib/tree/main`, **Then** the system sets `RESOURCE_TYPES_REPO` to `https://github.com/myorg/resource-types-contrib/tree/main`.
 
 3. **Given** a directory that is not a Git repository, **When** the user runs `rad init --github`, **Then** the system displays an error message instructing the user to initialize a Git repository first or clone from GitHub.
 
@@ -86,11 +86,11 @@ A platform engineer needs to create a deployment target for an application. They
 
 **Acceptance Scenarios**:
 
-1. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider azure`, **Then** the system creates a GitHub Environment named "dev" via the GitHub API, follows the OIDC setup flow (prompting for subscription, resource group, AKS cluster, namespace, and federated credential), and creates environment variables: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP_NAME`, `AKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `RADIUS_RECIPES_MANIFEST` (defaulting to `https://github.com/zachcasper/radius-config/recipes-azure-bicep.yaml`).
+1. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider azure`, **Then** the system creates a GitHub Environment named "dev" via the GitHub API, follows the OIDC setup flow (prompting for subscription, resource group, AKS cluster, namespace, and federated credential), and creates environment variables: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP_NAME`, `AKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `RADIUS_RECIPES_MANIFEST` (defaulting to the `recipes-azure-bicep.yaml` from the resource types repository).
 
-2. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider azure --deployment-tool terraform`, **Then** the system sets `RADIUS_RECIPES_MANIFEST` to `https://github.com/zachcasper/radius-config/recipes-azure-terraform.yaml`.
+2. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider azure --deployment-tool terraform`, **Then** the system sets `RADIUS_RECIPES_MANIFEST` to the `recipes-azure-terraform.yaml` from the resource types repository.
 
-3. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider aws`, **Then** the system creates a GitHub Environment named "dev" via the GitHub API, follows the OIDC setup flow (prompting for account ID, region, EKS cluster, namespace, and IAM role), and creates environment variables: `AWS_ACCOUNT_ID`, `AWS_REGION`, `AWS_IAM_ROLE_NAME`, `EKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, and `RADIUS_RECIPES_MANIFEST` (defaulting to `https://github.com/zachcasper/radius-config/recipes-aws-terraform.yaml`).
+3. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider aws`, **Then** the system creates a GitHub Environment named "dev" via the GitHub API, follows the OIDC setup flow (prompting for account ID, region, EKS cluster, namespace, and IAM role), and creates environment variables: `AWS_ACCOUNT_ID`, `AWS_REGION`, `AWS_IAM_ROLE_NAME`, `EKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, and `RADIUS_RECIPES_MANIFEST` (defaulting to the `recipes-aws-terraform.yaml` from the resource types repository).
 
 4. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider aws --deployment-tool bicep`, **Then** the system returns an error because Bicep is not supported as a deployment tool for AWS.
 
@@ -302,12 +302,12 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - What happens when OIDC role permissions are insufficient? Deployment fails with clear error message indicating missing permissions and which permissions are needed.
 - What happens when a deployment is in progress and another is requested? GitHub Actions concurrency groups queue the new run until the in-progress run completes; parallel deployments to different environments are unaffected.
 - What happens when network connectivity to GitHub is lost during deployment? The GitHub Action retries or fails gracefully with state preserved in Terraform state.
-- What happens when the config repository is unavailable during `rad init`? Error with clear message and retry instructions.
+- What happens when the resource types repository is unavailable during workflow execution? Workflow fails with clear error message indicating the repository could not be cloned.
 - What happens when Terraform state conflicts occur? Deployment fails with instructions to resolve state conflicts manually.
 - What happens when the k3d cluster fails to start in GitHub Actions? Workflow fails with diagnostic information about resource constraints or configuration issues.
 - What happens when the GitHub API rate limit is exceeded during `rad environment create`? System displays a clear error with the rate limit reset time and suggests retrying later.
 - What happens when the user's GitHub token lacks permissions to create environments or variables? System displays an error listing the required permissions.
-- What happens when `--resource-types-manifest` points to a non-existent URL? System validates the URL and returns an error if the manifest is not accessible.
+- What happens when `--resource-types-repo` points to a non-existent repository? System validates the URL format but does not fetch the repository at init time; errors surface when the workflow clones the repo.
 - What happens when `rad deployment create --application` references a name not found in `.radius/applications/`? System returns an error listing available application definitions.
 - What happens when GitHub Environment variables are missing or incomplete? `rad deployment apply` validates required variables before deployment and lists missing values.
 - What happens when `rad environment create` is run with `--provider aws --deployment-tool bicep`? System returns an error because Bicep is only supported for Azure.
@@ -326,9 +326,9 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-002**: `rad init` MUST NOT create a `.radius/types.yaml` manifest file.
 - **FR-003**: `rad init` MUST NOT create a `.radius/recipes.yaml` manifest file.
 - **FR-004**: `rad init` MUST NOT create a `.radius/env.*.yaml` environment file.
-- **FR-005**: `rad init --github` MUST use the GitHub API to create a repository variable named `RADIUS_RESOURCE_TYPES_MANIFEST`.
-- **FR-006**: `RADIUS_RESOURCE_TYPES_MANIFEST` MUST default to `https://github.com/zachcasper/radius-config/types.yaml`.
-- **FR-007**: `rad init` MUST accept a `--resource-types-manifest` flag that overrides the default resource types manifest URL. When specified, `RADIUS_RESOURCE_TYPES_MANIFEST` is set to the provided URL.
+- **FR-005**: `rad init --github` MUST use the GitHub API to create a repository variable named `RESOURCE_TYPES_REPO`.
+- **FR-006**: `RESOURCE_TYPES_REPO` MUST default to `https://github.com/zachcasper/resource-types-contrib/tree/github-radius`.
+- **FR-007**: `rad init` MUST accept a `--resource-types-repo` flag that overrides the default resource types repository URL. When specified, `RESOURCE_TYPES_REPO` is set to the provided URL.
 - **FR-008**: System MUST validate the current directory is a Git repository by checking for `.git` directory.
 - **FR-009**: System MUST validate the Git repository has a GitHub remote (origin) by parsing the remote URL.
 - **FR-010**: System MUST verify GitHub CLI (`gh`) is authenticated by running `gh auth status`.
@@ -358,8 +358,8 @@ A developer or reviewer needs to understand what changes a deployment will make 
   - `AZURE_TENANT_ID`
   - `AZURE_CLIENT_ID`
   - `RADIUS_RECIPES_MANIFEST`
-- **FR-026**: When `--provider` is `azure` and `--deployment-tool` is `bicep` (or default), `RADIUS_RECIPES_MANIFEST` MUST default to `https://github.com/zachcasper/radius-config/recipes-azure-bicep.yaml`.
-- **FR-027**: When `--provider` is `azure` and `--deployment-tool` is `terraform`, `RADIUS_RECIPES_MANIFEST` MUST default to `https://github.com/zachcasper/radius-config/recipes-azure-terraform.yaml`.
+- **FR-026**: When `--provider` is `azure` and `--deployment-tool` is `bicep` (or default), `RADIUS_RECIPES_MANIFEST` MUST default to the `default-config/recipes-azure-bicep.yaml` file from the resource types repository specified by `RESOURCE_TYPES_REPO`.
+- **FR-027**: When `--provider` is `azure` and `--deployment-tool` is `terraform`, `RADIUS_RECIPES_MANIFEST` MUST default to the `default-config/recipes-azure-terraform.yaml` file from the resource types repository specified by `RESOURCE_TYPES_REPO`.
 - **FR-028**: For AWS environments, system MUST follow the same OIDC setup flow as the current `rad environment connect` (prompting for account ID, region, EKS cluster, namespace, and IAM role).
 - **FR-029**: For AWS environments, system MUST create the following environment variables within the GitHub Environment:
   - `AWS_ACCOUNT_ID`
@@ -368,7 +368,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
   - `EKS_CLUSTER_NAME`
   - `KUBERNETES_NAMESPACE`
   - `RADIUS_RECIPES_MANIFEST`
-- **FR-030**: When `--provider` is `aws`, `RADIUS_RECIPES_MANIFEST` MUST default to `https://github.com/zachcasper/radius-config/recipes-aws-terraform.yaml`.
+- **FR-030**: When `--provider` is `aws`, `RADIUS_RECIPES_MANIFEST` MUST default to the `default-config/recipes-aws-terraform.yaml` file from the resource types repository specified by `RESOURCE_TYPES_REPO`.
 - **FR-030-A**: System MUST NOT store cloud secret keys locally; only OIDC-related identifiers are stored as GitHub Environment variables.
 - **FR-030-E**: After storing environment variables, `rad environment create` MUST dispatch a lightweight GitHub Action authentication test workflow that verifies OIDC federation works by authenticating to the cloud provider.
 - **FR-030-F**: The authentication test workflow MUST use the same GitHub Environment and OIDC credentials that deployment workflows will use.
@@ -408,12 +408,12 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-042**: `rad deployment create` MUST accept an optional `--environment` (or `-e` or `--env`) flag specifying the target environment.
 - **FR-043**: When exactly one GitHub Environment exists for the repository, `--environment` MAY be omitted and the system MUST auto-select that environment.
 - **FR-044**: When multiple GitHub Environments exist, `--environment` MUST be required. The system MUST error with a message listing available environments if omitted.
-- **FR-045**: `rad deployment create` MUST dispatch a GitHub Action workflow that creates a k3d cluster, installs the Radius control plane, and invokes the plan API to generate deployment artifacts.
+- **FR-045**: `rad deployment create` MUST dispatch a GitHub Action workflow that clones the resource types repository (`RESOURCE_TYPES_REPO`), copies `bicepconfig.json` and Bicep extension `.tgz` files to the application repo root, creates a k3d cluster, installs the Radius control plane, registers resource types from `default-config/types.yaml`, and invokes the plan API to generate deployment artifacts.
 - **FR-045-A**: `rad deployment create` MUST verify that the local working tree has no uncommitted changes before dispatching the workflow. If uncommitted changes exist, the system MUST error with a message instructing the user to commit all changes first.
 - **FR-045-B**: `rad deployment create` MUST verify that all local commits have been pushed to the remote before dispatching the workflow. If unpushed commits exist, the system MUST error with a message instructing the user to push changes first.
 - **FR-045-C**: The deployment MUST be scoped to the current HEAD commit hash by default. The commit hash provides traceability between the application definition that was deployed and the resulting artifacts.
 - **FR-045-D**: `rad deployment create` MUST accept an optional `--git-commit` flag to scope the deployment to a specific commit hash instead of the current HEAD.
-- **FR-046**: The dispatched workflow MUST read environment configuration from GitHub Environment variables (e.g., `AZURE_SUBSCRIPTION_ID`, `AKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, `RADIUS_RECIPES_MANIFEST`).
+- **FR-046**: The dispatched workflow MUST read environment configuration from GitHub Environment variables (e.g., `AZURE_SUBSCRIPTION_ID`, `AKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, `RADIUS_RECIPES_MANIFEST`) and the resource types repository URL from the `RESOURCE_TYPES_REPO` repository variable.
 - **FR-047**: The dispatched workflow MUST commit the generated deployment plan (`deploy.yaml`) and artifact directories to `.radius/deploy/<APP>/<ENV>/<COMMIT_HASH>/` in the repository.
 - **FR-047-A**: `rad deployment create` MUST create the `.radius/deploy/` directory structure if it does not already exist.
 - **FR-048**: `rad deployment create` MUST only be available in GitHub mode. In Kubernetes mode, the system MUST return an error indicating this command is not available.
@@ -430,15 +430,15 @@ A developer or reviewer needs to understand what changes a deployment will make 
 
 #### Configuration Data Storage
 
-- **FR-062**: Resource Types manifest MUST be stored as a GitHub repository variable `RADIUS_RESOURCE_TYPES_MANIFEST` set during `rad init`.
-- **FR-063**: The `RADIUS_RESOURCE_TYPES_MANIFEST` variable MUST contain the URL to the types.yaml file in the config repository (e.g., `https://github.com/zachcasper/radius-config/types.yaml`).
+- **FR-062**: Resource types repository MUST be stored as a GitHub repository variable `RESOURCE_TYPES_REPO` set during `rad init`.
+- **FR-063**: The `RESOURCE_TYPES_REPO` variable MUST contain the URL to the resource types repository (e.g., `https://github.com/zachcasper/resource-types-contrib/tree/github-radius`). The URL format is `https://github.com/<owner>/<repo>/tree/<branch>`.
 - **FR-064**: Recipes manifest MUST be stored as a GitHub Environment-scoped variable `RADIUS_RECIPES_MANIFEST` set during `rad environment create`.
-- **FR-065**: The `RADIUS_RECIPES_MANIFEST` variable MUST contain the URL to the appropriate recipes manifest file in the config repository based on cloud provider and deployment tool (e.g., `https://github.com/zachcasper/radius-config/recipes-aws-terraform.yaml`).
+- **FR-065**: The `RADIUS_RECIPES_MANIFEST` variable MUST contain the URL to the appropriate recipes manifest file in the resource types repository based on cloud provider and deployment tool.
 - **FR-066**: Cloud provider configuration MUST be stored as GitHub Environment-scoped variables set during `rad environment create`.
 - **FR-067**: Azure environment variables MUST include the variables listed in FR-025: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP_NAME`, `AKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`.
 - **FR-067-A**: AWS environment variables MUST include the variables listed in FR-029: `AWS_ACCOUNT_ID`, `AWS_REGION`, `AWS_IAM_ROLE_NAME`, `EKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`.
 - **FR-067-B**: Environment files (`.radius/env.*.yaml`) MUST NOT be used; all environment configuration is stored in GitHub Environment variables.
-- **FR-067-C**: Resource types files (`.radius/types.yaml`) MUST NOT be used; the types manifest reference is stored as a GitHub repository variable.
+- **FR-067-C**: Resource types files (`.radius/types.yaml`) MUST NOT be used; the resource types repository reference is stored as a GitHub repository variable.
 - **FR-068**: Application Definitions MUST be stored in `.radius/applications/<APP_NAME>.bicep`.
 - **FR-068-A**: System MUST provide `rad app model` command that creates a sample application definition file at `.radius/applications/todolist.bicep` with a `Radius.Core/applications` resource, a `Radius.Compute/containers` resource, and a `Radius.Data/postgreSqlDatabases` resource. This is a placeholder for future AI-assisted modeling functionality.
 - **FR-068-B**: `rad app model` MUST create the `.radius/applications/` directory if it does not already exist.
@@ -449,7 +449,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 
 #### Command Behavior Changes
 
-- **FR-073**: In GitHub mode, `rad resource-type` commands MUST operate against the resource types manifest referenced by `RADIUS_RESOURCE_TYPES_MANIFEST`.
+- **FR-073**: In GitHub mode, `rad resource-type` commands MUST operate against the resource type definitions in the repository referenced by `RESOURCE_TYPES_REPO`.
 - **FR-074**: In GitHub mode, `rad environment` commands (`create`, `delete`, `list`) MUST operate against GitHub Environments via the GitHub API.
 - **FR-075**: In GitHub mode, `rad recipe` commands MUST operate against the recipes manifest referenced by the environment's `RADIUS_RECIPES_MANIFEST` variable.
 - **FR-076**: Users wanting Kubernetes-based Radius MUST use `rad install kubernetes` (not affected by new `rad init`).
@@ -474,7 +474,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 
 - **FR-086**: GitHub Action runner MUST be capable of running k3d cluster (approximately 45 seconds startup, ~875 MiB download).
 - **FR-087**: k3d cluster MUST map `/github_workspace` in containers to `${GITHUB_WORKSPACE}` for file access.
-- **FR-088**: Radius control plane in k3d MUST be configured to use the types manifest from `RADIUS_RESOURCE_TYPES_MANIFEST` and the recipes manifest from the target environment's `RADIUS_RECIPES_MANIFEST` variable.
+- **FR-088**: The deployment workflow MUST clone the resource types repository specified by `RESOURCE_TYPES_REPO`. The workflow MUST copy `default-config/bicepconfig.json` and all `default-config/*.tgz` Bicep extension archives into the application repository's root directory so that Bicep's parent-directory resolution finds them when compiling `.radius/applications/*.bicep` files (Bicep searches from the `.bicep` file's directory upward through parent directories for `bicepconfig.json`). The workflow MUST then register resource types by reading `default-config/types.yaml` and invoking `rad resource-type create --from-file` for each referenced definition. The recipes manifest from the target environment's `RADIUS_RECIPES_MANIFEST` variable MUST also be loaded.
 - **FR-088-A**: Radius installation on k3d MUST use `--skip-contour-install` flag (ingress not needed in ephemeral cluster) and `--set dashboard.enabled=false` (dashboard not needed in CI).
 - **FR-089**: GitHub Actions workflow MUST leverage GitHub PR Checks for deployment status reporting.
 #### CLI Workflow Dispatch UX
@@ -502,6 +502,19 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - **FR-090**: A new `Radius.Core/applications` Resource Type MUST be created in the `radius-project/resource-types-contrib` repository.
 - **FR-091**: The `Radius.Core/applications` Resource Type MUST have an `environment` property of type string.
 - **FR-092**: Application definitions MUST declare an application resource using `Radius.Core/applications@2025-08-01-preview`.
+
+#### Resource Types Repository
+
+- **FR-092-A**: The resource types repository (`RESOURCE_TYPES_REPO`) MUST contain a `default-config/` directory with:
+  - `types.yaml` — a manifest of resource type definition YAML files with relative paths to each definition
+  - `bicepconfig.json` — a Bicep configuration file that maps extension names to pre-built `.tgz` extension files
+  - Pre-built Bicep extension `.tgz` files for each resource type (e.g., `radius-compute-containers.tgz`, `radius-data-postgresqldatabases.tgz`)
+  - `generate-bicep-extensions.sh` — a script to regenerate the `.tgz` files and `bicepconfig.json` from the type definitions
+- **FR-092-B**: The deployment workflow MUST clone the resource types repository and copy `default-config/bicepconfig.json` and all `default-config/*.tgz` Bicep extension archives into the application repository's root directory. Bicep resolves `bicepconfig.json` by searching from the `.bicep` file's directory upward through parent directories; placing the config at the app repo root ensures `.radius/applications/*.bicep` files find it. The `.tgz` extension paths in `bicepconfig.json` (e.g., `"./radius-compute-containers.tgz"`) resolve relative to the `bicepconfig.json` location.
+- **FR-092-C**: When the Radius control plane starts in the k3d cluster, the workflow MUST read `default-config/types.yaml` and register each resource type by reading the referenced definition YAML file and creating the resource type within the Radius control plane.
+- **FR-092-D**: The `types.yaml` manifest MUST use relative paths for `definitionLocation` values (e.g., `../Compute/containers/containers.yaml`) that resolve within the cloned repository.
+- **FR-092-E**: The `bicepconfig.json` MUST map each resource type to a relative path `.tgz` extension file (e.g., `"radius-compute-containers": "./radius-compute-containers.tgz"`) and include a `"radius"` entry pointing to the Radius extension registry (`br:biceptypes.azurecr.io/radius:latest`).
+- **FR-092-F**: Application definition files (`.radius/applications/*.bicep`) MUST use the extension names defined in the resource types repository's `bicepconfig.json` (e.g., `extension radius` resolves to the `"radius"` entry in `bicepconfig.json`).
 
 #### Terraform State Management
 
@@ -546,7 +559,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 #### Workflow Installation
 
 - **FR-112**: The `rad init --github` command MUST generate `.github/workflows/radius-deployment-create.yml`, `.github/workflows/radius-deployment-apply.yml`, `.github/workflows/radius-destroy.yml`, and `.github/workflows/radius-auth-test.yml` workflow templates that use `rad deployment create`, `rad deployment apply`, `rad app delete`, and OIDC authentication verification respectively.
-- **FR-113**: The generated workflows MUST reference GitHub Environment variables for cloud provider configuration and recipe manifests.
+- **FR-113**: The generated workflows MUST reference GitHub Environment variables for cloud provider configuration and recipe manifests, and the `RESOURCE_TYPES_REPO` repository variable for the resource types repository.
 - **FR-113-A**: The generated workflow MUST use the `environment:` key in the job definition to scope GitHub Environment variables to the target deployment environment.
 - **FR-114**: Generated workflow files MUST be included in the initial commit created by `rad init --github`.
 
@@ -560,9 +573,9 @@ A developer or reviewer needs to understand what changes a deployment will make 
 
 - **GitHub Environment**: A GitHub Environments API deployment target created via `rad environment create`. Stores cloud provider configuration (subscription IDs, cluster names, namespaces, OIDC credentials) and recipes manifest URL as environment-scoped variables. Corresponds to a deployment target such as "dev", "staging", or "production".
 
-- **Config Repository**: External repository (e.g., `zachcasper/radius-config`) hosting resource types manifest (`types.yaml`) and recipes manifests (`recipes-aws-terraform.yaml`, `recipes-azure-bicep.yaml`, `recipes-azure-terraform.yaml`). Referenced via URLs stored in GitHub repository and environment variables.
+- **Config Repository**: External repository (e.g., `zachcasper/resource-types-contrib`) hosting resource type definitions, pre-built Bicep extensions, `bicepconfig.json`, and recipes manifests (`recipes-aws-terraform.yaml`, `recipes-azure-bicep.yaml`, `recipes-azure-terraform.yaml`). Referenced via the `RESOURCE_TYPES_REPO` repository variable. The `default-config/` directory contains the types manifest, Bicep configuration, and extension files.
 
-- **Resource Type**: Definition of infrastructure resource schemas stored externally in the config repository or `radius-project/resource-types-contrib` repository. Referenced via the `RADIUS_RESOURCE_TYPES_MANIFEST` repository variable. Includes types like `Radius.Core/applications`, `Radius.Compute/containers`, `Radius.Data/postgreSqlDatabases`, etc.
+- **Resource Type**: Definition of infrastructure resource schemas stored in the resource types repository (`RESOURCE_TYPES_REPO`), e.g., `radius-project/resource-types-contrib`. The repository contains type definition YAML files, pre-built Bicep extensions (`.tgz` files), and a `bicepconfig.json`. Includes types like `Radius.Core/applications`, `Radius.Compute/containers`, `Radius.Data/postgreSqlDatabases`, etc.
 
 - **Recipe**: Implementation template for provisioning resources. Referenced via the `RADIUS_RECIPES_MANIFEST` environment variable. Default deployment tools: Terraform for AWS, Bicep for Azure. Organized by provider and deployment tool in the config repository.
 
@@ -594,7 +607,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - Users have the GitHub CLI (`gh`) installed and authenticated on their workstation.
 - Users have cloud provider CLIs (`aws` or `az`) installed and authenticated for OIDC setup.
 - The GitHub repository has GitHub Actions enabled with sufficient minutes quota for workflow execution.
-- A config repository (e.g., `zachcasper/radius-config`) hosts resource types and recipes manifests with stable URLs.
+- A resource types repository (e.g., `zachcasper/resource-types-contrib`) hosts resource type definitions, Bicep extensions, and recipes manifests with stable URLs.
 - GitHub Action runners have sufficient resources to run k3d clusters (standard GitHub-hosted runners are adequate).
 - Users are familiar with Git workflows and GitHub.
 - Application definition creation is handled by a separate project/workflow that outputs `.radius/applications/<APP>.bicep` files. `rad app model` provides a starting point.
@@ -615,7 +628,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 - GitHub CLI (`gh`) must be available on user workstations for initialization, environment management, and deployment.
 - GitHub Actions must be available and enabled for the repository.
 - GitHub Environments API must be available for storing environment-scoped configuration.
-- Config repository (e.g., `zachcasper/radius-config`) must host resource types and recipes manifests.
+- Resource types repository (e.g., `zachcasper/resource-types-contrib`) must host resource type definitions, Bicep extensions, and recipes manifests.
 - Cloud providers (AWS/Azure) must support OIDC federation with GitHub Actions.
 - k3d must be installable and runnable on GitHub Action runners.
 - Terraform must be available for recipe execution (installed in GitHub Actions).
@@ -650,7 +663,7 @@ Radius on GitHub operates with these principles:
 
 - **Two-phase deployment**: `rad deployment create` generates a deployment plan and artifacts; `rad deployment apply` executes the plan. This separation enables review, auditability, and incremental adoption.
 - **Ephemeral control plane**: Runs on a k3d cluster in a GitHub Action when triggered by `rad deployment create` or `rad deployment apply`.
-- **GitHub API storage**: Environment configuration stored as GitHub Environment-scoped variables; resource types manifest referenced via GitHub repository variable.
+- **GitHub API storage**: Environment configuration stored as GitHub Environment-scoped variables; resource types repository referenced via GitHub repository variable.
 - **CLI consistency**: Uses the existing `rad` CLI with new commands (`rad init --github`, `rad environment create`, `rad deployment create`, `rad deployment apply`).
 - **Git-native artifacts**: Application definitions (`.radius/applications/`), deployment plans and artifacts (`.radius/deploy/`) stored in the repository.
 - **No persistent state**: No data is persistent in the Radius control plane; state is in GitHub (variables, environments) and the repository (definitions, artifacts).
@@ -665,7 +678,7 @@ Set by `rad init --github`:
 
 | Variable | Value | Scope |
 |----------|-------|-------|
-| `RADIUS_RESOURCE_TYPES_MANIFEST` | `https://github.com/zachcasper/radius-config/types.yaml` | Repository |
+| `RESOURCE_TYPES_REPO` | `https://github.com/zachcasper/resource-types-contrib/tree/github-radius` | Repository |
 
 ### B.2 GitHub Environment Variables (Azure)
 
@@ -679,7 +692,7 @@ Set by `rad environment create dev --provider azure` for an Azure environment:
 | `KUBERNETES_NAMESPACE` | `default` | Environment: dev |
 | `AZURE_TENANT_ID` | `87654321-4321-4321-4321-210987654321` | Environment: dev |
 | `AZURE_CLIENT_ID` | `abcdefgh-abcd-abcd-abcd-abcdefghijkl` | Environment: dev |
-| `RADIUS_RECIPES_MANIFEST` | `https://github.com/zachcasper/radius-config/recipes-azure-bicep.yaml` | Environment: dev |
+| `RADIUS_RECIPES_MANIFEST` | `https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-bicep.yaml` | Environment: dev |
 
 ### B.3 GitHub Environment Variables (AWS)
 
@@ -692,7 +705,7 @@ Set by `rad environment create staging --provider aws` for an AWS environment:
 | `AWS_IAM_ROLE_NAME` | `radius-github-oidc` | Environment: staging |
 | `EKS_CLUSTER_NAME` | `eks-staging-cluster` | Environment: staging |
 | `KUBERNETES_NAMESPACE` | `default` | Environment: staging |
-| `RADIUS_RECIPES_MANIFEST` | `https://github.com/zachcasper/radius-config/recipes-aws-terraform.yaml` | Environment: staging |
+| `RADIUS_RECIPES_MANIFEST` | `https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-aws-terraform.yaml` | Environment: staging |
 ### B.4 Workspace
 
 ```yaml

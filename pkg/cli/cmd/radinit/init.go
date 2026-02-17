@@ -98,8 +98,8 @@ rad init --set-file global.rootCA.cert=/path/to/rootCA.crt
 ## Initialize in GitHub mode (stores state in repository instead of Kubernetes)
 rad init --github
 
-## Initialize in GitHub mode with a custom resource types manifest URL
-rad init --github --resource-types-manifest https://example.com/types.yaml
+## Initialize in GitHub mode with a custom resource types repo URL
+rad init --github --resource-types-repo https://github.com/example/resource-types/tree/main
 `,
 		Args: cobra.ExactArgs(0),
 		RunE: framework.RunCommand(runner),
@@ -113,7 +113,7 @@ rad init --github --resource-types-manifest https://example.com/types.yaml
 
 	// GitHub mode flags
 	cmd.Flags().BoolVar(&runner.GitHub, "github", false, "Initialize in GitHub mode (stores state in repository)")
-	cmd.Flags().StringVar(&runner.ResourceTypesManifest, "resource-types-manifest", "", "URL to resource types manifest for GitHub mode")
+	cmd.Flags().StringVar(&runner.ResourceTypesRepo, "resource-types-repo", "", "URL to resource types repository for GitHub mode")
 	return cmd, runner
 }
 
@@ -164,8 +164,8 @@ type Runner struct {
 	// GitHub indicates whether to initialize in GitHub mode.
 	GitHub bool
 
-	// ResourceTypesManifest is the URL to a custom resource types manifest for GitHub mode.
-	ResourceTypesManifest string
+	// ResourceTypesRepo is the URL to a custom resource types repository for GitHub mode.
+	ResourceTypesRepo string
 
 	// githubOpts holds GitHub-specific options populated during validation.
 	githubOpts *githubInitOptions

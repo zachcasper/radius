@@ -951,22 +951,40 @@ func generateDeploymentCreateSteps() []WorkflowStep {
 				"path": "app",
 			},
 		},
-		// Step 5: Install k3d for ephemeral cluster
+		// Step 5: Clone resource types repository
+		// FR-092-B: Clone resource types repo for bicepconfig.json and Bicep extensions
+		{
+			Name: "Clone resource types repository",
+			Env: map[string]string{
+				"RESOURCE_TYPES_REPO": "${{ vars.RESOURCE_TYPES_REPO }}",
+			},
+			Run: `# Parse RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
+REPO_PATH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
+BRANCH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
+
+git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
+
+# Copy bicepconfig.json and Bicep extension archives to app directory
+# so rad deploy can resolve Bicep extensions (Bicep searches parent dirs from .bicep file)
+cp resource-types/default-config/bicepconfig.json app/
+cp resource-types/default-config/*.tgz app/`,
+		},
+		// Step 6: Install k3d for ephemeral cluster
 		{
 			Name: "Install k3d",
 			Run:  "curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash",
 		},
-		// Step 6: Create ephemeral k3d cluster
+		// Step 7: Create ephemeral k3d cluster
 		{
 			Name: "Create k3d cluster",
 			Run:  "k3d cluster create radius-ephemeral --volume $GITHUB_WORKSPACE/app:/github_workspace",
 		},
-		// Step 7: Export kubeconfig
+		// Step 8: Export kubeconfig
 		{
 			Name: "Export kubeconfig",
 			Run:  "k3d kubeconfig get radius-ephemeral > /tmp/kubeconfig.yaml",
 		},
-		// Step 8: Install Radius control plane
+		// Step 9: Install Radius control plane
 		// FR-088-A: Skip contour install and disable dashboard
 		{
 			Name: "Install Radius control plane",
@@ -977,7 +995,20 @@ func generateDeploymentCreateSteps() []WorkflowStep {
 				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
 			},
 		},
-		// Step 9: Cloud authentication (reads from GitHub Environment variables)
+		// Step 10: Register resource types from types.yaml
+		// FR-092-C: Read types.yaml and register each resource type in the control plane
+		{
+			Name: "Register resource types",
+			Run: `cd resource-types/default-config
+for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
+  echo "Registering resource type from $def_file..."
+  rad resource-type create --from-file "$def_file"
+done`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// Step 11: Cloud authentication (reads from GitHub Environment variables)
 		// The workflow uses the GitHub Environment specified in the job,
 		// so environment variables are automatically available.
 		{
@@ -1084,22 +1115,40 @@ func generateDeploymentApplySteps() []WorkflowStep {
 				"path": "app",
 			},
 		},
-		// Step 5: Install k3d for ephemeral cluster
+		// Step 5: Clone resource types repository
+		// FR-092-B: Clone resource types repo for bicepconfig.json and Bicep extensions
+		{
+			Name: "Clone resource types repository",
+			Env: map[string]string{
+				"RESOURCE_TYPES_REPO": "${{ vars.RESOURCE_TYPES_REPO }}",
+			},
+			Run: `# Parse RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
+REPO_PATH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
+BRANCH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
+
+git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
+
+# Copy bicepconfig.json and Bicep extension archives to app directory
+# so rad deploy can resolve Bicep extensions (Bicep searches parent dirs from .bicep file)
+cp resource-types/default-config/bicepconfig.json app/
+cp resource-types/default-config/*.tgz app/`,
+		},
+		// Step 6: Install k3d for ephemeral cluster
 		{
 			Name: "Install k3d",
 			Run:  "curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash",
 		},
-		// Step 6: Create ephemeral k3d cluster
+		// Step 7: Create ephemeral k3d cluster
 		{
 			Name: "Create k3d cluster",
 			Run:  "k3d cluster create radius-ephemeral --volume $GITHUB_WORKSPACE/app:/github_workspace",
 		},
-		// Step 7: Export kubeconfig
+		// Step 8: Export kubeconfig
 		{
 			Name: "Export kubeconfig",
 			Run:  "k3d kubeconfig get radius-ephemeral > /tmp/kubeconfig.yaml",
 		},
-		// Step 8: Install Radius control plane
+		// Step 9: Install Radius control plane
 		// FR-088-A: Skip contour install and disable dashboard
 		{
 			Name: "Install Radius control plane",
@@ -1110,7 +1159,20 @@ func generateDeploymentApplySteps() []WorkflowStep {
 				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
 			},
 		},
-		// Step 9: Cloud authentication
+		// Step 10: Register resource types from types.yaml
+		// FR-092-C: Read types.yaml and register each resource type in the control plane
+		{
+			Name: "Register resource types",
+			Run: `cd resource-types/default-config
+for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
+  echo "Registering resource type from $def_file..."
+  rad resource-type create --from-file "$def_file"
+done`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// Step 11: Cloud authentication
 		{
 			Name: "Configure cloud credentials",
 			ID:   "auth",
@@ -1215,6 +1277,24 @@ func generateDestroyStepsV2() []WorkflowStep {
 				"path": "app",
 			},
 		},
+		// Clone resource types repository
+		// FR-092-B: Clone resource types repo for bicepconfig.json and Bicep extensions
+		{
+			Name: "Clone resource types repository",
+			Env: map[string]string{
+				"RESOURCE_TYPES_REPO": "${{ vars.RESOURCE_TYPES_REPO }}",
+			},
+			Run: `# Parse RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
+REPO_PATH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
+BRANCH=$(echo "$RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
+
+git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
+
+# Copy bicepconfig.json and Bicep extension archives to app directory
+# so rad deploy can resolve Bicep extensions (Bicep searches parent dirs from .bicep file)
+cp resource-types/default-config/bicepconfig.json app/
+cp resource-types/default-config/*.tgz app/`,
+		},
 		{
 			Name: "Install k3d",
 			Run:  "curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash",
@@ -1234,6 +1314,19 @@ func generateDestroyStepsV2() []WorkflowStep {
 				"KUBECONFIG":            "/tmp/kubeconfig.yaml",
 				"RADIUS_IMAGE_REGISTRY": "${{ vars.RADIUS_IMAGE_REGISTRY }}",
 				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
+			},
+		},
+		// Register resource types from types.yaml
+		// FR-092-C: Read types.yaml and register each resource type in the control plane
+		{
+			Name: "Register resource types",
+			Run: `cd resource-types/default-config
+for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
+  echo "Registering resource type from $def_file..."
+  rad resource-type create --from-file "$def_file"
+done`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
 		},
 		{
