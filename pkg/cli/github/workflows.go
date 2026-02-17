@@ -1165,14 +1165,6 @@ fi`,
 				"aws-region":     "${{ vars.AWS_REGION }}",
 			},
 		},
-		// Install Terraform for plan generation (terraform plan output)
-		{
-			Name: "Install Terraform",
-			Uses: "hashicorp/setup-terraform@v3",
-			With: map[string]string{
-				"terraform_wrapper": "false",
-			},
-		},
 		// Register recipes from the environment's RADIUS_RECIPES_MANIFEST
 		// FR-088: Download manifest and register each recipe on the Radius environment
 		{
@@ -1187,9 +1179,13 @@ fi`,
 fi
 curl -fsSL "$RADIUS_RECIPES_MANIFEST" -o /tmp/recipes-manifest.yaml
 echo "Registering recipes from manifest..."
-yq e '.recipes | keys | .[]' /tmp/recipes-manifest.yaml | while read -r resource_type; do
-  kind=$(yq e ".recipes.\"${resource_type}\".recipeKind" /tmp/recipes-manifest.yaml)
-  location=$(yq e ".recipes.\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
+# Iterate over top-level keys that have recipeKind (skip comment-only keys like 'recipes')
+for resource_type in $(yq e 'keys | .[]' /tmp/recipes-manifest.yaml); do
+  kind=$(yq e ".\"${resource_type}\".recipeKind // \"\"" /tmp/recipes-manifest.yaml)
+  if [ -z "$kind" ] || [ "$kind" = "null" ]; then
+    continue
+  fi
+  location=$(yq e ".\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
   echo "  Registering $resource_type ($kind)..."
   rad recipe register default \
     --resource-type "$resource_type" \
@@ -1356,7 +1352,6 @@ done`,
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
 		},
-		// Step 13: Cloud authentication
 		// Register recipes from the environment's RADIUS_RECIPES_MANIFEST
 		// FR-088: Download manifest and register each recipe on the Radius environment
 		{
@@ -1371,9 +1366,13 @@ done`,
 fi
 curl -fsSL "$RADIUS_RECIPES_MANIFEST" -o /tmp/recipes-manifest.yaml
 echo "Registering recipes from manifest..."
-yq e '.recipes | keys | .[]' /tmp/recipes-manifest.yaml | while read -r resource_type; do
-  kind=$(yq e ".recipes.\"${resource_type}\".recipeKind" /tmp/recipes-manifest.yaml)
-  location=$(yq e ".recipes.\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
+# Iterate over top-level keys that have recipeKind (skip comment-only keys like 'recipes')
+for resource_type in $(yq e 'keys | .[]' /tmp/recipes-manifest.yaml); do
+  kind=$(yq e ".\"${resource_type}\".recipeKind // \"\"" /tmp/recipes-manifest.yaml)
+  if [ -z "$kind" ] || [ "$kind" = "null" ]; then
+    continue
+  fi
+  location=$(yq e ".\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
   echo "  Registering $resource_type ($kind)..."
   rad recipe register default \
     --resource-type "$resource_type" \

@@ -17,12 +17,10 @@ limitations under the License.
 package deploy
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -899,15 +897,12 @@ func (r *Runner) generatePlan(ctx context.Context, template map[string]any) erro
 			return fmt.Errorf("failed to create artifacts directory: %w", err)
 		}
 
+		r.Output.LogInfo("  Step %d: %s (%s) [%s]", stepNum, tmplRes.Name, tmplRes.Type, recipeKind)
+
 		if recipeKind == "terraform" && recipeLocation != "" {
 			if err := generateDeploymentArtifacts(artifactsDir, tmplRes, appName, envName, recipeLocation); err != nil {
 				return fmt.Errorf("failed to generate artifacts for %s: %w", tmplRes.Name, err)
 			}
-
-			// Run terraform plan to get actual plan output and change counts
-			r.Output.LogInfo("  Step %d: %s (%s)", stepNum, tmplRes.Name, tmplRes.Type)
-			planResult := runTerraformPlan(ctx, artifactsDir, r.Output)
-			step.ExpectedChanges = planResult.Changes
 			terraformSteps++
 		} else if recipeKind == "bicep" {
 			bicepSteps++
@@ -987,79 +982,6 @@ func (r *Runner) resolveEnvironmentRecipes() map[string]*recipeInfo {
 	}
 
 	return recipes
-}
-
-// terraformPlanResult holds the result of running terraform plan.
-type terraformPlanResult struct {
-	Output  string
-	Changes StepChanges
-}
-
-// runTerraformPlan runs terraform init and plan in the given directory,
-// captures the plan output to tfplan.txt, and returns parsed change counts.
-func runTerraformPlan(ctx context.Context, workDir string, out output.Interface) *terraformPlanResult {
-	result := &terraformPlanResult{}
-
-	// Check if terraform is available on the system
-	terraformPath, err := exec.LookPath("terraform")
-	if err != nil {
-		msg := "# Terraform is not installed - plan output unavailable\n# Install terraform to generate actual plan output\n"
-		_ = os.WriteFile(filepath.Join(workDir, "tfplan.txt"), []byte(msg), 0644)
-		out.LogInfo("    Terraform not found, skipping plan")
-		result.Output = msg
-		return result
-	}
-
-	// Run terraform init
-	out.LogInfo("    Running terraform init...")
-	initCmd := exec.CommandContext(ctx, terraformPath, "init", "-no-color", "-input=false")
-	initCmd.Dir = workDir
-	var initBuf bytes.Buffer
-	initCmd.Stdout = &initBuf
-	initCmd.Stderr = &initBuf
-	if err := initCmd.Run(); err != nil {
-		errMsg := fmt.Sprintf("# Terraform init failed:\n%s\n", initBuf.String())
-		_ = os.WriteFile(filepath.Join(workDir, "tfplan.txt"), []byte(errMsg), 0644)
-		out.LogInfo("    Terraform init failed: %v", err)
-		result.Output = errMsg
-		return result
-	}
-
-	// Run terraform plan
-	out.LogInfo("    Running terraform plan...")
-	planCmd := exec.CommandContext(ctx, terraformPath, "plan", "-no-color", "-input=false")
-	planCmd.Dir = workDir
-	var planBuf bytes.Buffer
-	planCmd.Stdout = &planBuf
-	planCmd.Stderr = &planBuf
-	_ = planCmd.Run() // Don't check error — exit code 2 means changes detected
-
-	planOutput := planBuf.String()
-	_ = os.WriteFile(filepath.Join(workDir, "tfplan.txt"), []byte(planOutput), 0644)
-
-	// Parse change counts from plan output
-	result.Output = planOutput
-	result.Changes = parsePlanChanges(planOutput)
-
-	if result.Changes.Add > 0 || result.Changes.Change > 0 || result.Changes.Destroy > 0 {
-		out.LogInfo("    Plan: %d to add, %d to change, %d to destroy",
-			result.Changes.Add, result.Changes.Change, result.Changes.Destroy)
-	}
-
-	return result
-}
-
-// parsePlanChanges extracts add/change/destroy counts from terraform plan output.
-// Looks for the standard "Plan: X to add, Y to change, Z to destroy." line.
-func parsePlanChanges(planOutput string) StepChanges {
-	changes := StepChanges{}
-	for _, line := range strings.Split(planOutput, "\n") {
-		if strings.Contains(line, "Plan:") && strings.Contains(line, "to add") {
-			fmt.Sscanf(line, "Plan: %d to add, %d to change, %d to destroy.", &changes.Add, &changes.Change, &changes.Destroy)
-			break
-		}
-	}
-	return changes
 }
 
 // DeploymentRecord represents deploy.yaml (spec appendix C.1)
