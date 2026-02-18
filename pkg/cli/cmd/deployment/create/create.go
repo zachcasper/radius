@@ -192,10 +192,16 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	ghClient := github.NewClient()
 
+	// Use short commit hash (7 chars) for directory naming
+	shortCommit := r.GitCommit
+	if len(shortCommit) > 7 {
+		shortCommit = shortCommit[:7]
+	}
+
 	inputs := map[string]string{
 		"application": r.Application,
 		"environment": r.Environment,
-		"commit":      r.GitCommit,
+		"commit":      shortCommit,
 	}
 
 	// FR-089-C: Dispatch workflow and watch for run
@@ -247,7 +253,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	r.Output.LogInfo("")
-	r.Output.LogInfo("Plan location: .radius/deploy/%s/%s/%s/", r.Application, r.Environment, r.GitCommit[:7])
+	r.Output.LogInfo("Plan location: .radius/deploy/%s/%s/%s/", r.Application, r.Environment, shortCommit)
 	r.Output.LogInfo("")
 	r.Output.LogInfo("Next step: Run 'rad deployment apply' to execute the plan")
 

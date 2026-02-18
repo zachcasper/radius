@@ -79,7 +79,7 @@ type GitHubEnvironment struct {
 | `KUBERNETES_NAMESPACE` | `default` |
 | `AZURE_TENANT_ID` | `87654321-4321-...` |
 | `AZURE_CLIENT_ID` | `abcdefgh-abcd-...` |
-| `RADIUS_RECIPES_MANIFEST` | `https://github.com/zachcasper/radius-config/recipes-azure-bicep.yaml` |
+| `RADIUS_RECIPES_MANIFEST` | `https://github.com/zachcasper/radius-config/recipes-azure-terraform.yaml` |
 
 **AWS Variables** (FR-029):
 | Variable | Example |
@@ -342,19 +342,17 @@ repository/
 │               └── <commit_hash>/
 │                   ├── deploy.yaml           # DeploymentPlan / DeploymentRecord
 │                   ├── 001-<res>-terraform/
-│                   │   ├── artifacts/
-│                   │   │   ├── main.tf
-│                   │   │   ├── providers.tf
-│                   │   │   ├── variables.tf
-│                   │   │   ├── terraform.tfvars.json
-│                   │   │   ├── tfplan.txt
-│                   │   │   ├── terraform-context.txt
-│                   │   │   └── .terraform.lock.hcl
+│                   │   ├── main.tf
+│                   │   ├── providers.tf
+│                   │   ├── variables.tf
+│                   │   ├── terraform.tfvars.json
+│                   │   ├── tfplan.txt
+│                   │   ├── terraform-context.txt
+│                   │   ├── .terraform.lock.hcl
 │                   │   └── resources/        # Captured resources (after apply)
 │                   │       ├── deployment-db.yaml
 │                   │       └── service-db.yaml
 │                   └── 002-<res>-terraform/
-│                       ├── artifacts/
 │                       └── resources/
 ├── .github/
 │   └── workflows/

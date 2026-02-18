@@ -787,7 +787,7 @@ func GenerateDeploymentCreateWorkflow() *Workflow {
 			"",
 			"The deployment plan at .radius/deploy/<app>/<env>/<commit>/ contains:",
 			"  deploy.yaml - Plan metadata and step definitions",
-			"  <step>/artifacts/ - Terraform files (main.tf, providers.tf, etc.)",
+			"  <step>/ - Terraform files (main.tf, providers.tf, tfplan.txt, etc.)",
 			"  These can be used with 'terraform apply' directly for external tool execution.",
 			"",
 			"GitHub Secrets are available in steps via ${{ secrets.SECRET_NAME }}",

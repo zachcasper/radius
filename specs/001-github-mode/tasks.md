@@ -254,7 +254,7 @@
 ### Implementation for User Story 10
 
 - [X] T041 [US10] Verify deploy.yaml format matches spec appendix C.1 — ensure application name, applicationDefinitionFile, environment, commit, ordered steps with resource/recipe/artifacts/expectedChanges/status, and summary are all present (FR-078 through FR-080-A, US10 scenarios 1-2, 4)
-- [X] T042 [US10] Verify deployment artifact directory structure matches spec appendix C.2 — ensure main.tf, providers.tf, variables.tf, terraform.tfvars.json, tfplan.txt, terraform-context.txt are generated in each step's `artifacts/` directory (US10 scenario 3)
+- [X] T042 [US10] Verify deployment artifact directory structure matches spec appendix C.2 — ensure main.tf, providers.tf, variables.tf, terraform.tfvars.json, tfplan.txt, terraform-context.txt are generated in each step's directory (US10 scenario 3)
 - [X] T043 [P] [US10] Verify plan summary includes totalSteps, terraformSteps, bicepSteps, totalAdd, totalChange, totalDestroy, allVersionsPinned (FR-080, US10 scenario 4)
 - [X] T044 [US10] Add comments in generated deployment artifacts documenting how to use them with external tools — e.g., `# To apply this step manually: cd .radius/deploy/<app>/<env>/<commit>/001-db-terraform/artifacts && terraform init && terraform apply` (US10 scenario 5)
 - [X] T044-A [US10] Verify deployment record structure post-apply — validate deploy.yaml includes `startedAt`, `completedAt`, `status`, git context (`commit`, `branch`, `triggeredBy`), step-level `timing`/`status`/`changes`/`capturedResources`, and execution `summary` (FR-081 through FR-083, FR-085)

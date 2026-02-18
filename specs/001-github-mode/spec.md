@@ -86,9 +86,9 @@ A platform engineer needs to create a deployment target for an application. They
 
 **Acceptance Scenarios**:
 
-1. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider azure`, **Then** the system creates a GitHub Environment named "dev" via the GitHub API, follows the OIDC setup flow (prompting for subscription, resource group, AKS cluster, namespace, and federated credential), and creates environment variables: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP_NAME`, `AKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `RADIUS_RECIPES_MANIFEST` (defaulting to the `recipes-azure-bicep.yaml` from the resource types repository).
+1. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider azure`, **Then** the system creates a GitHub Environment named "dev" via the GitHub API, follows the OIDC setup flow (prompting for subscription, resource group, AKS cluster, namespace, and federated credential), and creates environment variables: `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP_NAME`, `AKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `RADIUS_RECIPES_MANIFEST` (defaulting to the `recipes-azure-terraform.yaml` from the resource types repository).
 
-2. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider azure --deployment-tool terraform`, **Then** the system sets `RADIUS_RECIPES_MANIFEST` to the `recipes-azure-terraform.yaml` from the resource types repository.
+2. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider azure --deployment-tool bicep`, **Then** the system sets `RADIUS_RECIPES_MANIFEST` to the `recipes-azure-bicep.yaml` from the resource types repository.
 
 3. **Given** an initialized GitHub workspace, **When** the user runs `rad environment create dev --provider aws`, **Then** the system creates a GitHub Environment named "dev" via the GitHub API, follows the OIDC setup flow (prompting for account ID, region, EKS cluster, namespace, and IAM role), and creates environment variables: `AWS_ACCOUNT_ID`, `AWS_REGION`, `AWS_IAM_ROLE_NAME`, `EKS_CLUSTER_NAME`, `KUBERNETES_NAMESPACE`, and `RADIUS_RECIPES_MANIFEST` (defaulting to the `recipes-aws-terraform.yaml` from the resource types repository).
 
@@ -358,8 +358,8 @@ A developer or reviewer needs to understand what changes a deployment will make 
   - `AZURE_TENANT_ID`
   - `AZURE_CLIENT_ID`
   - `RADIUS_RECIPES_MANIFEST`
-- **FR-026**: When `--provider` is `azure` and `--deployment-tool` is `bicep` (or default), `RADIUS_RECIPES_MANIFEST` MUST default to the `default-config/recipes-azure-bicep.yaml` file from the resource types repository specified by `RADIUS_RESOURCE_TYPES_REPO`.
-- **FR-027**: When `--provider` is `azure` and `--deployment-tool` is `terraform`, `RADIUS_RECIPES_MANIFEST` MUST default to the `default-config/recipes-azure-terraform.yaml` file from the resource types repository specified by `RADIUS_RESOURCE_TYPES_REPO`.
+- **FR-026**: When `--provider` is `azure` and `--deployment-tool` is `terraform` (or default), `RADIUS_RECIPES_MANIFEST` MUST default to the `default-config/recipes-azure-terraform.yaml` file from the resource types repository specified by `RADIUS_RESOURCE_TYPES_REPO`.
+- **FR-027**: When `--provider` is `azure` and `--deployment-tool` is `bicep`, `RADIUS_RECIPES_MANIFEST` MUST default to the `default-config/recipes-azure-bicep.yaml` file from the resource types repository specified by `RADIUS_RESOURCE_TYPES_REPO`.
 - **FR-028**: For AWS environments, system MUST follow the same OIDC setup flow as the current `rad environment connect` (prompting for account ID, region, EKS cluster, namespace, and IAM role).
 - **FR-029**: For AWS environments, system MUST create the following environment variables within the GitHub Environment:
   - `AWS_ACCOUNT_ID`
@@ -580,7 +580,7 @@ A developer or reviewer needs to understand what changes a deployment will make 
 
 - **Resource Type**: Definition of infrastructure resource schemas stored in the resource types repository (`RADIUS_RESOURCE_TYPES_REPO`), e.g., `radius-project/resource-types-contrib`. The repository contains type definition YAML files, pre-built Bicep extensions (`.tgz` files), and a `bicepconfig.json`. Includes types like `Radius.Core/applications`, `Radius.Compute/containers`, `Radius.Data/postgreSqlDatabases`, etc.
 
-- **Recipe**: Implementation template for provisioning resources. Referenced via the `RADIUS_RECIPES_MANIFEST` environment variable. Default deployment tools: Terraform for AWS, Bicep for Azure. Organized by provider and deployment tool in the config repository.
+- **Recipe**: Implementation template for provisioning resources. Referenced via the `RADIUS_RECIPES_MANIFEST` environment variable. Default deployment tool: Terraform for both AWS and Azure. Organized by provider and deployment tool in the config repository.
 
 - **Application Definition**: Bicep-based declaration of application resources and their relationships; stored in `.radius/applications/<APP_NAME>.bicep`. Uses Radius resource types with environment parameter. Unchanged from current Radius application definition format.
 
@@ -695,7 +695,7 @@ Set by `rad environment create dev --provider azure` for an Azure environment:
 | `KUBERNETES_NAMESPACE` | `default` | Environment: dev |
 | `AZURE_TENANT_ID` | `87654321-4321-4321-4321-210987654321` | Environment: dev |
 | `AZURE_CLIENT_ID` | `abcdefgh-abcd-abcd-abcd-abcdefghijkl` | Environment: dev |
-| `RADIUS_RECIPES_MANIFEST` | `https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-bicep.yaml` | Environment: dev |
+| `RADIUS_RECIPES_MANIFEST` | `https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-terraform.yaml` | Environment: dev |
 
 ### B.3 GitHub Environment Variables (AWS)
 
