@@ -1200,7 +1200,9 @@ done`,
 		{
 			Name: "Generate deployment plan",
 			Run: `cd app
-PLAN_DIR=".radius/deploy/${{ inputs.application }}/${{ inputs.environment }}/${{ inputs.commit }}"
+# Use short commit hash (7 chars) for directory naming
+SHORT_COMMIT="${COMMIT_HASH:0:7}"
+PLAN_DIR=".radius/deploy/${{ inputs.application }}/${{ inputs.environment }}/${SHORT_COMMIT}"
 mkdir -p "$PLAN_DIR"
 
 # Generate deployment plan via Radius control plane
@@ -1211,21 +1213,26 @@ rad deploy ".radius/applications/${{ inputs.application }}.bicep" \
   --plan \
   --output "$PLAN_DIR"`,
 			Env: map[string]string{
-				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+				"KUBECONFIG":    "/tmp/kubeconfig.yaml",
+				"COMMIT_HASH":   "${{ inputs.commit }}",
 			},
 		},
 		// Step 11: Commit and push the deployment plan
 		{
 			Name: "Commit deployment plan",
 			Run: `cd app
+SHORT_COMMIT="${COMMIT_HASH:0:7}"
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
-git add ".radius/deploy/${{ inputs.application }}/${{ inputs.environment }}/${{ inputs.commit }}/"
-git commit -m "Deployment plan for ${{ inputs.application }} in ${{ inputs.environment }} at ${{ inputs.commit }}" \
+git add ".radius/deploy/${{ inputs.application }}/${{ inputs.environment }}/${SHORT_COMMIT}/"
+git commit -m "Deployment plan for ${{ inputs.application }} in ${{ inputs.environment }} at ${SHORT_COMMIT}" \
   --trailer "Radius-Action: deployment-create"
 git fetch origin ${{ github.ref_name }}
 git rebase FETCH_HEAD
 git push origin HEAD:${{ github.ref_name }}`,
+			Env: map[string]string{
+				"COMMIT_HASH": "${{ inputs.commit }}",
+			},
 		},
 	}
 }
@@ -1422,7 +1429,9 @@ fi`,
 		{
 			Name: "Apply deployment plan",
 			Run: `cd app
-PLAN_DIR=".radius/deploy/${{ inputs.application }}/${{ inputs.environment }}/${{ inputs.commit }}"
+# Use short commit hash (7 chars) for directory path matching deployment-create
+SHORT_COMMIT="${COMMIT_HASH:0:7}"
+PLAN_DIR=".radius/deploy/${{ inputs.application }}/${{ inputs.environment }}/${SHORT_COMMIT}"
 
 if [ ! -d "$PLAN_DIR" ]; then
   echo "Error: No deployment plan found at $PLAN_DIR"
@@ -1437,7 +1446,8 @@ rad deploy ".radius/applications/${{ inputs.application }}.bicep" \
   --group github \
   --apply "$PLAN_DIR"`,
 			Env: map[string]string{
-				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+				"KUBECONFIG":  "/tmp/kubeconfig.yaml",
+				"COMMIT_HASH": "${{ inputs.commit }}",
 			},
 		},
 		// Step 11: Update deployment record and commit
@@ -1445,16 +1455,20 @@ rad deploy ".radius/applications/${{ inputs.application }}.bicep" \
 			Name: "Record deployment results",
 			If:   "always()",
 			Run: `cd app
-PLAN_DIR=".radius/deploy/${{ inputs.application }}/${{ inputs.environment }}/${{ inputs.commit }}"
+SHORT_COMMIT="${COMMIT_HASH:0:7}"
+PLAN_DIR=".radius/deploy/${{ inputs.application }}/${{ inputs.environment }}/${SHORT_COMMIT}"
 
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git add "$PLAN_DIR/"
-git commit -m "Deployment results for ${{ inputs.application }} in ${{ inputs.environment }} at ${{ inputs.commit }}" \
+git commit -m "Deployment results for ${{ inputs.application }} in ${{ inputs.environment }} at ${SHORT_COMMIT}" \
   --trailer "Radius-Action: deployment-apply" || true
 git fetch origin ${{ github.ref_name }}
 git rebase FETCH_HEAD
 git push origin HEAD:${{ github.ref_name }}`,
+			Env: map[string]string{
+				"COMMIT_HASH": "${{ inputs.commit }}",
+			},
 		},
 	}
 }

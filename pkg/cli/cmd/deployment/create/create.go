@@ -192,16 +192,17 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	ghClient := github.NewClient()
 
-	// Use short commit hash (7 chars) for directory naming
+	// Use short commit hash (7 chars) for directory naming in log output
 	shortCommit := r.GitCommit
 	if len(shortCommit) > 7 {
 		shortCommit = shortCommit[:7]
 	}
 
+	// Pass full commit hash to workflow (actions/checkout needs full SHA)
 	inputs := map[string]string{
 		"application": r.Application,
 		"environment": r.Environment,
-		"commit":      shortCommit,
+		"commit":      r.GitCommit,
 	}
 
 	// FR-089-C: Dispatch workflow and watch for run
