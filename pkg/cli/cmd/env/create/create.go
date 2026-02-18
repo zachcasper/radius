@@ -298,14 +298,14 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 	recipesManifest := r.Recipes
 	if recipesManifest == "" {
 		// Use default recipes manifest from resource-types-contrib repo based on provider
-		// AWS always uses terraform; Azure defaults to bicep
+		// Both AWS and Azure default to terraform
 		switch r.Provider {
 		case "aws":
 			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-aws-terraform.yaml"
 		case "azure":
-			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-bicep.yaml"
+			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-terraform.yaml"
 		default:
-			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-bicep.yaml"
+			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-terraform.yaml"
 		}
 	}
 	r.Output.LogInfo("  Setting RADIUS_RECIPES_MANIFEST...")
