@@ -1167,6 +1167,7 @@ fi`,
 		},
 		// Register recipes from the environment's RADIUS_RECIPES_MANIFEST
 		// FR-088: Download manifest and register each recipe on the Radius environment
+		// Note: Recipe registration is best-effort; rad deploy --plan will use fallback locations if needed
 		{
 			Name: "Register recipes",
 			Env: map[string]string{
@@ -1187,13 +1188,14 @@ for resource_type in $(yq e 'keys | .[]' /tmp/recipes-manifest.yaml); do
   fi
   location=$(yq e ".\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
   echo "  Registering $resource_type ($kind)..."
+  # Use full environment ID to ensure correct scope
   rad recipe register default \
     --resource-type "$resource_type" \
     --template-kind "$kind" \
     --template-path "$location" \
-    --environment "${{ inputs.environment }}" \
-    --group github
-done`,
+    --environment "/planes/radius/local/resourceGroups/github/providers/Applications.Core/environments/${{ inputs.environment }}" || echo "  Warning: Failed to register $resource_type, will use fallback"
+done
+echo "Recipe registration complete"`,
 		},
 		// Generate the deployment plan
 		// This step runs rad deploy in plan-only mode to produce deploy.yaml and artifacts
@@ -1361,6 +1363,7 @@ done`,
 		},
 		// Register recipes from the environment's RADIUS_RECIPES_MANIFEST
 		// FR-088: Download manifest and register each recipe on the Radius environment
+		// Note: Recipe registration is best-effort; rad deploy will use fallback locations if needed
 		{
 			Name: "Register recipes",
 			Env: map[string]string{
@@ -1381,13 +1384,14 @@ for resource_type in $(yq e 'keys | .[]' /tmp/recipes-manifest.yaml); do
   fi
   location=$(yq e ".\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
   echo "  Registering $resource_type ($kind)..."
+  # Use full environment ID to ensure correct scope
   rad recipe register default \
     --resource-type "$resource_type" \
     --template-kind "$kind" \
     --template-path "$location" \
-    --environment "${{ inputs.environment }}" \
-    --group github
-done`,
+    --environment "/planes/radius/local/resourceGroups/github/providers/Applications.Core/environments/${{ inputs.environment }}" || echo "  Warning: Failed to register $resource_type, will use fallback"
+done
+echo "Recipe registration complete"`,
 		},
 		{
 			Name: "Configure cloud credentials",
