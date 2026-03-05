@@ -1165,6 +1165,34 @@ fi`,
 				"aws-region":     "${{ vars.AWS_REGION }}",
 			},
 		},
+		// Register cloud credentials with Radius so the control plane can
+		// authenticate to Azure/AWS when deploying resources.
+		// The runner is already authenticated via OIDC; this passes
+		// the identity to the Radius control plane.
+		{
+			Name: "Register Radius cloud credentials",
+			Run: `if [ "${{ steps.auth.outputs.provider }}" = "azure" ]; then
+  echo "Registering Azure credential with Radius..."
+  rad credential register azure wi \
+    --client-id "${{ vars.AZURE_CLIENT_ID }}" \
+    --tenant-id "${{ vars.AZURE_TENANT_ID }}"
+  echo "Configuring Azure provider on environment..."
+  rad env update "${{ inputs.environment }}" --group github \
+    --azure-subscription-id "${{ vars.AZURE_SUBSCRIPTION_ID }}" \
+    --azure-resource-group "${{ vars.AZURE_RESOURCE_GROUP }}"
+elif [ "${{ steps.auth.outputs.provider }}" = "aws" ]; then
+  echo "Registering AWS credential with Radius..."
+  rad credential register aws irsa \
+    --iam-role "arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_IAM_ROLE_NAME }}"
+  echo "Configuring AWS provider on environment..."
+  rad env update "${{ inputs.environment }}" --group github \
+    --aws-region "${{ vars.AWS_REGION }}" \
+    --aws-account-id "${{ vars.AWS_ACCOUNT_ID }}"
+fi`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
 		// Register recipes from the environment's RADIUS_RECIPES_MANIFEST
 		// FR-088: Download manifest and register each recipe on the Radius environment
 		// Note: Recipe registration is best-effort; rad deploy --plan will use fallback locations if needed
@@ -1215,8 +1243,8 @@ rad deploy ".radius/applications/${{ inputs.application }}.bicep" \
   --plan \
   --output "$PLAN_DIR"`,
 			Env: map[string]string{
-				"KUBECONFIG":    "/tmp/kubeconfig.yaml",
-				"COMMIT_HASH":   "${{ inputs.commit }}",
+				"KUBECONFIG":  "/tmp/kubeconfig.yaml",
+				"COMMIT_HASH": "${{ inputs.commit }}",
 			},
 		},
 		// Step 11: Commit and push the deployment plan
@@ -1429,6 +1457,32 @@ fi`,
 				"aws-region":     "${{ vars.AWS_REGION }}",
 			},
 		},
+		// Register cloud credentials with Radius so the control plane can
+		// authenticate to Azure/AWS when deploying resources.
+		{
+			Name: "Register Radius cloud credentials",
+			Run: `if [ "${{ steps.auth.outputs.provider }}" = "azure" ]; then
+  echo "Registering Azure credential with Radius..."
+  rad credential register azure wi \
+    --client-id "${{ vars.AZURE_CLIENT_ID }}" \
+    --tenant-id "${{ vars.AZURE_TENANT_ID }}"
+  echo "Configuring Azure provider on environment..."
+  rad env update "${{ inputs.environment }}" --group github \
+    --azure-subscription-id "${{ vars.AZURE_SUBSCRIPTION_ID }}" \
+    --azure-resource-group "${{ vars.AZURE_RESOURCE_GROUP }}"
+elif [ "${{ steps.auth.outputs.provider }}" = "aws" ]; then
+  echo "Registering AWS credential with Radius..."
+  rad credential register aws irsa \
+    --iam-role "arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_IAM_ROLE_NAME }}"
+  echo "Configuring AWS provider on environment..."
+  rad env update "${{ inputs.environment }}" --group github \
+    --aws-region "${{ vars.AWS_REGION }}" \
+    --aws-account-id "${{ vars.AWS_ACCOUNT_ID }}"
+fi`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
 		// Step 10: Apply the deployment plan
 		{
 			Name: "Apply deployment plan",
@@ -1624,6 +1678,32 @@ fi`,
 			With: map[string]string{
 				"role-to-assume": "arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_IAM_ROLE_NAME }}",
 				"aws-region":     "${{ vars.AWS_REGION }}",
+			},
+		},
+		// Register cloud credentials with Radius so the control plane can
+		// authenticate to Azure/AWS when destroying resources.
+		{
+			Name: "Register Radius cloud credentials",
+			Run: `if [ "${{ steps.auth.outputs.provider }}" = "azure" ]; then
+  echo "Registering Azure credential with Radius..."
+  rad credential register azure wi \
+    --client-id "${{ vars.AZURE_CLIENT_ID }}" \
+    --tenant-id "${{ vars.AZURE_TENANT_ID }}"
+  echo "Configuring Azure provider on environment..."
+  rad env update "${{ inputs.environment }}" --group github \
+    --azure-subscription-id "${{ vars.AZURE_SUBSCRIPTION_ID }}" \
+    --azure-resource-group "${{ vars.AZURE_RESOURCE_GROUP }}"
+elif [ "${{ steps.auth.outputs.provider }}" = "aws" ]; then
+  echo "Registering AWS credential with Radius..."
+  rad credential register aws irsa \
+    --iam-role "arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_IAM_ROLE_NAME }}"
+  echo "Configuring AWS provider on environment..."
+  rad env update "${{ inputs.environment }}" --group github \
+    --aws-region "${{ vars.AWS_REGION }}" \
+    --aws-account-id "${{ vars.AWS_ACCOUNT_ID }}"
+fi`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
 		},
 		// Destroy the application
