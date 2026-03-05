@@ -1,0 +1,472 @@
+# ------------------------------------------------------------
+# Copyright 2023 The Radius Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ------------------------------------------------------------
+
+# This workflow performs functional tests daily on a pre-provisioned AKS
+# (Azure Kubernetes Service) cluster using the current official Radius release.
+#
+# There are two types of tests in Radius: functional-test and e2e-azure-test.
+# 'functional-test' checks the functionality of our application using a local
+# Kubernetes cluster (kind), while 'e2e-azure-test' is executed on an AKS cluster
+# focusing on performance and reliability.
+#
+# The test AKS cluster is pre-provisioned with various monitoring tools using the
+# Bicep template in /test/infra/azure. Additionally, this cluster has a
+# monitoring and alerting system in place, configured to notify the team of any
+# abnormalities during the test.
+#
+# The workflow installs the Radius CLI from the official release and intelligently
+# manages the control plane installation:
+# - If Radius is not installed: installs the current release
+# - If the installed version matches the CLI: skips installation
+# - If versions differ: attempts an upgrade
+#
+# Grafana dashboard URL:  https://radlrtest00-dashboard-e4ffc0cwggchdhba.wus3.grafana.azure.com
+
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: Long-running test on Azure
+
+on:
+  # Enable manual trigger for testing.
+  workflow_dispatch:
+  schedule:
+    # Run once per day at 3:00 AM PDT (10:00 AM UTC)
+    - cron: 0 10 * * *
+
+permissions: {}
+
+env:
+  GOPROXY: https://proxy.golang.org
+
+  # gotestsum version - see: https://github.com/gotestyourself/gotestsum
+  GOTESTSUM_VER: 1.13.0
+
+  # Container registry for storing Bicep recipe artifacts
+  BICEP_RECIPE_REGISTRY: ghcr.io/radius-project/dev
+  # ACR url for uploading test UDT Bicep types
+  TEST_BICEP_TYPES_REGISTRY: testuserdefinedbiceptypes.azurecr.io
+  # The radius functional test timeout
+  FUNCTIONALTEST_TIMEOUT: 60m
+  # The Azure Location to store test resources
+  AZURE_LOCATION: westus3
+  # The base directory for storing test logs
+  RADIUS_CONTAINER_LOG_BASE: dist/container_logs
+  # The region for AWS resources
+  AWS_REGION: us-west-2
+
+  # The functional test GitHub app id
+  FUNCTIONAL_TEST_APP_ID: 425843
+
+  # The AKS cluster name
+  AKS_CLUSTER_NAME: radlrtest00-aks
+  # The resource group for AKS_CLUSTER_NAME resource.
+  AKS_RESOURCE_GROUP: radlrtest00
+
+  # Server where terraform test modules are deployed
+  TF_RECIPE_MODULE_SERVER_URL: http://tf-module-server.radius-test-tf-module-server.svc.cluster.local
+
+  # Radius test environment name
+  RADIUS_TEST_ENVIRONMENT_NAME: kind-radius
+
+  # The current GitHub action link
+  ACTION_LINK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  # Git HTTP server URL
+  GIT_HTTP_SERVER_URL: http://localhost:30080
+  # Git username used for pushing commits during tests
+  GIT_HTTP_USERNAME: testuser
+  # Git email used for commit authorship during tests
+  GIT_HTTP_EMAIL: testuser@radapp.io
+  # Git password used for pushing commits during tests
+  GIT_HTTP_PASSWORD: not-a-secret-password
+
+jobs:
+  tests:
+    if: github.repository == 'radius-project/radius'
+    name: Run functional tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      id-token: write # Required for requesting the JWT
+      contents: read # Required for actions/checkout
+      packages: write # Required for publishing Bicep recipes to ghcr.io
+    steps:
+      - name: Generate unique ID for test run
+        id: gen-id
+        run: |
+          BASE_STR="RADIUS|${GITHUB_SHA}|${GITHUB_SERVER_URL}|${GITHUB_REPOSITORY}|${GITHUB_RUN_ID}|${GITHUB_RUN_ATTEMPT}|${GITHUB_RUN_NUMBER}"
+          UNIQUE_ID=longr$(echo "${BASE_STR}" | sha1sum | head -c 10)
+          echo "UNIQUE_ID=${UNIQUE_ID}" >> "${GITHUB_OUTPUT}"
+          echo "AZURE_TEST_RESOURCE_GROUP=radtest-${UNIQUE_ID}" >> "${GITHUB_OUTPUT}"
+
+      - name: Get GitHub app token
+        if: github.repository == 'radius-project/radius'
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        id: get_installation_token
+        with:
+          app-id: ${{ env.FUNCTIONAL_TEST_APP_ID }}
+          private-key: ${{ secrets.FUNCTIONAL_TEST_APP_PRIVATE_KEY }}
+          # Note: revoke is set to false for this long-running workflow (>1hr)
+          # GitHub App tokens automatically expire after 1 hour.
+          # ref:https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28#create-an-installation-access-token-for-an-app
+          # Setting revoke: true will cause workflow failures when attempting to revoke
+          # already-expired tokens in workflows that exceed the 1-hour token lifetime.
+          skip-token-revoke: true
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            radius
+            terraform-private-modules
+          permission-contents: read
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout samples repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: radius-project/samples
+          path: samples
+          persist-credentials: false
+
+      - name: Install Radius CLI from official release
+        run: |
+          # Install the latest Radius CLI, including release candidates if available.
+          # The INCLUDE_RC environment variable tells the installer to consider RC versions.
+          wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | INCLUDE_RC=true /bin/bash
+          mkdir -p ./bin
+          cp /usr/local/bin/rad ./bin/rad
+          chmod +x ./bin/rad
+
+      - name: Verify CLI installation
+        run: |
+          export PATH=$GITHUB_WORKSPACE/bin:$PATH
+          which rad || { echo "Error: rad CLI not found in PATH"; exit 1; }
+          rad version
+          echo "Radius CLI installed successfully"
+
+      - name: Checkout release codebase
+        id: checkout-release-codebase
+        run: |
+          export PATH=$GITHUB_WORKSPACE/bin:$PATH
+          ./.github/scripts/checkout-release-codebase.sh
+
+      - name: Setup Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version-file: ${{ steps.checkout-release-codebase.outputs.release-dir }}/go.mod
+          cache-dependency-path: ${{ steps.checkout-release-codebase.outputs.release-dir }}/go.sum
+          cache: true
+
+      - name: Login to Azure
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_SP_TESTS_APPID }}
+          tenant-id: ${{ secrets.AZURE_SP_TESTS_TENANTID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTIONID_TESTS }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Create azure resource group - ${{ steps.gen-id.outputs.AZURE_TEST_RESOURCE_GROUP }}
+        env:
+          AZURE_TEST_RESOURCE_GROUP: ${{ steps.gen-id.outputs.AZURE_TEST_RESOURCE_GROUP }}
+        run: |
+          current_time=$(date +%s)
+          az group create \
+            --location ${{ env.AZURE_LOCATION }} \
+            --name "${AZURE_TEST_RESOURCE_GROUP}" \
+            --subscription ${{ secrets.AZURE_SUBSCRIPTIONID_TESTS }} \
+            --tags creationTime=$current_time
+          while [ "$(az group exists --name "${AZURE_TEST_RESOURCE_GROUP}")" = false ]; do sleep 2; done
+
+      - name: Get kubeconf credential for AKS cluster
+        run: |
+          az aks get-credentials \
+            --subscription ${{ secrets.AZURE_SUBSCRIPTIONID_TESTS }} \
+            --resource-group ${{ env.AKS_RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER_NAME }} --admin
+
+      - name: Restore skip-delete-resources-list
+        if: always()
+        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: skip-delete-resources-list.txt
+          key: skip-delete-resources-list-${{ steps.gen-id.outputs.UNIQUE_ID || github.run_id }}
+          restore-keys: |
+            skip-delete-resources-list-
+      - name: Clean up cluster
+        if: always()
+        timeout-minutes: 60
+        run: |
+          if [ -s skip-delete-resources-list.txt ]; then
+            echo "Running cleanup with skip-delete-resources-list.txt. Built-in resources will not be deleted."
+            ./.github/scripts/cleanup-long-running-cluster.sh skip-delete-resources-list.txt
+          else
+            echo "skip-delete-resources-list.txt missing or empty after restore; falling back to full cleanup."
+            ./.github/scripts/cleanup-long-running-cluster.sh
+          fi
+
+      - name: Download Bicep
+        run: |
+          chmod +x ./bin/rad
+          export PATH=$GITHUB_WORKSPACE/bin:$PATH
+          which rad || { echo "cannot find rad"; exit 1; }
+          rad bicep download
+          rad version
+
+      - name: Publish UDT types
+        run: |  
+          export PATH=$GITHUB_WORKSPACE/bin:$PATH  
+          which rad || { echo "cannot find rad"; exit 1; }  
+          rad bicep publish-extension -f "./${RELEASE_DIR}/test/functional-portable/dynamicrp/noncloud/resources/testdata/testresourcetypes.yaml" --target "br:${TEST_BICEP_TYPES_REGISTRY}/testresources:latest" --force  
+        env:  
+          RELEASE_DIR: ${{ steps.checkout-release-codebase.outputs.release-dir }}
+
+      - name: Publish Bicep Test Recipes
+        run: |
+          export PATH=$GITHUB_WORKSPACE/bin:$PATH
+          which rad || { echo "cannot find rad"; exit 1; }
+          make publish-test-bicep-recipes
+        env:
+          BICEP_RECIPE_REGISTRY: ${{ env.BICEP_RECIPE_REGISTRY }}
+          BICEP_RECIPE_TAG_VERSION: ${{ steps.gen-id.outputs.UNIQUE_ID }}
+        working-directory: ${{ steps.checkout-release-codebase.outputs.release-dir }}
+
+      - name: Install gotestsum (test reporting tool)
+        run: |
+          go install gotest.tools/gotestsum@v${{ env.GOTESTSUM_VER }}
+
+      - name: Manage Radius control plane installation
+        run: |
+          export PATH=$GITHUB_WORKSPACE/bin:$PATH
+          ./.github/scripts/manage-radius-installation.sh
+
+      - name: Create a list of resources not to be deleted
+        run: |
+          kubectl get resources.ucp.dev -n radius-system --no-headers -o custom-columns=":metadata.name" > skip-delete-resources-list.txt
+
+      - name: Save list of resources not to be deleted
+        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: skip-delete-resources-list.txt
+          key: skip-delete-resources-list-${{ steps.gen-id.outputs.UNIQUE_ID || github.run_id }}
+
+      - name: Configure Radius test workspace
+        env:
+          AZURE_TEST_RESOURCE_GROUP: ${{ steps.gen-id.outputs.AZURE_TEST_RESOURCE_GROUP }}
+        run: |
+          set -x
+
+          export PATH=$GITHUB_WORKSPACE/bin:$PATH
+          which rad || { echo "cannot find rad"; exit 1; }
+
+          echo "*** Create workspace, group and environment for test ***"
+          rad workspace create kubernetes --force
+          rad group create ${{ env.RADIUS_TEST_ENVIRONMENT_NAME }}
+          rad group switch ${{ env.RADIUS_TEST_ENVIRONMENT_NAME }}
+
+          # The functional test is designed to use default namespace. So you must create the environment for default namespace.
+          rad env create ${{ env.RADIUS_TEST_ENVIRONMENT_NAME }} --namespace default
+          rad env switch ${{ env.RADIUS_TEST_ENVIRONMENT_NAME }}
+
+          echo "*** Configuring Azure provider ***"
+          rad env update ${{ env.RADIUS_TEST_ENVIRONMENT_NAME }} --azure-subscription-id ${{ secrets.AZURE_SUBSCRIPTIONID_TESTS }} \
+            --azure-resource-group "${AZURE_TEST_RESOURCE_GROUP}"
+          rad credential register azure wi \
+            --client-id ${{ secrets.AZURE_SP_TESTS_APPID }} \
+            --tenant-id ${{ secrets.AZURE_SP_TESTS_TENANTID }}
+
+          echo "*** Configuring AWS provider ***"
+          rad env update ${{ env.RADIUS_TEST_ENVIRONMENT_NAME }} --aws-region ${{ env.AWS_REGION }} --aws-account-id ${{ secrets.FUNCTEST_AWS_ACCOUNT_ID }}
+          rad credential register aws access-key \
+            --access-key-id ${{ secrets.FUNCTEST_AWS_ACCESS_KEY_ID }} --secret-access-key ${{ secrets.FUNCTEST_AWS_SECRET_ACCESS_KEY }}
+
+      - name: Log radius installation status (failure)
+        if: failure()
+        run: |
+          echo ":x: Failed to install Radius for functional test." >> $GITHUB_STEP_SUMMARY
+
+      - name: Install Flux CLI and Source Controller
+        uses: ./.github/actions/install-flux
+
+      - name: Install Git HTTP backend
+        uses: ./.github/actions/install-git-http-backend
+        with:
+          git-username: ${{ env.GIT_HTTP_USERNAME }}
+          git-password: ${{ env.GIT_HTTP_PASSWORD }}
+
+      - name: Port-forward to Git server
+        run: |
+          # Start port forwarding in the background
+          kubectl port-forward -n git-http-backend svc/git-http 30080:3000 &
+
+          # Wait for port forwarding to be established
+          sleep 5
+
+          # Test the connection to ensure port forwarding is working
+          curl -s http://localhost:30080 > /dev/null || (echo "Port forwarding failed" && exit 1)
+
+          echo "Port forwarding established successfully"
+      - name: Publish Terraform test recipes
+        run: |
+          make publish-test-terraform-recipes
+        working-directory: ${{ steps.checkout-release-codebase.outputs.release-dir }}
+
+      - name: Get OIDC Issuer from AKS cluster
+        id: get-oidc-issuer
+        run: |
+          echo "FUNCTEST_OIDC_ISSUER=$(az aks show -n ${{ env.AKS_CLUSTER_NAME }} -g ${{ env.AKS_RESOURCE_GROUP }} --query "oidcIssuerProfile.issuerUrl" -otsv)" >> $GITHUB_OUTPUT
+
+      - name: Restore Bicep artifacts before running functional tests
+        # The exact files chosen to run the command can be changed, but we need 1 that uses the Radius extension, 1 that uses the AWS extension and 1 that uses UDT testresources
+        # so we can restore all Bicep artifacts before the tests start.
+        run: |  
+          # Restore Radius Bicep types  
+          bicep restore "./${RELEASE_DIR}/test/functional-portable/corerp/cloud/resources/testdata/corerp-azure-connection-database-service.bicep" --force  
+          # Restore AWS Bicep types  
+          bicep restore "./${RELEASE_DIR}/test/functional-portable/corerp/cloud/resources/testdata/aws-s3-bucket.bicep" --force  
+        env:  
+          RELEASE_DIR: ${{ steps.checkout-release-codebase.outputs.release-dir }}
+
+      - name: Run functional tests
+        env:
+          AZURE_TEST_RESOURCE_GROUP: ${{ steps.gen-id.outputs.AZURE_TEST_RESOURCE_GROUP }}
+          UNIQUE_ID: ${{ steps.gen-id.outputs.UNIQUE_ID }}
+          TEST_TIMEOUT: ${{ env.FUNCTIONALTEST_TIMEOUT }}
+          RADIUS_CONTAINER_LOG_PATH: ${{ github.workspace }}/${{ env.RADIUS_CONTAINER_LOG_BASE }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.FUNCTEST_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.FUNCTEST_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.FUNCTEST_AWS_ACCOUNT_ID }}
+          RADIUS_SAMPLES_REPO_ROOT: ${{ github.workspace }}/samples
+          # Test_MongoDB_Recipe_Parameters is using the following environment variable.
+          INTEGRATION_TEST_RESOURCE_GROUP_NAME: ${{ steps.gen-id.outputs.AZURE_TEST_RESOURCE_GROUP }}
+          # Enable Azure resource location verification in tests
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTIONID_TESTS }}
+          FUNC_TEST_OIDC_ISSUER: ${{ steps.get-oidc-issuer.outputs.FUNCTEST_OIDC_ISSUER }}
+          BICEP_RECIPE_REGISTRY: ${{ env.BICEP_RECIPE_REGISTRY }}
+          BICEP_RECIPE_TAG_VERSION: ${{ steps.gen-id.outputs.UNIQUE_ID }}
+          GH_TOKEN: ${{ steps.get_installation_token.outputs.token }}
+          GIT_HTTP_PASSWORD: ${{ env.GIT_HTTP_PASSWORD }}
+        working-directory: ${{ steps.checkout-release-codebase.outputs.release-dir }}
+        run: |
+          # Ensure rad cli is in path before running tests.
+          export PATH=$GITHUB_WORKSPACE/bin:$PATH
+
+          which rad || { echo "cannot find rad"; exit 1; }
+
+          # Populate the following test environment variables from JSON secret.
+          # AZURE_COSMOS_MONGODB_ACCOUNT_ID
+          # AZURE_MSSQL_RESOURCE_ID
+          # AZURE_MSSQL_USERNAME
+          # AZURE_MSSQL_PASSWORD
+          eval "export $(echo "${{ secrets.FUNCTEST_PREPROVISIONED_RESOURCE_JSON }}" | jq -r 'to_entries | map("\(.key)=\(.value)") | @sh')"
+
+          make test-functional-all
+
+      - name: Collect Pod details
+        if: always()
+        run: |
+          POD_STATE_LOG_FILENAME='${{ env.RADIUS_CONTAINER_LOG_BASE }}/all-tests-pod-states.log'
+          mkdir -p $(dirname $POD_STATE_LOG_FILENAME)
+          {
+            echo "kubectl get pods -A"
+            kubectl get pods -A
+            echo "kubectl describe pods -A"
+            kubectl describe pods -A
+          } >> "${POD_STATE_LOG_FILENAME}"
+
+      - name: Upload container logs
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: all_container_logs
+          path: ./${{ env.RADIUS_CONTAINER_LOG_BASE }}
+
+      - name: Log radius e2e test status (success)
+        if: success()
+        run: |
+          echo ":white_check_mark: functional tests succeeded" >> $GITHUB_STEP_SUMMARY
+
+      - name: Log radius e2e test status (failure)
+        if: failure()
+        run: |
+          echo ":x: functional test failed." >> $GITHUB_STEP_SUMMARY
+
+      - name: Login to Azure
+        if: always()
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_SP_TESTS_APPID }}
+          tenant-id: ${{ secrets.AZURE_SP_TESTS_TENANTID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTIONID_TESTS }}
+
+      - name: Delete azure resource group - ${{ steps.gen-id.outputs.AZURE_TEST_RESOURCE_GROUP }}
+        if: always()
+        env:
+          AZURE_TEST_RESOURCE_GROUP: ${{ steps.gen-id.outputs.AZURE_TEST_RESOURCE_GROUP }}
+        run: |
+          # if deletion fails, purge workflow will purge the resource group and its resources later.
+          az group delete \
+            --subscription ${{ secrets.AZURE_SUBSCRIPTIONID_TESTS }} \
+            --name "${AZURE_TEST_RESOURCE_GROUP}" \
+            --yes --verbose --no-wait
+
+      - name: Restore skip-delete-resources-list
+        if: always()
+        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: skip-delete-resources-list.txt
+          key: skip-delete-resources-list-${{ steps.gen-id.outputs.UNIQUE_ID || github.run_id }}
+          restore-keys: |
+            skip-delete-resources-list-
+      - name: Clean up cluster
+        if: always()
+        timeout-minutes: 60
+        run: |
+          # Report if skip-delete-resources-list.txt is missing or empty
+          if [ ! -s skip-delete-resources-list.txt ]; then
+            echo "skip-delete-resources-list.txt does not exist or is empty. Proceeding without skip list..."
+          else
+            echo "Found skip-delete-resources-list.txt. Cleaning up resources..."
+          fi
+          ./.github/scripts/cleanup-long-running-cluster.sh skip-delete-resources-list.txt
+
+  report-failure:
+    if: failure() && github.repository == 'radius-project/radius' && github.event_name == 'schedule'
+    name: Report test failure
+    needs: [tests]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Create failure issue for failing long running test run
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          github-token: ${{ secrets.GH_RAD_CI_BOT_PAT }}
+          script: |
+            github.rest.issues.create({
+              ...context.repo,
+              title: `Scheduled long running test failed - Run ID: ${context.runId}`,
+              labels: ['test-failure'],
+              body: `## Bug information \n\nThis issue is automatically generated if the scheduled long running test fails. The Radius long running test operates on a schedule of once per day. It's important to understand that the test may fail due to workflow infrastructure issues, like network problems, rather than the flakiness of the test itself. For the further investigation, please visit [here](${process.env.ACTION_LINK}).`
+            })

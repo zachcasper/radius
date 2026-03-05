@@ -1,0 +1,70 @@
+# ------------------------------------------------------------
+# Copyright 2023 The Radius Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ------------------------------------------------------------
+
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: Purge AWS test resources
+on:
+  workflow_dispatch:
+  schedule:
+    # Run at 12:00AM PST every day.
+    - cron: 0 7 * * 0-6
+
+permissions: {}
+
+env:
+  AWS_REGION: us-west-2
+  AWS_RESOURCE_TYPES: AWS::RDS::DBSubnetGroup,AWS::RDS::DBInstance,AWS::S3::Bucket,AWS::Logs::MetricFilter,AWS::Logs::LogGroup
+  # The current GitHub action link
+  ACTION_LINK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+jobs:
+  purge_aws_resources:
+    name: Delete old AWS resources created by tests
+    if: github.repository == 'radius-project/radius'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
+        with:
+          aws-access-key-id: ${{ secrets.FUNCTEST_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.FUNCTEST_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Delete old AWS resources
+        run: |
+          ./.github/scripts/delete-aws-resources.sh ${{ env.AWS_RESOURCE_TYPES }}
+
+      - name: Create issue for failing purge aws test resources run
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        if: failure()
+        with:
+          github-token: ${{ secrets.GH_RAD_CI_BOT_PAT }}
+          script: |
+            github.rest.issues.create({
+              ...context.repo,
+              title: `Purge aws test resources failed - Run ID: ${context.runId}`,
+              labels: ['test-failure'],
+              body: `## Bug information \n\nThis bug is generated automatically if the purge aws test resources workflow fails. For the further investigation, please visit [here](${process.env.ACTION_LINK}).`
+            })

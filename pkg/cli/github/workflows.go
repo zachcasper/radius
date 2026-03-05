@@ -962,8 +962,17 @@ cp resource-types/config/*.tgz app/`,
 			Name: "Wait for deployment engine",
 			Run: `echo "Waiting for deployment engine to be ready..."
 kubectl wait --for=condition=available deployment/bicep-de -n radius-system --timeout=120s || {
-  echo "Warning: Deployment engine not available, continuing anyway..."
-}`,
+  echo "Warning: Deployment engine pod not available, continuing anyway..."
+}
+echo "Waiting for Microsoft.Resources/deployments resource type to be registered..."
+for i in $(seq 1 30); do
+  if rad resource-type show "Microsoft.Resources/deployments" 2>/dev/null | grep -q "Microsoft.Resources/deployments"; then
+    echo "Deployment engine resource type is registered."
+    break
+  fi
+  echo "Waiting for deployment engine registration... ($i/30)"
+  sleep 4
+done`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
@@ -1171,8 +1180,17 @@ func generateRadAppDeleteSteps() []WorkflowStep {
 			Name: "Wait for deployment engine",
 			Run: `echo "Waiting for deployment engine to be ready..."
 kubectl wait --for=condition=available deployment/bicep-de -n radius-system --timeout=120s || {
-  echo "Warning: Deployment engine not available, continuing anyway..."
-}`,
+  echo "Warning: Deployment engine pod not available, continuing anyway..."
+}
+echo "Waiting for Microsoft.Resources/deployments resource type to be registered..."
+for i in $(seq 1 30); do
+  if rad resource-type show "Microsoft.Resources/deployments" 2>/dev/null | grep -q "Microsoft.Resources/deployments"; then
+    echo "Deployment engine resource type is registered."
+    break
+  fi
+  echo "Waiting for deployment engine registration... ($i/30)"
+  sleep 4
+done`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},

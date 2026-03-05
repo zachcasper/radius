@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://www.schemastore.org/github-workflow.json
+---
+name: radius-bot
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  radius-bot:
+    name: Run Radius Bot script
+    # Only run on the main repository - secrets aren't available on forks
+    if: github.repository == 'radius-project/radius'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: |
+            .github/scripts/radius-bot.js
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Comment analyzer
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          TEAM_SLUG: approvers-radius
+        with:
+          github-token: ${{ secrets.GH_RAD_CI_BOT_PAT }}
+          script: |
+            const script = require('./.github/scripts/radius-bot.js')
+            await script({github, context})
