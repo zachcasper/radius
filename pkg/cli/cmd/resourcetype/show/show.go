@@ -113,15 +113,15 @@ func (r *Runner) Run(ctx context.Context) error {
 	return r.runKubernetesMode(ctx)
 }
 
-// runGitHubMode shows a resource type from the RADIUS_RESOURCE_TYPES_REPO URL.
-// FR-073: Operate against the resource types repo instead of UCP.
+// runGitHubMode shows a resource type from the RADIUS_CONFIG_REPO URL.
+// FR-073: Operate against the config repo instead of UCP.
 func (r *Runner) runGitHubMode(ctx context.Context) error {
 	ghClient := github.NewClient()
 
 	// Get the manifest URL from the repo variable
-	manifestURL, err := ghClient.GetRepoVariable("RADIUS_RESOURCE_TYPES_REPO")
+	manifestURL, err := ghClient.GetRepoVariable("RADIUS_CONFIG_REPO")
 	if err != nil {
-		return clierrors.Message("Failed to get RADIUS_RESOURCE_TYPES_REPO: %v. Run 'rad init --github' to set up the repository.", err)
+		return clierrors.Message("Failed to get RADIUS_CONFIG_REPO: %v. Run 'rad init --github' to set up the repository.", err)
 	}
 
 	// Fetch the manifest

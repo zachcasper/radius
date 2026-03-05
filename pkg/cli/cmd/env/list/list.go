@@ -18,11 +18,13 @@ package list
 
 import (
 	"context"
+	"strings"
 
 	"github.com/radius-project/radius/pkg/cli"
 	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/connections"
 	"github.com/radius-project/radius/pkg/cli/framework"
+	"github.com/radius-project/radius/pkg/cli/github"
 	"github.com/radius-project/radius/pkg/cli/objectformats"
 	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
@@ -87,12 +89,15 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	}
 	r.Workspace = workspace
 
-	// Allow '--group' to override scope
-	scope, err := cli.RequireScope(cmd, *r.Workspace)
-	if err != nil {
-		return err
+	// GitHub mode doesn't need scope validation
+	if !workspace.IsGitHubWorkspace() {
+		// Allow '--group' to override scope
+		scope, err := cli.RequireScope(cmd, *r.Workspace)
+		if err != nil {
+			return err
+		}
+		r.Workspace.Scope = scope
 	}
-	r.Workspace.Scope = scope
 
 	format, err := cli.RequireOutput(cmd)
 	if err != nil {
@@ -110,6 +115,68 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 // Run creates an ApplicationsManagementClient using the provided context and workspace, then lists the environments in the
 // resource group and writes the formatted output to the Output. If any of these steps fail, an error is returned.
 func (r *Runner) Run(ctx context.Context) error {
+	// FR-074-A: Branch on workspace kind
+	if r.Workspace.IsGitHubWorkspace() {
+		return r.runGitHubMode(ctx)
+	}
+
+	return r.runKubernetesMode(ctx)
+}
+
+// runGitHubMode lists environments from GitHub via the GitHub API.
+// FR-074-A: Query GitHub API and display environments with Name and Provider columns.
+func (r *Runner) runGitHubMode(ctx context.Context) error {
+	ghClient := github.NewClient()
+
+	// Get repo info from workspace URL
+	repoURL, _ := r.Workspace.Connection["url"].(string)
+	owner, repo := parseGitHubURL(repoURL)
+
+	// List environments from GitHub
+	envNames, err := ghClient.ListEnvironments(owner, repo)
+	if err != nil {
+		return err
+	}
+
+	if len(envNames) == 0 {
+		r.Output.LogInfo("No environments found. Run 'rad env create <name> --provider <aws|azure>' to create one.")
+		return nil
+	}
+
+	// Build output with provider information
+	type envRow struct {
+		Name     string `json:"name"`
+		Provider string `json:"provider"`
+	}
+
+	var envs []envRow
+	for _, name := range envNames {
+		// Get environment variables to determine provider
+		vars, err := ghClient.GetEnvironmentVariables(owner, repo, name)
+		provider := "unknown"
+		if err == nil {
+			if p, ok := vars["RADIUS_CLOUD_PROVIDER"]; ok {
+				provider = p
+			} else if _, ok := vars["AWS_ACCOUNT_ID"]; ok {
+				provider = "aws"
+			} else if _, ok := vars["AZURE_SUBSCRIPTION_ID"]; ok {
+				provider = "azure"
+			}
+		}
+		envs = append(envs, envRow{Name: name, Provider: provider})
+	}
+
+	// FR-074-D: Support --output json
+	return r.Output.WriteFormatted(r.Format, envs, output.FormatterOptions{
+		Columns: []output.Column{
+			{Heading: "NAME", JSONPath: "{ .name }"},
+			{Heading: "PROVIDER", JSONPath: "{ .provider }"},
+		},
+	})
+}
+
+// runKubernetesMode lists environments from the Kubernetes control plane.
+func (r *Runner) runKubernetesMode(ctx context.Context) error {
 	client, err := r.ConnectionFactory.CreateApplicationsManagementClient(ctx, *r.Workspace)
 	if err != nil {
 		return err
@@ -121,4 +188,15 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	return r.Output.WriteFormatted(r.Format, environments, objectformats.GetResourceTableFormat())
+}
+
+// parseGitHubURL extracts owner and repo from a GitHub URL.
+func parseGitHubURL(url string) (owner, repo string) {
+	url = strings.TrimSuffix(url, ".git")
+	parts := strings.Split(url, "/")
+	if len(parts) >= 2 {
+		repo = parts[len(parts)-1]
+		owner = parts[len(parts)-2]
+	}
+	return
 }

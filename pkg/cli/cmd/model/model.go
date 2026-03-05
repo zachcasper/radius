@@ -49,7 +49,7 @@ extension postgresqldatabases
 
 param environment string 
 
-resource todolist 'Radius.Core/applications@2025-08-01-preview' = {
+resource todolist 'Applications.Core/applications@2023-10-01-preview' = {
   name: 'todolist'
   properties: {
     environment: environment
@@ -209,6 +209,12 @@ func (r *Runner) Run(ctx context.Context) error {
 		return clierrors.Message("Failed to commit changes: %v", err)
 	}
 
+	// FR-068-C: Push to remote repository
+	r.Output.LogInfo("Pushing to GitHub...")
+	if err := gitHelper.Push(); err != nil {
+		return clierrors.Message("Failed to push changes: %v", err)
+	}
+
 	r.Output.LogInfo("")
 	r.Output.LogInfo("✓ Application model created successfully!")
 	r.Output.LogInfo("")
@@ -218,7 +224,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	r.Output.LogInfo("")
 	r.Output.LogInfo("Next steps:")
 	r.Output.LogInfo("  1. Edit the model to define your application resources")
-	r.Output.LogInfo("  2. Run 'rad deployment create' to generate a deployment plan")
+	r.Output.LogInfo("  2. Run 'rad deploy .radius/applications/todolist.bicep --environment <env>' to deploy")
 
 	return nil
 }

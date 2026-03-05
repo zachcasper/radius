@@ -112,9 +112,8 @@ func findGitRoot(startPath string) (string, error) {
 const DefaultResourceTypesRepoURL = "https://github.com/zachcasper/resource-types-contrib/tree/github-radius"
 
 // initializeGitHubWorkflows creates the .github/workflows/ directory
-// and generates the 4 workflow files for the two-phase deployment model.
-// FR-112: Generates radius-deployment-create.yaml, radius-deployment-apply.yaml,
-// radius-destroy.yaml, and radius-auth-test.yaml
+// and generates the 3 workflow files for the GitHub deployment model.
+// FR-112: Generates rad-deploy.yaml, rad-app-delete.yaml, and rad-auth-test.yaml
 func initializeGitHubWorkflows(repoPath string) error {
 	workflowsDir := filepath.Join(repoPath, ".github", "workflows")
 
@@ -123,28 +122,21 @@ func initializeGitHubWorkflows(repoPath string) error {
 		return fmt.Errorf("failed to create workflows directory: %w", err)
 	}
 
-	// Generate deployment create workflow
-	createWorkflow := github.GenerateDeploymentCreateWorkflow()
-	createPath := filepath.Join(workflowsDir, github.DeploymentCreateWorkflowFile)
-	if err := github.SaveWorkflow(createPath, createWorkflow); err != nil {
-		return fmt.Errorf("failed to save deployment create workflow: %w", err)
+	// Generate deploy workflow (dispatched by rad deploy)
+	deployWorkflow := github.GenerateRadDeployWorkflow()
+	deployPath := filepath.Join(workflowsDir, github.DeployWorkflowFile)
+	if err := github.SaveWorkflow(deployPath, deployWorkflow); err != nil {
+		return fmt.Errorf("failed to save deploy workflow: %w", err)
 	}
 
-	// Generate deployment apply workflow
-	applyWorkflow := github.GenerateDeploymentApplyWorkflow()
-	applyPath := filepath.Join(workflowsDir, github.DeploymentApplyWorkflowFile)
-	if err := github.SaveWorkflow(applyPath, applyWorkflow); err != nil {
-		return fmt.Errorf("failed to save deployment apply workflow: %w", err)
+	// Generate app delete workflow (dispatched by rad app delete)
+	appDeleteWorkflow := github.GenerateRadAppDeleteWorkflow()
+	appDeletePath := filepath.Join(workflowsDir, github.AppDeleteWorkflowFile)
+	if err := github.SaveWorkflow(appDeletePath, appDeleteWorkflow); err != nil {
+		return fmt.Errorf("failed to save app delete workflow: %w", err)
 	}
 
-	// Generate destroy workflow
-	destroyWorkflow := github.GenerateDestroyWorkflowV2()
-	destroyPath := filepath.Join(workflowsDir, github.DestroyWorkflowFile)
-	if err := github.SaveWorkflow(destroyPath, destroyWorkflow); err != nil {
-		return fmt.Errorf("failed to save destroy workflow: %w", err)
-	}
-
-	// Generate auth test workflow
+	// Generate auth test workflow (dispatched by rad environment create)
 	authTestWorkflow := github.GenerateAuthTestWorkflowV2()
 	authTestPath := filepath.Join(workflowsDir, github.AuthTestWorkflowFile)
 	if err := github.SaveWorkflow(authTestPath, authTestWorkflow); err != nil {
@@ -232,11 +224,11 @@ func (r *Runner) runGitHubInit(ctx context.Context) error {
 		return err
 	}
 
-	// Step 2: Set RADIUS_RESOURCE_TYPES_REPO repo variable (FR-005, FR-006)
-	r.Output.LogInfo("Setting repository variable RADIUS_RESOURCE_TYPES_REPO...")
+	// Step 2: Set RADIUS_CONFIG_REPO repo variable (FR-005, FR-006)
+	r.Output.LogInfo("Setting repository variable RADIUS_CONFIG_REPO...")
 	ghClient := github.NewClient()
-	if err := ghClient.SetRepoVariable("RADIUS_RESOURCE_TYPES_REPO", opts.ResourceTypesRepo); err != nil {
-		return fmt.Errorf("failed to set RADIUS_RESOURCE_TYPES_REPO: %w", err)
+	if err := ghClient.SetRepoVariable("RADIUS_CONFIG_REPO", opts.ResourceTypesRepo); err != nil {
+		return fmt.Errorf("failed to set RADIUS_CONFIG_REPO: %w", err)
 	}
 
 	// Step 3: Commit and push (FR-013)
@@ -269,10 +261,9 @@ func (r *Runner) runGitHubInit(ctx context.Context) error {
 	r.Output.LogInfo("Radius initialized successfully!")
 	r.Output.LogInfo("")
 	r.Output.LogInfo("Next steps:")
-	r.Output.LogInfo("  1. Run 'rad environment create <name> --provider <aws|azure>' to set up a cloud environment")
+	r.Output.LogInfo("  1. Run 'rad env create <name> --provider <aws|azure>' to set up a cloud environment")
 	r.Output.LogInfo("  2. Run 'rad app model' to create an application definition")
-	r.Output.LogInfo("  3. Run 'rad deployment create' to generate a deployment plan")
-	r.Output.LogInfo("  4. Run 'rad deployment apply' to execute the deployment")
+	r.Output.LogInfo("  3. Run 'rad deploy <bicep-file> --environment <env>' to deploy your application")
 
 	return nil
 }

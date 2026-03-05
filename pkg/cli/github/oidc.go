@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/radius-project/radius/pkg/cli/clierrors"
@@ -210,25 +211,25 @@ func (s *OIDCSetup) SetupAzureOIDC(ctx context.Context, envName string) (*AzureO
 	}
 
 	// FR-025: Prompt for resource group
-	resourceGroupName, err := s.promptForAzureResourceGroup(ctx, subscriptionID)
+	resourceGroup, err := s.promptForAzureResourceGroup(ctx, subscriptionID)
 	if err != nil {
 		return nil, err
 	}
 
 	// FR-026: Prompt for Azure AD application (list existing with create option, consistent with resource group prompt)
-	clientID, err := s.promptForAzureApp(ctx, envName, subscriptionID, resourceGroupName)
+	clientID, err := s.promptForAzureApp(ctx, envName, subscriptionID, resourceGroup)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create state backend (Azure Storage)
-	stateBackend, err := s.createAzureStateBackend(ctx, subscriptionID, resourceGroupName)
+	stateBackend, err := s.createAzureStateBackend(ctx, subscriptionID, resourceGroup.Name)
 	if err != nil {
 		return nil, err
 	}
 
 	// FR-067-C: Prompt for AKS cluster selection
-	aksClusterName, err := s.promptForAKSCluster(ctx, subscriptionID, resourceGroupName)
+	aksClusterName, err := s.promptForAKSCluster(ctx, subscriptionID, resourceGroup.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +246,7 @@ func (s *OIDCSetup) SetupAzureOIDC(ctx context.Context, envName string) (*AzureO
 		SubscriptionID:      subscriptionID,
 		TenantID:            tenantID,
 		ClientID:            clientID,
-		ResourceGroupName:   resourceGroupName,
+		ResourceGroupName:   resourceGroup.Name,
 		AKSClusterName:      aksClusterName,
 		KubernetesNamespace: kubernetesNamespace,
 		StateBackend:        stateBackend,
@@ -446,14 +447,18 @@ func (s *OIDCSetup) createAWSStateBackend(ctx context.Context, accountID, region
 }
 
 // createAzureApp creates an Azure AD application with federated credentials.
-func (s *OIDCSetup) createAzureApp(ctx context.Context, envName, subscriptionID, resourceGroupName string) (string, error) {
+func (s *OIDCSetup) createAzureApp(ctx context.Context, envName, subscriptionID string, resourceGroup *AzureResourceGroupSelection) (string, error) {
 	appName := fmt.Sprintf("radius-%s-%s", s.Owner, s.Repo)
 
 	s.Output.LogInfo("")
 	s.Output.LogInfo("The following Azure resources will be created:")
 	s.Output.LogInfo("  - Azure AD application: %s", appName)
 	s.Output.LogInfo("  - Federated credential for GitHub Actions")
-	s.Output.LogInfo("  - Resource group: %s (if not exists)", resourceGroupName)
+	if resourceGroup.IsNew {
+		s.Output.LogInfo("  - Resource group: %s (in %s)", resourceGroup.Name, resourceGroup.Location)
+	} else {
+		s.Output.LogInfo("  - Resource group: %s (existing)", resourceGroup.Name)
+	}
 	s.Output.LogInfo("")
 
 	confirm, err := s.Prompter.GetListInput([]string{"Yes, create these resources", "No, cancel"}, "Confirm")
@@ -464,15 +469,19 @@ func (s *OIDCSetup) createAzureApp(ctx context.Context, envName, subscriptionID,
 		return "", clierrors.Message("Operation cancelled by user.")
 	}
 
-	// Create resource group if not exists
-	s.Output.LogInfo("Creating resource group: %s...", resourceGroupName)
-	_, err = s.CmdRunner.RunCommand(ctx, "az", "group", "create",
-		"--name", resourceGroupName,
-		"--location", "eastus",
-		"--subscription", subscriptionID,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create resource group: %w", err)
+	// Only create resource group if it's new
+	if resourceGroup.IsNew {
+		s.Output.LogInfo("Creating resource group: %s in %s...", resourceGroup.Name, resourceGroup.Location)
+		_, err = s.CmdRunner.RunCommand(ctx, "az", "group", "create",
+			"--name", resourceGroup.Name,
+			"--location", resourceGroup.Location,
+			"--subscription", subscriptionID,
+		)
+		if err != nil {
+			return "", fmt.Errorf("failed to create resource group: %w", err)
+		}
+	} else {
+		s.Output.LogInfo("Using existing resource group: %s", resourceGroup.Name)
 	}
 
 	// Check if app already exists
@@ -519,7 +528,7 @@ func (s *OIDCSetup) createAzureApp(ctx context.Context, envName, subscriptionID,
 	_, err = s.CmdRunner.RunCommand(ctx, "az", "role", "assignment", "create",
 		"--assignee", clientID,
 		"--role", "Contributor",
-		"--scope", fmt.Sprintf("/subscriptions/%s/resourceGroups/%s", subscriptionID, resourceGroupName),
+		"--scope", fmt.Sprintf("/subscriptions/%s/resourceGroups/%s", subscriptionID, resourceGroup.Name),
 	)
 	if err != nil {
 		s.Output.LogInfo("Warning: could not assign Contributor role to resource group: %v", err)
@@ -644,15 +653,22 @@ func (s *OIDCSetup) promptForAzureSubscription(ctx context.Context, defaultTenan
 	return "", "", fmt.Errorf("selected subscription not found")
 }
 
+// AzureResourceGroupSelection holds the result of resource group selection.
+type AzureResourceGroupSelection struct {
+	Name     string
+	Location string
+	IsNew    bool
+}
+
 // promptForAzureResourceGroup prompts the user to select or create an Azure resource group.
-func (s *OIDCSetup) promptForAzureResourceGroup(ctx context.Context, subscriptionID string) (string, error) {
+func (s *OIDCSetup) promptForAzureResourceGroup(ctx context.Context, subscriptionID string) (*AzureResourceGroupSelection, error) {
 	s.Output.LogInfo("Fetching resource groups...")
 	rgJSON, err := s.CmdRunner.RunCommand(ctx, "az", "group", "list",
 		"--subscription", subscriptionID,
 		"--output", "json",
 	)
 	if err != nil {
-		return "", fmt.Errorf("failed to list resource groups: %w", err)
+		return nil, fmt.Errorf("failed to list resource groups: %w", err)
 	}
 
 	type azureResourceGroup struct {
@@ -662,7 +678,7 @@ func (s *OIDCSetup) promptForAzureResourceGroup(ctx context.Context, subscriptio
 
 	var groups []azureResourceGroup
 	if err := json.Unmarshal([]byte(rgJSON), &groups); err != nil {
-		return "", fmt.Errorf("failed to parse resource group list: %w", err)
+		return nil, fmt.Errorf("failed to parse resource group list: %w", err)
 	}
 
 	options := []string{"Create new resource group"}
@@ -672,7 +688,7 @@ func (s *OIDCSetup) promptForAzureResourceGroup(ctx context.Context, subscriptio
 
 	selected, err := s.Prompter.GetListInput(options, "Select Resource Group")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if selected == "Create new resource group" {
@@ -680,23 +696,83 @@ func (s *OIDCSetup) promptForAzureResourceGroup(ctx context.Context, subscriptio
 			Default: fmt.Sprintf("radius-%s-%s", s.Owner, s.Repo),
 		})
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		return name, nil
+
+		// Prompt for location when creating a new resource group
+		location, err := s.promptForAzureLocation(ctx, subscriptionID)
+		if err != nil {
+			return nil, err
+		}
+
+		return &AzureResourceGroupSelection{
+			Name:     name,
+			Location: location,
+			IsNew:    true,
+		}, nil
 	}
 
-	// Extract name from display string
+	// Extract name and location from display string (format: "name (location)")
 	parts := strings.SplitN(selected, " (", 2)
-	if len(parts) > 0 {
-		return parts[0], nil
+	name := selected
+	location := ""
+	if len(parts) == 2 {
+		name = parts[0]
+		location = strings.TrimSuffix(parts[1], ")")
 	}
 
-	return selected, nil
+	return &AzureResourceGroupSelection{
+		Name:     name,
+		Location: location,
+		IsNew:    false,
+	}, nil
+}
+
+// promptForAzureLocation prompts the user to select an Azure location/region.
+func (s *OIDCSetup) promptForAzureLocation(ctx context.Context, subscriptionID string) (string, error) {
+	s.Output.LogInfo("Fetching Azure locations...")
+	locationsJSON, err := s.CmdRunner.RunCommand(ctx, "az", "account", "list-locations",
+		"--subscription", subscriptionID,
+		"--output", "json",
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to list Azure locations: %w", err)
+	}
+
+	type azureLocation struct {
+		Name        string `json:"name"`
+		DisplayName string `json:"displayName"`
+	}
+
+	var locations []azureLocation
+	if err := json.Unmarshal([]byte(locationsJSON), &locations); err != nil {
+		return "", fmt.Errorf("failed to parse location list: %w", err)
+	}
+
+	// Sort locations by display name for easier selection
+	sort.Slice(locations, func(i, j int) bool {
+		return locations[i].DisplayName < locations[j].DisplayName
+	})
+
+	// Build options with display names but return the internal name
+	options := make([]string, len(locations))
+	locationMap := make(map[string]string)
+	for i, loc := range locations {
+		options[i] = loc.DisplayName
+		locationMap[loc.DisplayName] = loc.Name
+	}
+
+	selected, err := s.Prompter.GetListInput(options, "Select location for the resource group")
+	if err != nil {
+		return "", err
+	}
+
+	return locationMap[selected], nil
 }
 
 // promptForAzureApp prompts the user to select an existing Azure AD application or create a new one.
 // Follows the same pattern as promptForAzureResourceGroup: "Create new" first, then existing items.
-func (s *OIDCSetup) promptForAzureApp(ctx context.Context, envName, subscriptionID, resourceGroupName string) (string, error) {
+func (s *OIDCSetup) promptForAzureApp(ctx context.Context, envName, subscriptionID string, resourceGroup *AzureResourceGroupSelection) (string, error) {
 	s.Output.LogInfo("Fetching Azure AD applications...")
 	appsJSON, err := s.CmdRunner.RunCommand(ctx, "az", "ad", "app", "list",
 		"--output", "json",
@@ -735,7 +811,7 @@ func (s *OIDCSetup) promptForAzureApp(ctx context.Context, envName, subscription
 			return "", fmt.Errorf("failed to set subscription context: %w", err)
 		}
 
-		return s.createAzureApp(ctx, envName, subscriptionID, resourceGroupName)
+		return s.createAzureApp(ctx, envName, subscriptionID, resourceGroup)
 	}
 
 	// Extract appId from selected display string

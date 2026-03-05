@@ -254,22 +254,32 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 
 	ghClient := github.NewClient()
 
+	// Get the repository's default branch for dispatch
+	repoInfo, err := ghClient.GetRepoInfo()
+	if err != nil {
+		return fmt.Errorf("failed to get repository info: %w", err)
+	}
+	defaultBranch := repoInfo.DefaultBranchRef.Name
+	if defaultBranch == "" {
+		defaultBranch = "main" // Fallback if not set
+	}
+
 	inputs := map[string]string{
 		"application": r.ApplicationName,
 		"environment": r.EnvironmentName,
 	}
 
-	// FR-106-A: Dispatch destroy workflow
+	// FR-106-A: Dispatch app delete workflow
 	runID, runURL, err := ghClient.DispatchAndWatch(
-		github.DestroyWorkflowFile,
-		"main",
+		github.AppDeleteWorkflowFile,
+		defaultBranch,
 		inputs,
 		func() {
 			r.Output.LogInfo("Workflow queued, waiting for runner...")
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to dispatch destroy workflow: %w", err)
+		return fmt.Errorf("failed to dispatch app delete workflow: %w", err)
 	}
 
 	// FR-106-D: Show animated progress with step status

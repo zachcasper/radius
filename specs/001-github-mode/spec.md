@@ -125,7 +125,7 @@ After connecting their cloud provider, a developer needs to create an applicatio
 
 2. **Given** an initialized repository, **When** the user runs `rad app model`, **Then** the generated definition includes proper Bicep syntax with `extension radius`, parameter declarations, and resource definitions using the `2025-08-01-preview` API version.
 
-3. **Given** the application definition is created, **When** the user inspects the file, **Then** it contains a `Radius.Core/applications` resource, a `Radius.Compute/containers` resource with container configuration and connections, and a `Radius.Data/postgreSqlDatabases` resource.
+3. **Given** the application definition is created, **When** the command completes, **Then** the system commits the changes with trailer `Radius-Action: model` and pushes to the remote repository.
 
 4. **Given** a directory without Radius initialization, **When** the user runs `rad app model`, **Then** the system displays an error message instructing the user to run `rad init` first.
 
@@ -214,6 +214,30 @@ A developer works with multiple repositories, some using Radius on GitHub and ot
 3. **Given** a Kubernetes workspace is current, **When** the user runs commands, **Then** they operate against the Kubernetes control plane as before.
 
 4. **Given** the user wants to use Kubernetes-based Radius, **When** they run `rad install kubernetes`, **Then** the traditional Kubernetes control plane is installed (the new `rad init` does not replace this path).
+
+---
+
+### User Story 8 - List and Inspect Environments (Priority: P2)
+
+A developer or platform engineer wants to see what environments are available in their repository and inspect the configuration of a specific environment. They run `rad env list` to see all environments and `rad env show <name>` to see the details of a specific environment.
+
+**Why this priority**: Understanding available environments and their configuration is essential for deployment planning and troubleshooting.
+
+**Independent Test**: Can be fully tested by running `rad env list` and `rad env show` in a repository with configured environments and verifying the output matches the GitHub Environment configuration.
+
+**Acceptance Scenarios**:
+
+1. **Given** a GitHub workspace with multiple environments configured, **When** the user runs `rad env list`, **Then** the system displays a table of all environments in the repository showing the environment name and cloud provider.
+
+2. **Given** a GitHub workspace with an environment named "dev", **When** the user runs `rad env show dev`, **Then** the system displays the repository name, environment name, cloud provider, and all environment variables (with sensitive values masked).
+
+3. **Given** a GitHub workspace with no environments configured, **When** the user runs `rad env list`, **Then** the system displays an empty table with a message suggesting to run `rad env create`.
+
+4. **Given** the user runs `rad env show` for a non-existent environment, **Then** the system displays an error message indicating the environment was not found.
+
+5. **Given** the user runs `rad env list` with `--output json`, **Then** the system outputs the environment list in JSON format suitable for scripting.
+
+6. **Given** the user runs `rad env show dev --output json`, **Then** the system outputs the environment details in JSON format including all variable names and values (with sensitive values masked).
 
 ---
 
@@ -320,6 +344,7 @@ A developer works with multiple repositories, some using Radius on GitHub and ot
 - **FR-038**: `rad deploy` MUST accept a `--environment` (or `-e` or `--env`) flag specifying the target environment.
 - **FR-039**: When exactly one GitHub Environment exists for the repository, `--environment` MAY be omitted and the system MUST auto-select that environment.
 - **FR-040**: When multiple GitHub Environments exist, `--environment` MUST be required. The system MUST error with a message listing available environments if omitted.
+- **FR-040a**: `rad deploy` MUST verify that the specified Bicep file exists before dispatching the workflow. If the file does not exist, the system MUST error with a message indicating the file was not found.
 - **FR-041**: `rad deploy` MUST verify that the local working tree has no uncommitted changes before dispatching the workflow. If uncommitted changes exist, the system MUST error with a message instructing the user to commit all changes first.
 - **FR-042**: `rad deploy` MUST verify that all local commits have been pushed to the remote before dispatching the workflow. If unpushed commits exist, the system MUST error with a message instructing the user to push changes first.
 - **FR-043**: The deployment MUST be scoped to the current HEAD commit hash by default. The commit hash provides traceability between the application definition that was deployed and the deployment execution.
@@ -340,13 +365,18 @@ A developer works with multiple repositories, some using Radius on GitHub and ot
 - **FR-068**: Application Definitions MUST be stored in `.radius/applications/<APP_NAME>.bicep`.
 - **FR-068-A**: System MUST provide `rad app model` command that creates a sample application definition file at `.radius/applications/todolist.bicep` with a `Radius.Core/applications` resource, a `Radius.Compute/containers` resource, and a `Radius.Data/postgreSqlDatabases` resource. This is a placeholder for future AI-assisted modeling functionality.
 - **FR-068-B**: `rad app model` MUST create the `.radius/applications/` directory if it does not already exist.
+- **FR-068-C**: `rad app model` MUST commit the generated file with trailer `Radius-Action: model` and push to the remote repository.
 - **FR-071**: Workspaces MUST be stored in `~/.rad/config.yaml` with `current` property (renamed from `default`).
 - **FR-072**: GitHub workspaces MUST have `connection.kind: github` and `connection.url` pointing to the repository.
 
 #### Command Behavior Changes
 
 - **FR-073**: In GitHub mode, `rad resource-type` commands MUST operate against the resource type definitions in the repository referenced by `RADIUS_CONFIG_REPO`.
-- **FR-074**: In GitHub mode, `rad environment` commands (`create`, `delete`, `list`) MUST operate against GitHub Environments via the GitHub API.
+- **FR-074**: In GitHub mode, `rad environment` commands (`create`, `delete`, `list`, `show`) MUST operate against GitHub Environments via the GitHub API.
+- **FR-074-A**: In GitHub mode, `rad env list` MUST query the GitHub API to retrieve all environments for the current repository and display them in a table with columns: Name, Provider (derived from environment variables).
+- **FR-074-B**: In GitHub mode, `rad env show <name>` MUST query the GitHub API to retrieve the specified environment's details and display: repository name, environment name, cloud provider, and all environment variables with their values.
+- **FR-074-C**: `rad env show` MUST mask sensitive values (secrets) in the output while showing regular environment variables.
+- **FR-074-D**: Both `rad env list` and `rad env show` MUST support `--output json` for programmatic access.
 - **FR-075**: In GitHub mode, `rad recipe` commands MUST operate against the recipes manifest referenced by the environment's `RADIUS_RECIPES_MANIFEST` variable.
 - **FR-076**: Users wanting Kubernetes-based Radius MUST use `rad install kubernetes` (not affected by new `rad init`).
 - **FR-077**: Radius on GitHub MUST NOT use Resource Groups; that concept does not apply.

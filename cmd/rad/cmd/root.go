@@ -41,8 +41,6 @@ import (
 	bicep_publishextension "github.com/radius-project/radius/pkg/cli/cmd/bicep/publishextension"
 	credential "github.com/radius-project/radius/pkg/cli/cmd/credential"
 	cmd_deploy "github.com/radius-project/radius/pkg/cli/cmd/deploy"
-	deployment_apply "github.com/radius-project/radius/pkg/cli/cmd/deployment/apply"
-	deployment_create "github.com/radius-project/radius/pkg/cli/cmd/deployment/create"
 	env_create "github.com/radius-project/radius/pkg/cli/cmd/env/create"
 	env_create_preview "github.com/radius-project/radius/pkg/cli/cmd/env/create/preview"
 	env_delete "github.com/radius-project/radius/pkg/cli/cmd/env/delete"
@@ -452,16 +450,6 @@ func initSubCommands() {
 
 	rollbackKubernetesCmd, _ := rollback_kubernetes.NewCommand(framework)
 	rollbackCmd.AddCommand(rollbackKubernetesCmd)
-
-	// Deployment command group (FR-068-A: two-phase deployment commands)
-	deploymentCmd := NewDeploymentCommand()
-	RootCmd.AddCommand(deploymentCmd)
-
-	deploymentCreateCmd, _ := deployment_create.NewCommand(framework)
-	deploymentCmd.AddCommand(deploymentCreateCmd)
-
-	deploymentApplyCmd, _ := deployment_apply.NewCommand(framework)
-	deploymentCmd.AddCommand(deploymentApplyCmd)
 
 	// Model command (under app: rad app model)
 	modelCmd, _ := model.NewCommand(framework)

@@ -273,9 +273,9 @@ func TestGitHelper_IsDirty(t *testing.T) {
 		helper, err := NewGitHelper(repoPath)
 		require.NoError(t, err)
 
-		// Create untracked file
-		testFile := filepath.Join(repoPath, "untracked.txt")
-		err = os.WriteFile(testFile, []byte("test"), 0644)
+		// Modify tracked file (README.md was created and committed in createTestRepo)
+		readmeFile := filepath.Join(repoPath, "README.md")
+		err = os.WriteFile(readmeFile, []byte("# Modified Test Repo"), 0644)
 		require.NoError(t, err)
 
 		isDirty, err := helper.IsDirty()

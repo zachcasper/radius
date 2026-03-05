@@ -533,3 +533,67 @@ func Test_Delete(t *testing.T) {
 		require.Equal(t, expected, outputSink.Writes)
 	})
 }
+
+func Test_Runner_GitHubModeFields(t *testing.T) {
+	t.Parallel()
+
+	// Verify Runner has the fields needed for GitHub mode
+	runner := &Runner{
+		Workspace: &workspaces.Workspace{
+			Name: "test",
+			Connection: map[string]any{
+				"kind": workspaces.KindGitHub,
+				"url":  "https://github.com/owner/repo",
+			},
+		},
+		ApplicationName: "my-app",
+		EnvironmentName: "prod",
+	}
+
+	require.NotNil(t, runner.Workspace)
+	require.Equal(t, "my-app", runner.ApplicationName)
+	require.Equal(t, "prod", runner.EnvironmentName)
+}
+
+func Test_Runner_IsGitHubWorkspace(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		runner   *Runner
+		isGitHub bool
+	}{
+		{
+			name: "GitHub workspace",
+			runner: &Runner{
+				Workspace: &workspaces.Workspace{
+					Name: "github-test",
+					Connection: map[string]any{
+						"kind": workspaces.KindGitHub,
+						"url":  "https://github.com/owner/repo",
+					},
+				},
+			},
+			isGitHub: true,
+		},
+		{
+			name: "Kubernetes workspace",
+			runner: &Runner{
+				Workspace: &workspaces.Workspace{
+					Name: "k8s-test",
+					Connection: map[string]any{
+						"kind":    workspaces.KindKubernetes,
+						"context": "my-context",
+					},
+				},
+			},
+			isGitHub: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.isGitHub, tt.runner.Workspace.IsGitHubWorkspace())
+		})
+	}
+}

@@ -297,32 +297,28 @@ func TestWorkflowJob_StepOrdering(t *testing.T) {
 		stepNames[i] = step.Name
 	}
 
-	// Checkout should be first
-	assert.Equal(t, "Checkout", stepNames[0])
+	// Checkout Radius source should be first
+	assert.Equal(t, "Checkout Radius source", stepNames[0])
 
 	// Find indices
 	checkoutIdx := -1
 	authIdx := -1
 	deployIdx := -1
-	commitIdx := -1
 
 	for i, name := range stepNames {
 		switch name {
-		case "Checkout":
+		case "Checkout Radius source":
 			checkoutIdx = i
 		case "Configure AWS credentials":
 			authIdx = i
 		case "Run deployment":
 			deployIdx = i
-		case "Commit deployment results":
-			commitIdx = i
 		}
 	}
 
-	// Order should be: checkout < auth < deploy < commit
+	// Order should be: checkout < auth < deploy
 	assert.True(t, checkoutIdx < authIdx, "checkout should be before auth")
 	assert.True(t, authIdx < deployIdx, "auth should be before deploy")
-	assert.True(t, deployIdx < commitIdx, "deploy should be before commit")
 }
 
 func TestWorkflowConcurrency(t *testing.T) {

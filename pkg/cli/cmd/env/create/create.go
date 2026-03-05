@@ -298,14 +298,14 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 	recipesManifest := r.Recipes
 	if recipesManifest == "" {
 		// Use default recipes manifest from resource-types-contrib repo based on provider
-		// Both AWS and Azure default to terraform
+		// FR-026: Azure defaults to Bicep, FR-030: AWS defaults to Terraform
 		switch r.Provider {
 		case "aws":
 			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-aws-terraform.yaml"
 		case "azure":
-			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-terraform.yaml"
+			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-bicep.yaml"
 		default:
-			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-terraform.yaml"
+			recipesManifest = "https://raw.githubusercontent.com/zachcasper/resource-types-contrib/refs/heads/github-radius/default-config/recipes-azure-bicep.yaml"
 		}
 	}
 	r.Output.LogInfo("  Setting RADIUS_RECIPES_MANIFEST...")
@@ -327,7 +327,7 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 	r.Output.LogInfo("")
 	r.Output.LogInfo("Next steps:")
 	r.Output.LogInfo("  1. Run 'rad app model' to create an application definition")
-	r.Output.LogInfo("  2. Run 'rad deployment create' to generate a deployment plan")
+	r.Output.LogInfo("  2. Run 'rad deploy <bicep-file> --environment %s' to deploy your application", r.EnvironmentName)
 
 	return nil
 }
@@ -338,6 +338,16 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 func (r *Runner) dispatchAuthTest(ctx context.Context, envName string, provider string) error {
 	ghClient := github.NewClient()
 
+	// Get the repository's default branch for dispatch
+	repoInfo, err := ghClient.GetRepoInfo()
+	if err != nil {
+		return fmt.Errorf("failed to get repository info: %w", err)
+	}
+	defaultBranch := repoInfo.DefaultBranchRef.Name
+	if defaultBranch == "" {
+		defaultBranch = "main" // Fallback if not set
+	}
+
 	inputs := map[string]string{
 		"environment": envName,
 	}
@@ -345,7 +355,7 @@ func (r *Runner) dispatchAuthTest(ctx context.Context, envName string, provider 
 	// FR-030-E/FR-030-F: Dispatch and get run ID
 	runID, runURL, err := ghClient.DispatchAndWatch(
 		github.AuthTestWorkflowFile,
-		"main",
+		defaultBranch,
 		inputs,
 		func() {
 			r.Output.LogInfo("Auth test workflow queued, waiting for runner...")

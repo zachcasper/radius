@@ -21,163 +21,109 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/radius-project/radius/pkg/cli/github"
 	"github.com/stretchr/testify/require"
 )
-
-func Test_initializeRadiusDirectory(t *testing.T) {
-	tempDir := t.TempDir()
-
-	err := initializeRadiusDirectory(tempDir)
-	require.NoError(t, err)
-
-	// Verify .radius directory was created
-	radiusDir := filepath.Join(tempDir, ".radius")
-	info, err := os.Stat(radiusDir)
-	require.NoError(t, err)
-	require.True(t, info.IsDir())
-
-	// Verify plan subdirectory was created
-	planDir := filepath.Join(radiusDir, "plan")
-	info, err = os.Stat(planDir)
-	require.NoError(t, err)
-	require.True(t, info.IsDir())
-
-	// Verify deploy subdirectory was created
-	deployDir := filepath.Join(radiusDir, "deploy")
-	info, err = os.Stat(deployDir)
-	require.NoError(t, err)
-	require.True(t, info.IsDir())
-}
-
-func Test_initializeRadiusDirectory_AlreadyExists(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// Create .radius directory first
-	radiusDir := filepath.Join(tempDir, ".radius")
-	err := os.MkdirAll(radiusDir, 0755)
-	require.NoError(t, err)
-
-	// Should not fail if directory already exists
-	err = initializeRadiusDirectory(tempDir)
-	require.NoError(t, err)
-}
 
 func Test_initializeGitHubWorkflows(t *testing.T) {
 	tempDir := t.TempDir()
 
-	tests := []struct {
-		name     string
-		provider string
-	}{
-		{
-			name:     "AWS provider",
-			provider: "aws",
-		},
-		{
-			name:     "Azure provider",
-			provider: "azure",
-		},
-	}
+	t.Run("creates workflow files", func(t *testing.T) {
+		testDir := filepath.Join(tempDir, "test-repo")
+		err := os.MkdirAll(testDir, 0755)
+		require.NoError(t, err)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			testDir := filepath.Join(tempDir, tt.provider)
-			err := os.MkdirAll(testDir, 0755)
-			require.NoError(t, err)
+		err = initializeGitHubWorkflows(testDir)
+		require.NoError(t, err)
 
-			err = initializeGitHubWorkflows(testDir, tt.provider)
-			require.NoError(t, err)
+		// Verify .github/workflows directory was created
+		workflowDir := filepath.Join(testDir, ".github", "workflows")
+		info, err := os.Stat(workflowDir)
+		require.NoError(t, err)
+		require.True(t, info.IsDir())
 
-			// Verify .github/workflows directory was created
-			workflowDir := filepath.Join(testDir, ".github", "workflows")
-			info, err := os.Stat(workflowDir)
-			require.NoError(t, err)
-			require.True(t, info.IsDir())
+		// Verify rad-deploy.yaml was created
+		deployFile := filepath.Join(workflowDir, github.DeployWorkflowFile)
+		_, err = os.Stat(deployFile)
+		require.NoError(t, err)
 
-			// Verify workflow files were created
-			deployFile := filepath.Join(workflowDir, "radius-deploy.yaml")
-			_, err = os.Stat(deployFile)
-			require.NoError(t, err)
+		// Verify rad-app-delete.yaml was created
+		appDeleteFile := filepath.Join(workflowDir, github.AppDeleteWorkflowFile)
+		_, err = os.Stat(appDeleteFile)
+		require.NoError(t, err)
 
-			planFile := filepath.Join(workflowDir, "radius-plan.yaml")
-			_, err = os.Stat(planFile)
-			require.NoError(t, err)
-
-			destroyFile := filepath.Join(workflowDir, "radius-destroy.yaml")
-			_, err = os.Stat(destroyFile)
-			require.NoError(t, err)
-		})
-	}
+		// Verify rad-auth-test.yaml was created
+		authTestFile := filepath.Join(workflowDir, github.AuthTestWorkflowFile)
+		_, err = os.Stat(authTestFile)
+		require.NoError(t, err)
+	})
 }
 
-func Test_validateGitHubMode_MissingProvider(t *testing.T) {
-	runner := &Runner{
-		GitHub:         true,
-		Provider:       "",
-		DeploymentTool: "terraform",
-	}
+func Test_findGitRoot(t *testing.T) {
+	t.Run("finds git root from subdirectory", func(t *testing.T) {
+		tempDir := t.TempDir()
 
-	err := runner.validateGitHubMode(nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "--provider flag is required")
-}
+		// Create a fake .git directory
+		gitDir := filepath.Join(tempDir, ".git")
+		err := os.MkdirAll(gitDir, 0755)
+		require.NoError(t, err)
 
-func Test_validateGitHubMode_InvalidProvider(t *testing.T) {
-	runner := &Runner{
-		GitHub:         true,
-		Provider:       "gcp",
-		DeploymentTool: "terraform",
-	}
+		// Create a subdirectory
+		subDir := filepath.Join(tempDir, "src", "pkg")
+		err = os.MkdirAll(subDir, 0755)
+		require.NoError(t, err)
 
-	err := runner.validateGitHubMode(nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "--provider must be 'aws' or 'azure'")
-}
+		// Find root from subdirectory
+		root, err := findGitRoot(subDir)
+		require.NoError(t, err)
+		require.Equal(t, tempDir, root)
+	})
 
-func Test_validateGitHubMode_InvalidDeploymentTool(t *testing.T) {
-	runner := &Runner{
-		GitHub:         true,
-		Provider:       "aws",
-		DeploymentTool: "pulumi",
-	}
+	t.Run("finds git root from root", func(t *testing.T) {
+		tempDir := t.TempDir()
 
-	err := runner.validateGitHubMode(nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "--deployment-tool must be 'terraform' or 'bicep'")
-}
+		// Create a fake .git directory
+		gitDir := filepath.Join(tempDir, ".git")
+		err := os.MkdirAll(gitDir, 0755)
+		require.NoError(t, err)
 
-func Test_validateGitHubMode_DefaultEnvironmentName(t *testing.T) {
-	runner := &Runner{
-		GitHub:          true,
-		Provider:        "aws",
-		DeploymentTool:  "terraform",
-		EnvironmentName: "",
-	}
+		// Find root from root
+		root, err := findGitRoot(tempDir)
+		require.NoError(t, err)
+		require.Equal(t, tempDir, root)
+	})
 
-	// Since validateGitHubMode sets the default before calling validateGitHubPrerequisites,
-	// we can verify the default is set even though the overall call will fail due to missing git repo.
-	// The environment name default is set early in the function.
-	// For now, just verify the initial field handling.
-	require.Equal(t, "", runner.EnvironmentName)
+	t.Run("returns error if not a git repo", func(t *testing.T) {
+		tempDir := t.TempDir()
 
-	// After validation (with error), the default should be set
-	// Skipping full validation test as it requires git repo context
+		// Create a subdirectory without .git
+		subDir := filepath.Join(tempDir, "src")
+		err := os.MkdirAll(subDir, 0755)
+		require.NoError(t, err)
+
+		// Should fail when no .git directory exists
+		_, err = findGitRoot(subDir)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not a git repository")
+	})
 }
 
 func Test_githubInitOptions_Structure(t *testing.T) {
 	opts := &githubInitOptions{
-		Provider:        "aws",
-		DeploymentTool:  "terraform",
-		EnvironmentName: "dev",
-		RepoPath:        "/path/to/repo",
-		Owner:           "myorg",
-		Repo:            "myrepo",
+		ResourceTypesRepo: "https://github.com/example/resource-types",
+		RepoPath:          "/path/to/repo",
+		Owner:             "myorg",
+		Repo:              "myrepo",
 	}
 
-	require.Equal(t, "aws", opts.Provider)
-	require.Equal(t, "terraform", opts.DeploymentTool)
-	require.Equal(t, "dev", opts.EnvironmentName)
+	require.Equal(t, "https://github.com/example/resource-types", opts.ResourceTypesRepo)
 	require.Equal(t, "/path/to/repo", opts.RepoPath)
 	require.Equal(t, "myorg", opts.Owner)
 	require.Equal(t, "myrepo", opts.Repo)
+}
+
+func Test_DefaultResourceTypesRepoURL(t *testing.T) {
+	// Verify the constant is set
+	require.NotEmpty(t, DefaultResourceTypesRepoURL)
+	require.Contains(t, DefaultResourceTypesRepoURL, "github.com")
 }

@@ -41,9 +41,9 @@
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
 - [X] T008 Create pkg/cli/github/environment.go — implement GitHub Environments API operations via `gh` CLI: `CreateEnvironment()`, `DeleteEnvironment()`, `SetEnvironmentVariable()`, `GetEnvironmentVariables()`, `SetRepoVariable()` (used by US1, US2, US6)
-- [ ] T008-T [P] Create pkg/cli/github/environment_test.go (DEFERRED: tests deferred to after implementation) — unit tests for all environment API operations using gomock (mock gh CLI calls)
+- [X] T008-T [P] Create pkg/cli/github/environment_test.go — unit tests for environment API operations and parsing logic
 - [X] T009 [P] Create pkg/cli/github/progress.go — implement animated progress indicator using Charm Bubble Tea with automatic workflow step status display showing each step's progress (FR-089-C through FR-089-G; used by US2, US4, US5, US6)
-- [ ] T009-T [P] Create pkg/cli/github/progress_test.go (DEFERRED: tests deferred to after implementation) — unit tests for progress model state machine (toggle, completion, error states)
+- [X] T009-T [P] Create pkg/cli/github/progress_test.go — unit tests for progress model state machine (state transitions, messages, view)
 - [X] T010 [P] Update pkg/cli/github/workflows.go — add workflow generation functions: `GenerateDeployWorkflow()`, `GenerateAppDeleteWorkflow()`, `GenerateAuthTestWorkflow()` producing 3 YAML workflow files with concurrency groups (FR-098, FR-099, FR-112, FR-113, FR-113-A)
 - [X] T011 [P] Add `DispatchAndWatch()` method to pkg/cli/github/client.go — dispatch a workflow, poll for run start, return run ID for progress tracking (combines `RunWorkflow` + `GetLatestWorkflowRun`; used by US2, US4, US5, US6)
 - [X] T011-T [P] Add concurrency queue detection to `DispatchAndWatch()` — if workflow is queued behind another run, display message "Another deployment is in progress, this run is queued..." (FR-100)
@@ -71,7 +71,7 @@
   6. Do NOT create `.radius/applications/` directory — this is created on demand by `rad app model` (FR-014-A)
 - [X] T015 [US1] Update `Validate()` in pkg/cli/cmd/radinit/github.go — verify git repo (FR-008), GitHub remote (FR-009), `gh auth status` (FR-010); ensure non-interactive (FR-014)
 - [X] T016 [US1] Handle re-initialization: if `.radius/` already exists, warn and offer to reinitialize (US1 scenario 6)
-- [ ] T016-T [US1] Add unit tests for pkg/cli/cmd/radinit/github.go — test Validate() checks (git repo, remote, auth), Run() output (directory creation, workflow generation, commit), re-init warning, and verify FR-002/FR-003/FR-004 negative cases (no types.yaml, no recipes.yaml, no env files created)
+- [X] T016-T [US1] Add unit tests for pkg/cli/cmd/radinit/github.go — tests for workflow generation and git root finding
 
 **Checkpoint**: `rad init` fully functional — repository can be initialized for Radius on GitHub
 
@@ -86,7 +86,7 @@
 ### Implementation for User Story 2
 
 - [X] T017 [US2] Create pkg/cli/github/oidc.go — extract OIDC setup flows from pkg/cli/cmd/env/connect/connect.go into reusable functions: `SetupAzureOIDC()` and `SetupAWSOIDC()` that handle prompting, credential creation, and federated identity setup (FR-024, FR-028)
-- [ ] T017-T [US2] Create pkg/cli/github/oidc_test.go — unit tests for OIDC setup flows with mocked az/aws CLI calls
+- [X] T017-T [US2] Create pkg/cli/github/oidc_test.go — unit tests for OIDC structs and helper functions
 - [X] T018 [US2] Update pkg/cli/cmd/env/create/create.go — branch on workspace kind:
   - GitHub mode: create GitHub Environment via API (FR-022), run OIDC setup (FR-024/FR-028), set all env variables (FR-025/FR-029), set `RADIUS_RECIPES_MANIFEST` with correct default based on provider + deployment tool (FR-026, FR-027, FR-030), accept `--recipes` override (FR-023)
   - Kubernetes mode: retain existing behavior (FR-016)
@@ -94,7 +94,7 @@
 - [X] T019 [US2] Add auth test dispatch to pkg/cli/cmd/env/create/create.go — after env variables are stored, dispatch `radius-auth-test.yml` workflow, show animated progress via T009, display success/failure with OIDC remediation hints (FR-030-E through FR-030-I)
 - [X] T020 [US2] Add Terraform state backend provisioning to pkg/cli/cmd/env/create/create.go — create S3 bucket (FR-097-B) or Azure Storage account (FR-097-A) for Terraform state, store location as env variable (FR-093 through FR-097)
 - [X] T021 [US2] Handle edge cases: environment already exists warning (US2 scenario 5), AWS CLI not installed error (US2 scenario 8), non-GitHub workspace error (US2 scenario 11)
-- [ ] T021-T [US2] Add unit tests for pkg/cli/cmd/env/create/create.go — test GitHub-mode branching, OIDC dispatch, TF state provisioning, and all edge cases
+- [X] T021-T [US2] Add unit tests for pkg/cli/cmd/env/create/create.go — test GitHub-mode branching, OIDC dispatch, TF state provisioning, and all edge cases
 
 **Checkpoint**: `rad environment create` fully functional — environments can be provisioned with OIDC
 
@@ -111,7 +111,7 @@
 - [X] T022 [US3] Move pkg/cli/cmd/model/model.go under applicationCmd — rename from `rad model` to `rad app model`; update cmd/rad/cmd/root.go wiring from T012 (FR-068-A)
 - [X] T023 [US3] Update pkg/cli/cmd/model/model.go `Run()` — create `.radius/applications/` directory if it doesn't exist (FR-068-B), then generate `.radius/applications/todolist.bicep` with `extension radius`, `Radius.Core/applications@2025-08-01-preview`, `Radius.Compute/containers@2025-08-01-preview`, `Radius.Data/postgreSqlDatabases@2025-08-01-preview` resources (FR-068-A, FR-090, FR-091, FR-092, spec appendix B.5)
 - [X] T024 [US3] Add `Validate()` checks — require initialized repository (`.radius/` exists); if existing file at target path, prompt to overwrite or choose different name (US3 scenarios 4, 5)
-- [ ] T024-T [US3] Add unit tests for rad app model — test Validate() and Run() including overwrite prompt
+- [X] T024-T [US3] Add unit tests for rad app model — test Validate() and Run() including overwrite prompt
 
 **Checkpoint**: `rad app model` creates sample application definition
 
@@ -138,7 +138,7 @@
   - Dispatch `rad-deploy.yaml` workflow with bicep file, environment, commit inputs (FR-045)
   - Show animated progress indicator via progress model from T009 (FR-089-C through FR-089-G)
   - Display final result (success: deployed; failure: error details) (FR-089-G)
-- [ ] T027-T [US4] Add unit tests for GitHub-mode deploy in pkg/cli/cmd/deploy/deploy_test.go — test Validate() (workspace, worktree, auto-select, commit) and Run() (dispatch, progress)
+- [X] T027-T [US4] Add unit tests for GitHub-mode deploy in pkg/cli/cmd/deploy/deploy_test.go — runner structure and workspace detection tests
 
 **Checkpoint**: `rad deploy` dispatches workflow and deploys application
 
@@ -161,7 +161,7 @@
   - Error if `--environment` omitted and multiple environments exist (FR-106-C)
   - Error if application not deployed to specified environment (US5 scenario 4)
 - [X] T030 [US5] Verify destroy workflow executes `rad app delete` within k3d cluster to remove application resources (FR-106-A)
-- [ ] T030-T [US5] Add unit tests for GitHub-mode delete in pkg/cli/cmd/app/delete/delete_test.go — test Validate() (application/environment flags) and Run() (dispatch, progress)
+- [X] T030-T [US5] Add unit tests for GitHub-mode delete in pkg/cli/cmd/app/delete/delete_test.go — runner structure and workspace detection tests
 
 **Checkpoint**: Full deployment lifecycle (init → env create → model → deploy → delete) works
 

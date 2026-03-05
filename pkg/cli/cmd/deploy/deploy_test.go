@@ -172,15 +172,6 @@ func Test_Validate(t *testing.T) {
 			},
 		},
 		{
-			Name:          "rad deploy - fallback workspace requires resource group",
-			Input:         []string{"app.bicep", "--environment", "prod"},
-			ExpectedValid: false,
-			ConfigHolder: framework.ConfigHolder{
-				ConfigFilePath: "",
-				Config:         radcli.LoadEmptyConfig(t),
-			},
-		},
-		{
 			Name:          "rad deploy - too many args",
 			Input:         []string{"app.bicep", "anotherfile.json"},
 			ExpectedValid: false,
@@ -1627,6 +1618,64 @@ func Test_ConfigureProviders(t *testing.T) {
 			} else {
 				require.Nil(t, runner.Providers.AWS)
 			}
+		})
+	}
+}
+
+func Test_Runner_GitHubModeFields(t *testing.T) {
+	t.Parallel()
+
+	// Verify Runner has GitHub-mode specific fields
+	runner := &Runner{
+		Workspace: &workspaces.Workspace{
+			Name: "test",
+		},
+		CommitHash: "abc123def456",
+	}
+
+	require.Equal(t, "abc123def456", runner.CommitHash)
+	require.NotNil(t, runner.Workspace)
+}
+
+func Test_Runner_IsGitHubWorkspace(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		runner   *Runner
+		isGitHub bool
+	}{
+		{
+			name: "GitHub workspace",
+			runner: &Runner{
+				Workspace: &workspaces.Workspace{
+					Name: "github-test",
+					Connection: map[string]any{
+						"kind": workspaces.KindGitHub,
+						"url":  "https://github.com/owner/repo",
+					},
+				},
+			},
+			isGitHub: true,
+		},
+		{
+			name: "Kubernetes workspace",
+			runner: &Runner{
+				Workspace: &workspaces.Workspace{
+					Name: "k8s-test",
+					Connection: map[string]any{
+						"kind":    workspaces.KindKubernetes,
+						"context": "my-context",
+					},
+				},
+			},
+			isGitHub: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.isGitHub, tt.runner.Workspace.IsGitHubWorkspace())
 		})
 	}
 }

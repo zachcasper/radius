@@ -124,7 +124,7 @@ func Test_Validate_GitHubWorkspaceNoRadiusDir(t *testing.T) {
 func Test_BicepTemplateContent(t *testing.T) {
 	// Verify the template contains expected resources
 	require.Contains(t, todolistBicepTemplate, "extension radius")
-	require.Contains(t, todolistBicepTemplate, "Radius.Core/applications@2025-08-01-preview")
+	require.Contains(t, todolistBicepTemplate, "Applications.Core/applications@2023-10-01-preview")
 	require.Contains(t, todolistBicepTemplate, "Radius.Compute/containers@2025-08-01-preview")
 	require.Contains(t, todolistBicepTemplate, "Radius.Data/postgreSqlDatabases@2025-08-01-preview")
 	require.Contains(t, todolistBicepTemplate, "resource todolist")
@@ -161,4 +161,62 @@ func createConfigWithGitHubWorkspace(t *testing.T) *viper.Viper {
 		},
 	})
 	return v
+}
+
+func Test_Runner_Fields(t *testing.T) {
+	// Verify Runner struct has all required fields
+	runner := &Runner{
+		Yes: true,
+		Workspace: &workspaces.Workspace{
+			Connection: map[string]any{
+				"kind": workspaces.KindGitHub,
+			},
+			Name: "test-workspace",
+		},
+	}
+	require.True(t, runner.Yes)
+	require.NotNil(t, runner.Workspace)
+	require.Equal(t, workspaces.KindGitHub, runner.Workspace.Connection["kind"])
+}
+
+func Test_Runner_Validate_NilWorkspaceConnection(t *testing.T) {
+	// Test workspace with nil connection map
+	runner := &Runner{
+		ConfigHolder: &framework.ConfigHolder{ConfigFilePath: "filePath"},
+		Workspace: &workspaces.Workspace{
+			Connection: nil,
+			Name:       "test-workspace",
+		},
+	}
+
+	// Verify connection is nil
+	require.Nil(t, runner.Workspace.Connection)
+}
+
+func Test_Runner_YesFlag(t *testing.T) {
+	// Test that Yes flag bypasses overwrite prompt
+	runner := &Runner{
+		Yes: true,
+		Workspace: &workspaces.Workspace{
+			Connection: map[string]any{
+				"kind": workspaces.KindGitHub,
+			},
+			Name: "test-workspace",
+		},
+	}
+
+	// Yes flag should be true
+	require.True(t, runner.Yes)
+
+	// Test with Yes = false
+	runnerNoYes := &Runner{
+		Yes: false,
+		Workspace: &workspaces.Workspace{
+			Connection: map[string]any{
+				"kind": workspaces.KindGitHub,
+			},
+			Name: "test-workspace",
+		},
+	}
+	require.False(t, runnerNoYes.Yes)
 }

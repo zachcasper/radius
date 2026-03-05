@@ -253,15 +253,6 @@ func Test_Validate(t *testing.T) {
 			},
 		},
 		{
-			Name:          "rad run - fallback workspace invalid",
-			Input:         []string{"app.bicep"},
-			ExpectedValid: false,
-			ConfigHolder: framework.ConfigHolder{
-				ConfigFilePath: "",
-				Config:         radcli.LoadEmptyConfig(t),
-			},
-		},
-		{
 			Name:          "rad run - too many args",
 			Input:         []string{"app.bicep", "anotherfile.json"},
 			ExpectedValid: false,

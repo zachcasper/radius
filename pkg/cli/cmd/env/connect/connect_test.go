@@ -179,10 +179,10 @@ provider: {}
 
 	err = runner.Run(context.Background())
 
-	// We expect an error about git operations since we don't have a real git repo
-	// but we should get past the AWS config phase
+	// We expect an error since we don't have a real gh CLI configured
+	// The code now tries to set secrets first, which requires gh auth
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "git")
+	require.Contains(t, err.Error(), "secret")
 }
 
 func Test_Run_Azure_Success(t *testing.T) {

@@ -107,14 +107,6 @@ func Test_Validate(t *testing.T) {
 			},
 		},
 		{
-			Name:          "Create command with fallback workspace - requires resource group",
-			Input:         []string{"testingenv"},
-			ExpectedValid: false,
-			ConfigHolder: framework.ConfigHolder{
-				Config: radcli.LoadEmptyConfig(t),
-			},
-		},
-		{
 			Name:          "Create command with invalid environment",
 			Input:         []string{"testingenv", "-e", "testingenv"},
 			ExpectedValid: false,

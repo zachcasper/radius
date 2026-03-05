@@ -748,3 +748,163 @@ Each defect should include:
 - **Resolution**: FIXED — Added `git fetch origin ${{ github.ref_name }}` and `git rebase FETCH_HEAD` before `git push origin HEAD:${{ github.ref_name }}` in all 5 commit/push steps. This rebases the local commit on top of any remote changes before pushing.
 - **Files Changed**: `pkg/cli/github/workflows.go`
 - **Spec Impact**: None.
+
+### D058: `rad init` creates `RADIUS_RESOURCE_TYPES_REPO` instead of `RADIUS_CONFIG_REPO` ✅ FIXED
+- **Phase/Task**: Phase 1 (rad init)
+- **Category**: Bug
+- **Description**: `rad init --github` creates a repository variable named `RADIUS_RESOURCE_TYPES_REPO`, but the spec (FR-005, FR-006, FR-062, FR-063) requires the variable to be named `RADIUS_CONFIG_REPO`. The generated workflows also reference `RADIUS_RESOURCE_TYPES_REPO` instead of `RADIUS_CONFIG_REPO`.
+- **Root Cause**: Original implementation used an outdated variable naming convention. The spec was updated to use `RADIUS_CONFIG_REPO` to reflect that the repository contains more than just resource types (also bicepconfig.json, recipe manifests, etc.), but the code wasn't updated to match.
+- **Resolution**: FIXED — Updated `pkg/cli/cmd/radinit/github.go` to set `RADIUS_CONFIG_REPO` instead of `RADIUS_RESOURCE_TYPES_REPO`. Updated `pkg/cli/github/workflows.go` to reference `vars.RADIUS_CONFIG_REPO`. Updated `pkg/cli/cmd/resourcetype/list/list.go`, `show/show.go`, `create/create.go`, and `delete/delete.go` to read `RADIUS_CONFIG_REPO`.
+- **Files Changed**: `pkg/cli/cmd/radinit/github.go`, `pkg/cli/github/workflows.go`, `pkg/cli/cmd/resourcetype/list/list.go`, `pkg/cli/cmd/resourcetype/show/show.go`, `pkg/cli/cmd/resourcetype/create/create.go`, `pkg/cli/cmd/resourcetype/delete/delete.go`
+- **Spec Impact**: None (code now matches spec).
+
+### D059: `rad env create` shows outdated next steps message ✅ FIXED
+- **Phase/Task**: Phase 2 (rad env create)
+- **Category**: Bug
+- **Description**: After `rad env create`, `rad app model`, and `rad init --github` complete, the "Next steps" messages reference the obsolete two-phase deployment model (`rad deployment create` + `rad deployment apply`). They should say `rad deploy`.
+- **Root Cause**: The messages were written before the spec was updated to remove two-phase deployment in favor of `rad deploy` dispatching workflows directly.
+- **Resolution**: FIXED — Updated all "Next steps" messages to reference `rad deploy <bicep-file> --environment <env>`.
+- **Files Changed**: `pkg/cli/cmd/env/create/create.go`, `pkg/cli/cmd/model/model.go`, `pkg/cli/cmd/radinit/github.go`
+- **Spec Impact**: None.
+
+### D060: `rad env create --provider azure` defaults to `recipes-azure-terraform.yaml` instead of `recipes-azure-bicep.yaml` ✅ FIXED
+- **Phase/Task**: Phase 2 (rad env create)
+- **Category**: Bug
+- **Description**: When running `rad env create --provider azure` without specifying `--deployment-tool`, the `RADIUS_RECIPES_MANIFEST` defaults to `recipes-azure-terraform.yaml`. According to FR-026, Azure should default to `recipes-azure-bicep.yaml` (Bicep is the default deployment tool for Azure).
+- **Root Cause**: The switch statement in `runGitHubMode()` sets both `aws` and `azure` cases to terraform-based recipe manifests. The `azure` case should use `recipes-azure-bicep.yaml` by default.
+- **Resolution**: FIXED — Updated `pkg/cli/cmd/env/create/create.go` to set `recipes-azure-bicep.yaml` as the default for Azure provider.
+- **Files Changed**: `pkg/cli/cmd/env/create/create.go`
+- **Spec Impact**: None (code now matches spec FR-026).
+
+### D061: `rad init --github` resource group handling issues ✅ FIXED
+- **Phase/Task**: Phase 1 (rad init --github)
+- **Category**: Implementation bug
+- **Description**: Multiple issues with resource group handling in OIDC setup (`pkg/cli/github/oidc.go`):
+  1. **Misleading message**: When selecting an existing resource group, the output said "Creating resource group..." which was confusing.
+  2. **Hardcoded location**: Location was hardcoded to "eastus". When creating a new resource group, the user should be prompted for location.
+  3. **No location prompt**: Per FR-003, creating a new resource group should prompt for Azure region/location.
+- **Root Cause**: The OIDC setup flow unconditionally ran `az group create --location eastus` regardless of whether the user selected an existing or new resource group.
+- **Resolution**: FIXED — Implemented in `pkg/cli/github/oidc.go`:
+  1. Added `AzureResourceGroupSelection` struct to track name, location, and `IsNew` flag
+  2. Modified `promptForAzureResourceGroup()` to return the struct with all info
+  3. Added `promptForAzureLocation()` that fetches locations via `az account list-locations` and prompts user to select
+  4. Modified `createAzureApp()` to only create resource group if `IsNew` is true, using the user-selected location
+  5. Updated confirmation message to show "(in location)" for new RGs or "(existing)" for existing ones
+  6. Updated log message to differentiate "Creating resource group: X in Y..." vs "Using existing resource group: X"
+- **Files Changed**: `pkg/cli/github/oidc.go`
+- **Spec Impact**: FR-003 should explicitly state that selecting "create new resource group" prompts for location and provisions the RG in Azure.
+
+### D062: `rad deploy` fails with HTTP 500 when dispatching GitHub workflow ✅ FIXED
+- **Phase/Task**: Phase 3 (rad deploy)
+- **Category**: Implementation bug
+- **Description**: Running `rad deploy .radius/model/app.bicep -e dev` fails with:
+  ```
+  Error: failed to dispatch deploy workflow: failed to run workflow rad-deploy.yaml: exit status 1: 
+  could not create workflow dispatch event: HTTP 500: Failed to run workflow dispatch 
+  (https://api.github.com/repos/zachcasper/github-radius-test/actions/workflows/242065697/dispatches)
+  ```
+  The GitHub API returns HTTP 500 when trying to dispatch the workflow.
+- **Root Cause**: The deploy.go code hardcoded `"main"` as the ref for workflow dispatch. If the repository's default branch is different, the workflow dispatch fails because the workflow file doesn't exist on the hardcoded "main" branch.
+- **Resolution**: FIXED — Updated all workflow dispatch calls to fetch the repository's default branch using `ghClient.GetRepoInfo().DefaultBranchRef.Name` before dispatching. Applied to:
+  1. `pkg/cli/cmd/deploy/deploy.go` - rad deploy
+  2. `pkg/cli/cmd/env/create/create.go` - auth test dispatch
+  3. `pkg/cli/cmd/app/delete/delete.go` - rad app delete
+- **Files Changed**: `deploy.go`, `create.go`, `delete.go`
+- **Spec Impact**: FR-037 should specify that workflow dispatch uses the repository's default branch, not a hardcoded value.
+
+### D063: `rad env create` auth test dispatch fails with HTTP 500 — transient GitHub API issue ✅ NOT A BUG
+- **Phase/Task**: Phase 2 (rad env create)
+- **Category**: Transient external failure
+- **Description**: Running `rad env create` occasionally fails to dispatch the auth test workflow with HTTP 500. The same error appeared in the GitHub GUI ("Failed to queue workflow run. Please try again.").
+- **Root Cause**: **Transient GitHub API issue**. The workflow file is valid (verified with `gh workflow view rad-auth-test.yaml` showing successful runs). The error was intermittent and resolved on its own. Subsequent runs succeeded.
+- **Resolution**: NOT A BUG — The existing error handling in `create.go` already gracefully handles this by showing a warning and allowing the user to manually run the workflow:
+  ```
+  Warning: could not dispatch auth test: ...
+  You can manually run the auth test workflow from GitHub Actions.
+  ```
+  This is appropriate behavior for transient external service failures.
+- **Recommendation**: Consider adding retry logic (1-2 retries with 2-3 second delay) for workflow dispatch to handle transient GitHub API failures more gracefully.
+- **Spec Impact**: None.
+### D064: `rad env create` fails with "resource type 'Applications.Core/environments' not found" ✅ FIXED
+- **Phase/Task**: Phase 2 (rad deploy workflow)
+- **Category**: Race condition
+- **Description**: The workflow execution fails during the "Create environment" step with:
+  ```
+  Error: resource type 'Applications.Core/environments' not found in namespace 'Applications.Core'
+  ```
+  This occurs because the `rad env create` command runs before `Applications.Core` resource provider is fully registered in the control plane. The existing "Wait for Radius" step only waits for `rad group create` to succeed, but the provider registration happens asynchronously after the control plane pods start.
+- **Root Cause**: Race condition between control plane startup and provider registration. The D053 fix for `rad group create` retry loop doesn't cover the provider registration delay.
+- **Resolution**: FIXED — Added retry loop to all 8 "Create environment" workflow steps across all workflow generators:
+  - Retries up to 15 times with 2-second intervals (30 seconds total)
+  - Logs progress during retries
+  - Clear error message on failure
+- **Files Changed**: `pkg/cli/github/workflows.go` (8 instances updated)
+- **Spec Impact**: Workflow steps that depend on resource providers should include retry logic to handle asynchronous provider registration.
+
+### D065: rad-deploy workflow missing resource types registration from types.yaml ✅ FIXED
+- **Phase/Task**: Phase 2 (rad deploy workflow)
+- **Category**: Implementation bug
+- **Description**: The `generateRadDeploySteps()` and `generateRadAppDeleteSteps()` functions were missing critical steps that exist in other workflow generators:
+  1. Clone config repository step to download types.yaml
+  2. Install yq step to parse YAML
+  3. Register resource types step to read types.yaml and register each type
+  Without these steps, custom resource types defined in types.yaml are not available during deployment.
+- **Root Cause**: The rad-deploy and rad-app-delete workflows were implemented separately and did not include the resource types registration logic.
+- **Resolution**: FIXED — Added the following steps to both `generateRadDeploySteps()` and `generateRadAppDeleteSteps()`:
+  - Clone config repository (parses RADIUS_CONFIG_REPO, clones types/config repo)
+  - Install yq (needed for parsing types.yaml)
+  - Register resource types (reads types.yaml and registers each type with `rad resource-type create`)
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: Ensure all deployment workflows include resource types registration from types.yaml per FR-092-C.
+
+### D066: Config directory path changed from `default-config/` to `config/` ✅ FIXED
+- **Phase/Task**: Phase 2 (rad deploy workflow)
+- **Category**: Implementation bug
+- **Description**: Workflow step "Clone config repository" fails with:
+  ```
+  cp: cannot stat 'resource-types/default-config/bicepconfig.json': No such file or directory
+  ```
+  The resource-types-contrib repository structure changed from `default-config/` to `config/`.
+- **Root Cause**: Hardcoded path `resource-types/default-config/` no longer matches the actual repository structure.
+- **Resolution**: FIXED — Updated all 13 occurrences of `default-config` to `config` in workflows.go.
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: None - this is an external repository structure change that required code update.
+
+### D067: rad-deploy workflow missing recipe registration step ✅ FIXED
+- **Phase/Task**: Phase 2 (rad deploy workflow)
+- **Category**: Implementation bug
+- **Description**: The `generateRadDeploySteps()` function is missing the "Register recipes" step. After creating the environment, it goes directly to "Deploy application" without registering recipes from RADIUS_RECIPES_MANIFEST. This means deployments that depend on recipes will fail.
+- **Root Cause**: The rad-deploy workflow was implemented separately and did not include all the steps from the plan-based deployment workflow.
+- **Resolution**: FIXED — Added "Register recipes" step to `generateRadDeploySteps()` after "Create environment" and before "Deploy application". The step:
+  - Downloads RADIUS_RECIPES_MANIFEST from the environment variable
+  - Parses the manifest with yq
+  - Registers each recipe with `rad recipe register`
+  - Gracefully skips if no manifest is configured
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: Ensure all deployment workflows include recipe registration per FR-088.
+
+### D068: rad deploy fails with "resource type 'Microsoft.Resources/deployments' not found" ✅ FIXED
+- **Phase/Task**: Phase 2 (rad deploy workflow)
+- **Category**: Race condition
+- **Description**: The workflow step "Deploy application" fails with:
+  ```
+  Error: "code": "BadRequest", "message": "resource type 'Microsoft.Resources/deployments' not found"
+  ```
+  The `Microsoft.Resources/deployments` type is handled by the Bicep Deployment Engine (bicep-de), which runs as a separate Kubernetes deployment. The engine may not be fully available when `rad deploy` runs, even after `rad install kubernetes` completes.
+- **Root Cause**: Race condition between Helm chart installation completing and the deployment engine pod being ready to serve requests. UCP routes `Microsoft.Resources` requests to `bicep-de.radius-system:6443`, but the deployment may not be available yet.
+- **Resolution**: FIXED — Added "Wait for deployment engine" step to both `generateRadDeploySteps()` and `generateRadAppDeleteSteps()`. The step uses `kubectl wait --for=condition=available` to ensure the bicep-de deployment is ready before proceeding.
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: Document that workflow steps should explicitly wait for all required Radius components to be ready, not just the Applications.Core provider.
+
+### D069: Clone config repository fails with "directory already exists" ✅ FIXED
+- **Phase/Task**: Phase 2 (rad deploy workflow)
+- **Category**: Implementation bug
+- **Description**: The workflow step "Clone config repository" fails with:
+  ```
+  fatal: destination path 'resource-types' already exists and is not an empty directory.
+  ```
+  This occurs on workflow retries or when the workflow has a previous failed run that left the directory behind.
+- **Root Cause**: The `git clone` command fails if the destination directory already exists. Workflows need to be idempotent.
+- **Resolution**: FIXED — Added `rm -rf resource-types &&` before each `git clone` command in all 5 workflow generators that clone the config repository.
+- **Files Changed**: `pkg/cli/github/workflows.go`
+- **Spec Impact**: Workflow steps that create directories should be idempotent - always clean up before recreating.

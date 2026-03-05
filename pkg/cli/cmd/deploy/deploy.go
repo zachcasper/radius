@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"gopkg.in/yaml.v3"
 
 	v1 "github.com/radius-project/radius/pkg/armrpc/api/v1"
@@ -39,7 +40,9 @@ import (
 	"github.com/radius-project/radius/pkg/cli/deploy"
 	"github.com/radius-project/radius/pkg/cli/filesystem"
 	"github.com/radius-project/radius/pkg/cli/framework"
+	"github.com/radius-project/radius/pkg/cli/github"
 	"github.com/radius-project/radius/pkg/cli/output"
+	"github.com/radius-project/radius/pkg/cli/prompt"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
 	"github.com/radius-project/radius/pkg/corerp/api/v20231001preview"
 	"github.com/radius-project/radius/pkg/corerp/api/v20250801preview"
@@ -146,6 +149,7 @@ type Runner struct {
 	RadiusCoreClientFactory *v20250801preview.ClientFactory
 	Deploy                  deploy.Interface
 	Output                  output.Interface
+	Prompter                prompt.Interface
 
 	ApplicationName          string
 	EnvironmentNameOrID      string
@@ -160,6 +164,9 @@ type Runner struct {
 	// FR-039-A: Plan-only mode fields
 	PlanOnly      bool
 	PlanOutputDir string
+
+	// GitHub mode fields
+	CommitHash string
 }
 
 // NewRunner creates a new instance of the `rad deploy` runner.
@@ -170,6 +177,7 @@ func NewRunner(factory framework.Factory) *Runner {
 		ConfigHolder:      factory.GetConfigHolder(),
 		Deploy:            factory.GetDeploy(),
 		Output:            factory.GetOutput(),
+		Prompter:          factory.GetPrompter(),
 		Providers:         &clients.Providers{},
 	}
 }
@@ -187,10 +195,15 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 
 	r.Workspace = workspace
 
-	// FR-036, FR-037: Block rad deploy in GitHub mode — direct users to two-phase deployment commands.
+	// Get the file path early (required for both modes)
+	r.FilePath = args[0]
+
+	// FR-036, FR-037: In GitHub mode, dispatch workflow. In Kubernetes mode, deploy directly.
 	if workspace.IsGitHubWorkspace() {
-		return clierrors.Message("The 'rad deploy' command is not supported in GitHub mode. Use 'rad deployment create' to generate a deployment plan and 'rad deployment apply' to execute it.")
+		return r.validateGitHubMode(cmd)
 	}
+
+	// Kubernetes mode validation continues below
 
 	// Allow --group to override the scope
 	scope, err := cli.RequireScope(cmd, *workspace)
@@ -202,9 +215,6 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	// of the environment later. That will give an appropriate error message for the case where the group
 	// does not exist.
 	workspace.Scope = scope
-
-	// Get the file path early so we can prepare the template
-	r.FilePath = args[0]
 
 	// Prepare the template early to check if it contains an environment resource.
 	// This allows us to skip environment validation if the template will create one.
@@ -270,15 +280,19 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// FR-039-A: Read plan-only mode flags
-	r.PlanOnly, err = cmd.Flags().GetBool("plan")
-	if err != nil {
-		return err
+	// FR-039-A: Read plan-only mode flags (optional - may not be defined in subcommands like rad run)
+	if cmd.Flags().Lookup("plan") != nil {
+		r.PlanOnly, err = cmd.Flags().GetBool("plan")
+		if err != nil {
+			return err
+		}
 	}
 
-	r.PlanOutputDir, err = cmd.Flags().GetString("output")
-	if err != nil {
-		return err
+	if cmd.Flags().Lookup("output") != nil {
+		r.PlanOutputDir, err = cmd.Flags().GetString("output")
+		if err != nil {
+			return err
+		}
 	}
 
 	// Validate --output is required when --plan is specified
@@ -289,12 +303,146 @@ func (r *Runner) Validate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// validateGitHubMode validates the GitHub-specific requirements for rad deploy.
+// FR-040a: Verify specified Bicep file exists.
+// FR-041: Verify clean worktree (no uncommitted changes).
+// FR-042: Verify all commits are pushed.
+// FR-043: Resolve commit hash for traceability.
+func (r *Runner) validateGitHubMode(cmd *cobra.Command) error {
+	// FR-040a: Validate that the specified Bicep file exists
+	if _, err := os.Stat(r.FilePath); os.IsNotExist(err) {
+		return clierrors.Message("Bicep file not found: %s", r.FilePath)
+	}
+
+	// Get the repository path
+	cwd, err := os.Getwd()
+	if err != nil {
+		return clierrors.Message("Failed to get current directory: %v", err)
+	}
+
+	// Create git helper
+	gitHelper, err := github.NewGitHelper(cwd)
+	if err != nil {
+		return clierrors.Message("Failed to access git repository: %v", err)
+	}
+
+	// FR-041: Verify clean worktree (no uncommitted changes)
+	isDirty, err := gitHelper.IsDirty()
+	if err != nil {
+		return clierrors.Message("Failed to check worktree status: %v", err)
+	}
+	if isDirty {
+		return clierrors.Message("There are uncommitted changes in your working tree. Please commit all changes before deploying.")
+	}
+
+	// FR-042: Verify all commits are pushed
+	hasUnpushed, err := gitHelper.HasUnpushedCommits()
+	if err != nil {
+		return clierrors.Message("Failed to check for unpushed commits: %v", err)
+	}
+	if hasUnpushed {
+		return clierrors.Message("There are unpushed commits. Please push all changes to the remote before deploying.")
+	}
+
+	// FR-043: Resolve commit hash for traceability
+	r.CommitHash, err = gitHelper.GetCurrentCommit()
+	if err != nil {
+		return clierrors.Message("Failed to get commit hash: %v", err)
+	}
+
+	// Require environment flag for GitHub mode
+	// FR-039: Auto-select if exactly one environment, error if ambiguous
+	environmentFlag, _ := cmd.Flags().GetString("environment")
+	if environmentFlag != "" {
+		r.EnvironmentNameOrID = environmentFlag
+	} else if r.Workspace.Environment != "" {
+		r.EnvironmentNameOrID = r.Workspace.Environment
+	} else {
+		// FR-040: List available environments if ambiguous
+		return clierrors.Message("The --environment flag is required in GitHub mode. Please specify the target environment.")
+	}
+
+	return nil
+}
+
+// runGitHubMode dispatches the rad-deploy.yaml workflow for GitHub workspaces.
+// FR-037: Dispatch workflow with bicep_file and environment inputs.
+func (r *Runner) runGitHubMode(ctx context.Context) error {
+	r.Output.LogInfo("Deploying '%s' to environment '%s'...", r.FilePath, r.EnvironmentNameOrID)
+	r.Output.LogInfo("")
+
+	ghClient := github.NewClient()
+
+	// Get the repository's default branch for dispatch
+	repoInfo, err := ghClient.GetRepoInfo()
+	if err != nil {
+		return fmt.Errorf("failed to get repository info: %w", err)
+	}
+	defaultBranch := repoInfo.DefaultBranchRef.Name
+	if defaultBranch == "" {
+		defaultBranch = "main" // Fallback if not set
+	}
+
+	inputs := map[string]string{
+		"bicep_file":  r.FilePath,
+		"environment": r.EnvironmentNameOrID,
+		"commit":      r.CommitHash,
+	}
+
+	// Dispatch deploy workflow using the repo's default branch
+	runID, runURL, err := ghClient.DispatchAndWatch(
+		github.DeployWorkflowFile,
+		defaultBranch,
+		inputs,
+		func() {
+			r.Output.LogInfo("Workflow queued, waiting for runner...")
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to dispatch deploy workflow: %w", err)
+	}
+
+	// Show animated progress with step status
+	pollFunc := ghClient.CreatePollFunc(runID)
+	model := github.NewProgressModel("Deploying application", pollFunc)
+	model.RunURL = runURL
+	model.StepPollFunc = ghClient.CreateStepPollFunc(runID)
+
+	p := tea.NewProgram(model)
+	finalModel, err := r.Prompter.RunProgram(p)
+	if err != nil {
+		return fmt.Errorf("progress display error: %w", err)
+	}
+
+	// Check final state
+	if pm, ok := finalModel.(github.ProgressModel); ok {
+		if pm.State == github.ProgressStateFailed {
+			r.Output.LogInfo("")
+			r.Output.LogInfo("Deployment failed.")
+			r.Output.LogInfo("See workflow logs: %s", runURL)
+			return clierrors.Message("Deployment failed. Check the workflow logs for details.")
+		}
+	}
+
+	r.Output.LogInfo("")
+	r.Output.LogInfo("Application deployed successfully to environment '%s'.", r.EnvironmentNameOrID)
+
+	return nil
+}
+
 // Run runs the `rad deploy` command.
 //
 
 // Run deploys a Bicep template into an environment from a workspace, optionally creating an application if
 // specified, and displays progress and completion messages. It returns an error if any of the operations fail.
 func (r *Runner) Run(ctx context.Context) error {
+	// FR-037: Branch on workspace type - dispatch workflow in GitHub mode, deploy directly in Kubernetes mode
+	if r.Workspace.IsGitHubWorkspace() {
+		return r.runGitHubMode(ctx)
+	}
+
+	// Kubernetes mode deployment continues below
+
 	// Use the template that was prepared during validation
 	template := r.Template
 

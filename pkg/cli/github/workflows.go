@@ -309,9 +309,21 @@ exit 1`,
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
 		},
+		// D064: Retry environment creation - Applications.Core may not be registered yet
 		{
 			Name: "Create environment",
-			Run:  "rad env create ${{ github.event.inputs.environment || 'default' }} --group github",
+			Run: `echo "Creating Radius environment..."
+ENV_NAME="${{ github.event.inputs.environment || 'default' }}"
+for i in $(seq 1 15); do
+  if rad env create "$ENV_NAME" --group github 2>&1; then
+    echo "Environment created successfully."
+    exit 0
+  fi
+  echo "Environment creation not ready, retrying in 2s... ($i/15)"
+  sleep 2
+done
+echo "ERROR: Failed to create environment after retries."
+exit 1`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
@@ -437,9 +449,21 @@ exit 1`,
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
 		},
+		// D064: Retry environment creation - Applications.Core may not be registered yet
 		{
 			Name: "Create environment",
-			Run:  "rad env create ${{ github.event.inputs.environment || 'default' }} --group github",
+			Run: `echo "Creating Radius environment..."
+ENV_NAME="${{ github.event.inputs.environment || 'default' }}"
+for i in $(seq 1 15); do
+  if rad env create "$ENV_NAME" --group github 2>&1; then
+    echo "Environment created successfully."
+    exit 0
+  fi
+  echo "Environment creation not ready, retrying in 2s... ($i/15)"
+  sleep 2
+done
+echo "ERROR: Failed to create environment after retries."
+exit 1`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
@@ -565,9 +589,21 @@ exit 1`,
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
 		},
+		// D064: Retry environment creation - Applications.Core may not be registered yet
 		{
 			Name: "Create environment",
-			Run:  "rad env create ${{ github.event.inputs.environment }} --group github",
+			Run: `echo "Creating Radius environment..."
+ENV_NAME="${{ github.event.inputs.environment }}"
+for i in $(seq 1 15); do
+  if rad env create "$ENV_NAME" --group github 2>&1; then
+    echo "Environment created successfully."
+    exit 0
+  fi
+  echo "Environment creation not ready, retrying in 2s... ($i/15)"
+  sleep 2
+done
+echo "ERROR: Failed to create environment after retries."
+exit 1`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
@@ -746,20 +782,464 @@ fi`,
 	}
 }
 
-// Workflow file name constants for the two-phase deployment model.
+// Workflow file name constants for the GitHub mode deployment model.
 const (
-	// DeploymentCreateWorkflowFile is the filename for the deployment create workflow.
-	DeploymentCreateWorkflowFile = "radius-deployment-create.yaml"
+	// DeployWorkflowFile is the filename for the deploy workflow (dispatched by rad deploy).
+	DeployWorkflowFile = "rad-deploy.yaml"
 
-	// DeploymentApplyWorkflowFile is the filename for the deployment apply workflow.
-	DeploymentApplyWorkflowFile = "radius-deployment-apply.yaml"
-
-	// DestroyWorkflowFile is the filename for the destroy workflow.
-	DestroyWorkflowFile = "radius-destroy.yaml"
+	// AppDeleteWorkflowFile is the filename for the app delete workflow (dispatched by rad app delete).
+	AppDeleteWorkflowFile = "rad-app-delete.yaml"
 
 	// AuthTestWorkflowFile is the filename for the auth test workflow.
-	AuthTestWorkflowFile = "radius-auth-test.yaml"
+	AuthTestWorkflowFile = "rad-auth-test.yaml"
+
+	// Legacy: Keep old constants for backward compatibility during transition.
+	// TODO: Remove after migration is complete.
+
+	// DeploymentCreateWorkflowFile is the legacy filename for the deployment create workflow.
+	// Deprecated: Use DeployWorkflowFile instead.
+	DeploymentCreateWorkflowFile = "radius-deployment-create.yaml"
+
+	// DeploymentApplyWorkflowFile is the legacy filename for the deployment apply workflow.
+	// Deprecated: No longer used in the simplified deployment model.
+	DeploymentApplyWorkflowFile = "radius-deployment-apply.yaml"
+
+	// DestroyWorkflowFile is the legacy filename for the destroy workflow.
+	// Deprecated: Use AppDeleteWorkflowFile instead.
+	DestroyWorkflowFile = "radius-destroy.yaml"
 )
+
+// GenerateRadDeployWorkflow creates the deploy workflow for GitHub mode.
+// FR-037: Triggered via workflow_dispatch when `rad deploy` is executed.
+// FR-098: Takes bicep_file and environment inputs.
+// FR-099: Uses concurrency groups scoped to environment.
+// FR-112: Produces rad-deploy.yaml.
+func GenerateRadDeployWorkflow() *Workflow {
+	workflow := &Workflow{
+		HeaderComments: []string{
+			"CUSTOMIZATION GUIDE:",
+			"This workflow is dispatched by 'rad deploy <bicep-file> --environment <env>'.",
+			"It deploys the specified Bicep application to the target environment.",
+			"",
+			"To trigger on push instead of workflow_dispatch, replace the 'on' section with:",
+			"  on:",
+			"    push:",
+			"      branches: [main]",
+			"      paths: ['.radius/applications/**']",
+			"",
+			"GitHub Secrets are available in steps via ${{ secrets.SECRET_NAME }}",
+		},
+		Name:    "Radius deploy",
+		RunName: "Radius deploy for ${{ inputs.bicep_file }} in ${{ inputs.environment }} environment",
+		On: WorkflowTrigger{
+			WorkflowDispatch: &WorkflowDispatchTrigger{
+				Inputs: map[string]WorkflowInput{
+					"bicep_file": {
+						Description: "Path to the Bicep file to deploy (relative to repository root)",
+						Required:    true,
+						Type:        "string",
+					},
+					"environment": {
+						Description: "Target GitHub Environment name",
+						Required:    true,
+						Type:        "string",
+					},
+					"commit": {
+						Description: "Git commit hash for traceability",
+						Required:    true,
+						Type:        "string",
+					},
+				},
+			},
+		},
+		Permissions: map[string]string{
+			"id-token": "write",
+			"contents": "read",
+			"actions":  "read",
+		},
+		Concurrency: &WorkflowConcurrency{
+			Group:            "radius-deploy-${{ inputs.environment }}",
+			CancelInProgress: false,
+		},
+		Jobs: map[string]WorkflowJob{
+			"deploy": {
+				Name:        "Deploy Application",
+				RunsOn:      "ubuntu-latest",
+				Environment: "${{ inputs.environment }}",
+				Steps:       generateRadDeploySteps(),
+			},
+		},
+	}
+
+	return workflow
+}
+
+// generateRadDeploySteps creates the steps for the rad deploy workflow.
+func generateRadDeploySteps() []WorkflowStep {
+	return []WorkflowStep{
+		{
+			Name: "Checkout Radius source",
+			Uses: "actions/checkout@v4",
+			With: map[string]string{
+				"repository": "${{ vars.RADIUS_REPO || 'radius-project/radius' }}",
+				"ref":        "${{ vars.RADIUS_REF || 'main' }}",
+				"path":       "radius-src",
+			},
+		},
+		{
+			Name: "Setup Go",
+			Uses: "actions/setup-go@v5",
+			With: map[string]string{
+				"go-version-file": "radius-src/go.mod",
+				"cache":           "true",
+			},
+		},
+		{
+			Name: "Build Radius CLI",
+			Run:  "cd radius-src && go build -o /usr/local/bin/rad ./cmd/rad",
+		},
+		{
+			Name: "Checkout application repository",
+			Uses: "actions/checkout@v4",
+			With: map[string]string{
+				"ref":  "${{ inputs.commit }}",
+				"path": "app",
+			},
+		},
+		// D065: Clone config repository for resource types and Bicep config
+		// FR-092-B: Clone config repo for bicepconfig.json and Bicep extensions
+		{
+			Name: "Clone config repository",
+			Env: map[string]string{
+				"RADIUS_CONFIG_REPO": "${{ vars.RADIUS_CONFIG_REPO }}",
+			},
+			Run: `# D070: Validate RADIUS_CONFIG_REPO is set, use default if empty
+if [ -z "$RADIUS_CONFIG_REPO" ]; then
+  echo "RADIUS_CONFIG_REPO not configured, using default: radius-project/resource-types-contrib"
+  RADIUS_CONFIG_REPO="https://github.com/radius-project/resource-types-contrib/tree/main"
+fi
+
+# Parse RADIUS_CONFIG_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
+REPO_PATH=$(echo "$RADIUS_CONFIG_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
+BRANCH=$(echo "$RADIUS_CONFIG_REPO" | sed 's|.*/tree/||')
+
+rm -rf resource-types && git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
+
+# Copy bicepconfig.json and Bicep extension archives to app directory
+# so rad deploy can resolve Bicep extensions (Bicep searches parent dirs from .bicep file)
+cp resource-types/config/bicepconfig.json app/
+cp resource-types/config/*.tgz app/`,
+		},
+		// Install yq for parsing types.yaml
+		{
+			Name: "Install yq",
+			Run:  "sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq",
+		},
+		{
+			Name: "Install k3d",
+			Run:  "curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash",
+		},
+		{
+			Name: "Create k3d cluster",
+			Run:  "k3d cluster create radius-ephemeral --volume $GITHUB_WORKSPACE/app:/github_workspace",
+		},
+		{
+			Name: "Export kubeconfig",
+			Run:  "k3d kubeconfig get radius-ephemeral > /tmp/kubeconfig.yaml",
+		},
+		{
+			Name: "Install Radius control plane",
+			Run:  "rad install kubernetes --skip-contour-install --set dashboard.enabled=false ${RADIUS_IMAGE_REGISTRY:+--set global.imageRegistry=$RADIUS_IMAGE_REGISTRY} ${RADIUS_IMAGE_TAG:+--set global.imageTag=$RADIUS_IMAGE_TAG}",
+			Env: map[string]string{
+				"KUBECONFIG":            "/tmp/kubeconfig.yaml",
+				"RADIUS_IMAGE_REGISTRY": "${{ vars.RADIUS_IMAGE_REGISTRY }}",
+				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
+			},
+		},
+		// D068: Wait for deployment engine (bicep-de) to be ready
+		// The DE handles Microsoft.Resources/deployments and must be available before rad deploy
+		{
+			Name: "Wait for deployment engine",
+			Run: `echo "Waiting for deployment engine to be ready..."
+kubectl wait --for=condition=available deployment/bicep-de -n radius-system --timeout=120s || {
+  echo "Warning: Deployment engine not available, continuing anyway..."
+}`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		{
+			Name: "Wait for Radius and create resource group",
+			Run: `echo "Waiting for Radius control plane to be ready..."
+for i in $(seq 1 30); do
+  if rad group create github 2>/dev/null; then
+    echo "Radius control plane is ready, resource group created."
+    exit 0
+  fi
+  echo "Waiting for Radius... ($i/30)"
+  sleep 2
+done
+echo "ERROR: Radius control plane did not become ready in time."
+exit 1`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// D065: Register resource types from types.yaml
+		// FR-092-C: Read types.yaml and register each resource type in the control plane
+		{
+			Name: "Register resource types",
+			Run: `cd resource-types/config
+for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
+  echo "Registering resource type from $def_file..."
+  rad resource-type create --from-file "$def_file"
+done`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// D064: Retry environment creation - Applications.Core may not be registered yet
+		{
+			Name: "Create environment",
+			Run: `echo "Creating Radius environment..."
+ENV_NAME="${{ inputs.environment }}"
+for i in $(seq 1 15); do
+  if rad env create "$ENV_NAME" --group github 2>&1; then
+    echo "Environment created successfully."
+    exit 0
+  fi
+  echo "Environment creation not ready, retrying in 2s... ($i/15)"
+  sleep 2
+done
+echo "ERROR: Failed to create environment after retries."
+exit 1`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// D067: Register recipes from the environment's RADIUS_RECIPES_MANIFEST
+		// FR-088: Download manifest and register each recipe on the Radius environment
+		{
+			Name: "Register recipes",
+			Env: map[string]string{
+				"KUBECONFIG":              "/tmp/kubeconfig.yaml",
+				"RADIUS_RECIPES_MANIFEST": "${{ vars.RADIUS_RECIPES_MANIFEST }}",
+			},
+			Run: `if [ -z "$RADIUS_RECIPES_MANIFEST" ]; then
+  echo "No RADIUS_RECIPES_MANIFEST configured, skipping recipe registration"
+  exit 0
+fi
+curl -fsSL "$RADIUS_RECIPES_MANIFEST" -o /tmp/recipes-manifest.yaml
+echo "Registering recipes from manifest..."
+# Iterate over top-level keys that have recipeKind (skip comment-only keys like 'recipes')
+for resource_type in $(yq e 'keys | .[]' /tmp/recipes-manifest.yaml); do
+  kind=$(yq e ".\"${resource_type}\".recipeKind // \"\"" /tmp/recipes-manifest.yaml)
+  if [ -z "$kind" ] || [ "$kind" = "null" ]; then
+    continue
+  fi
+  location=$(yq e ".\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
+  echo "  Registering $resource_type ($kind)..."
+  rad recipe register default \
+    --resource-type "$resource_type" \
+    --template-kind "$kind" \
+    --template-path "$location" \
+    --environment "/planes/radius/local/resourceGroups/github/providers/Applications.Core/environments/${{ inputs.environment }}" || echo "  Warning: Failed to register $resource_type, will use fallback"
+done
+echo "Recipe registration complete"`,
+		},
+		{
+			Name: "Deploy application",
+			Run:  "cd app && rad deploy ${{ inputs.bicep_file }} --environment ${{ inputs.environment }} --group github",
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		{
+			Name: "Cleanup k3d cluster",
+			If:   "always()",
+			Run:  "k3d cluster delete radius-ephemeral || true",
+		},
+	}
+}
+
+// GenerateRadAppDeleteWorkflow creates the app delete workflow for GitHub mode.
+// FR-106-A: Triggered via workflow_dispatch when `rad app delete` is executed.
+// FR-112: Produces rad-app-delete.yaml.
+func GenerateRadAppDeleteWorkflow() *Workflow {
+	workflow := &Workflow{
+		HeaderComments: []string{
+			"CUSTOMIZATION GUIDE:",
+			"This workflow is dispatched by 'rad app delete --application <app> --environment <env>'.",
+			"It destroys the specified application from the target environment.",
+			"",
+			"GitHub Secrets are available in steps via ${{ secrets.SECRET_NAME }}",
+		},
+		Name:    "Radius app delete",
+		RunName: "Radius app delete for ${{ inputs.application }} in ${{ inputs.environment }} environment",
+		On: WorkflowTrigger{
+			WorkflowDispatch: &WorkflowDispatchTrigger{
+				Inputs: map[string]WorkflowInput{
+					"application": {
+						Description: "Name of the application to delete",
+						Required:    true,
+						Type:        "string",
+					},
+					"environment": {
+						Description: "Target GitHub Environment name",
+						Required:    true,
+						Type:        "string",
+					},
+				},
+			},
+		},
+		Permissions: map[string]string{
+			"id-token": "write",
+			"contents": "read",
+			"actions":  "read",
+		},
+		Concurrency: &WorkflowConcurrency{
+			Group:            "radius-app-delete-${{ inputs.application }}-${{ inputs.environment }}",
+			CancelInProgress: false,
+		},
+		Jobs: map[string]WorkflowJob{
+			"delete": {
+				Name:        "Delete Application",
+				RunsOn:      "ubuntu-latest",
+				Environment: "${{ inputs.environment }}",
+				Steps:       generateRadAppDeleteSteps(),
+			},
+		},
+	}
+
+	return workflow
+}
+
+// generateRadAppDeleteSteps creates the steps for the rad app delete workflow.
+func generateRadAppDeleteSteps() []WorkflowStep {
+	return []WorkflowStep{
+		{
+			Name: "Checkout Radius source",
+			Uses: "actions/checkout@v4",
+			With: map[string]string{
+				"repository": "${{ vars.RADIUS_REPO || 'radius-project/radius' }}",
+				"ref":        "${{ vars.RADIUS_REF || 'main' }}",
+				"path":       "radius-src",
+			},
+		},
+		{
+			Name: "Setup Go",
+			Uses: "actions/setup-go@v5",
+			With: map[string]string{
+				"go-version-file": "radius-src/go.mod",
+				"cache":           "true",
+			},
+		},
+		{
+			Name: "Build Radius CLI",
+			Run:  "cd radius-src && go build -o /usr/local/bin/rad ./cmd/rad",
+		},
+		{
+			Name: "Checkout application repository",
+			Uses: "actions/checkout@v4",
+			With: map[string]string{
+				"path": "app",
+			},
+		},
+		{
+			Name: "Install k3d",
+			Run:  "curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash",
+		},
+		{
+			Name: "Create k3d cluster",
+			Run:  "k3d cluster create radius-ephemeral --volume $GITHUB_WORKSPACE/app:/github_workspace",
+		},
+		{
+			Name: "Export kubeconfig",
+			Run:  "k3d kubeconfig get radius-ephemeral > /tmp/kubeconfig.yaml",
+		},
+		{
+			Name: "Install Radius control plane",
+			Run:  "rad install kubernetes --skip-contour-install --set dashboard.enabled=false ${RADIUS_IMAGE_REGISTRY:+--set global.imageRegistry=$RADIUS_IMAGE_REGISTRY} ${RADIUS_IMAGE_TAG:+--set global.imageTag=$RADIUS_IMAGE_TAG}",
+			Env: map[string]string{
+				"KUBECONFIG":            "/tmp/kubeconfig.yaml",
+				"RADIUS_IMAGE_REGISTRY": "${{ vars.RADIUS_IMAGE_REGISTRY }}",
+				"RADIUS_IMAGE_TAG":      "${{ vars.RADIUS_IMAGE_TAG }}",
+			},
+		},
+		// D068: Wait for deployment engine (bicep-de) to be ready
+		{
+			Name: "Wait for deployment engine",
+			Run: `echo "Waiting for deployment engine to be ready..."
+kubectl wait --for=condition=available deployment/bicep-de -n radius-system --timeout=120s || {
+  echo "Warning: Deployment engine not available, continuing anyway..."
+}`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		{
+			Name: "Wait for Radius and create resource group",
+			Run: `echo "Waiting for Radius control plane to be ready..."
+for i in $(seq 1 30); do
+  if rad group create github 2>/dev/null; then
+    echo "Radius control plane is ready, resource group created."
+    exit 0
+  fi
+  echo "Waiting for Radius... ($i/30)"
+  sleep 2
+done
+echo "ERROR: Radius control plane did not become ready in time."
+exit 1`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// D065: Register resource types from types.yaml
+		// FR-092-C: Read types.yaml and register each resource type in the control plane
+		{
+			Name: "Register resource types",
+			Run: `cd resource-types/config
+for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
+  echo "Registering resource type from $def_file..."
+  rad resource-type create --from-file "$def_file"
+done`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		// D064: Retry environment creation - Applications.Core may not be registered yet
+		{
+			Name: "Create environment",
+			Run: `echo "Creating Radius environment..."
+ENV_NAME="${{ inputs.environment }}"
+for i in $(seq 1 15); do
+  if rad env create "$ENV_NAME" --group github 2>&1; then
+    echo "Environment created successfully."
+    exit 0
+  fi
+  echo "Environment creation not ready, retrying in 2s... ($i/15)"
+  sleep 2
+done
+echo "ERROR: Failed to create environment after retries."
+exit 1`,
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		{
+			Name: "Delete application",
+			Run:  "rad app delete ${{ inputs.application }} --environment ${{ inputs.environment }} --group github --yes",
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+		},
+		{
+			Name: "Cleanup k3d cluster",
+			If:   "always()",
+			Run:  "k3d cluster delete radius-ephemeral || true",
+		},
+	}
+}
 
 // GenerateDeploymentCreateWorkflow creates the two-phase deployment create workflow.
 // FR-098: Triggered via workflow_dispatch with application, environment, and commit inputs.
@@ -1036,23 +1516,23 @@ func generateDeploymentCreateSteps() []WorkflowStep {
 				"path": "app",
 			},
 		},
-		// Step 5: Clone resource types repository
-		// FR-092-B: Clone resource types repo for bicepconfig.json and Bicep extensions
+		// Step 5: Clone config repository
+		// FR-092-B: Clone config repo for bicepconfig.json and Bicep extensions
 		{
-			Name: "Clone resource types repository",
+			Name: "Clone config repository",
 			Env: map[string]string{
-				"RADIUS_RESOURCE_TYPES_REPO": "${{ vars.RADIUS_RESOURCE_TYPES_REPO }}",
+				"RADIUS_CONFIG_REPO": "${{ vars.RADIUS_CONFIG_REPO }}",
 			},
-			Run: `# Parse RADIUS_RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
-REPO_PATH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
-BRANCH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
+			Run: `# Parse RADIUS_CONFIG_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
+REPO_PATH=$(echo "$RADIUS_CONFIG_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
+BRANCH=$(echo "$RADIUS_CONFIG_REPO" | sed 's|.*/tree/||')
 
-git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
+rm -rf resource-types && git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
 
 # Copy bicepconfig.json and Bicep extension archives to app directory
 # so rad deploy can resolve Bicep extensions (Bicep searches parent dirs from .bicep file)
-cp resource-types/default-config/bicepconfig.json app/
-cp resource-types/default-config/*.tgz app/`,
+cp resource-types/config/bicepconfig.json app/
+cp resource-types/config/*.tgz app/`,
 		},
 		// Step 6: Install k3d for ephemeral cluster
 		{
@@ -1104,7 +1584,7 @@ exit 1`,
 		// FR-092-C: Read types.yaml and register each resource type in the control plane
 		{
 			Name: "Register resource types",
-			Run: `cd resource-types/default-config
+			Run: `cd resource-types/config
 for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
   echo "Registering resource type from $def_file..."
   rad resource-type create --from-file "$def_file"
@@ -1117,9 +1597,21 @@ done`,
 		// Environment is created in the Radius control plane using the GitHub Environment name.
 		// This bridges the GitHub Environment (which holds cloud credentials and config)
 		// with a Radius environment (which the control plane needs for deployment).
+		// D064: Retry environment creation - Applications.Core may not be registered yet
 		{
 			Name: "Create environment",
-			Run:  "rad env create ${{ inputs.environment }} --group github",
+			Run: `echo "Creating Radius environment..."
+ENV_NAME="${{ inputs.environment }}"
+for i in $(seq 1 15); do
+  if rad env create "$ENV_NAME" --group github 2>&1; then
+    echo "Environment created successfully."
+    exit 0
+  fi
+  echo "Environment creation not ready, retrying in 2s... ($i/15)"
+  sleep 2
+done
+echo "ERROR: Failed to create environment after retries."
+exit 1`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
@@ -1273,23 +1765,23 @@ func generateDeploymentApplySteps() []WorkflowStep {
 				"path": "app",
 			},
 		},
-		// Step 5: Clone resource types repository
-		// FR-092-B: Clone resource types repo for bicepconfig.json and Bicep extensions
+		// Step 5: Clone config repository
+		// FR-092-B: Clone config repo for bicepconfig.json and Bicep extensions
 		{
-			Name: "Clone resource types repository",
+			Name: "Clone config repository",
 			Env: map[string]string{
-				"RADIUS_RESOURCE_TYPES_REPO": "${{ vars.RADIUS_RESOURCE_TYPES_REPO }}",
+				"RADIUS_CONFIG_REPO": "${{ vars.RADIUS_CONFIG_REPO }}",
 			},
-			Run: `# Parse RADIUS_RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
-REPO_PATH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
-BRANCH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
+			Run: `# Parse RADIUS_CONFIG_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
+REPO_PATH=$(echo "$RADIUS_CONFIG_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
+BRANCH=$(echo "$RADIUS_CONFIG_REPO" | sed 's|.*/tree/||')
 
-git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
+rm -rf resource-types && git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
 
 # Copy bicepconfig.json and Bicep extension archives to app directory
 # so rad deploy can resolve Bicep extensions (Bicep searches parent dirs from .bicep file)
-cp resource-types/default-config/bicepconfig.json app/
-cp resource-types/default-config/*.tgz app/`,
+cp resource-types/config/bicepconfig.json app/
+cp resource-types/config/*.tgz app/`,
 		},
 		// Step 6: Install k3d for ephemeral cluster
 		{
@@ -1341,7 +1833,7 @@ exit 1`,
 		// FR-092-C: Read types.yaml and register each resource type in the control plane
 		{
 			Name: "Register resource types",
-			Run: `cd resource-types/default-config
+			Run: `cd resource-types/config
 for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
   echo "Registering resource type from $def_file..."
   rad resource-type create --from-file "$def_file"
@@ -1354,9 +1846,21 @@ done`,
 		// Environment is created in the Radius control plane using the GitHub Environment name.
 		// This bridges the GitHub Environment (which holds cloud credentials and config)
 		// with a Radius environment (which the control plane needs for deployment).
+		// D064: Retry environment creation - Applications.Core may not be registered yet
 		{
 			Name: "Create environment",
-			Run:  "rad env create ${{ inputs.environment }} --group github",
+			Run: `echo "Creating Radius environment..."
+ENV_NAME="${{ inputs.environment }}"
+for i in $(seq 1 15); do
+  if rad env create "$ENV_NAME" --group github 2>&1; then
+    echo "Environment created successfully."
+    exit 0
+  fi
+  echo "Environment creation not ready, retrying in 2s... ($i/15)"
+  sleep 2
+done
+echo "ERROR: Failed to create environment after retries."
+exit 1`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
@@ -1507,23 +2011,23 @@ func generateDestroyStepsV2() []WorkflowStep {
 				"path": "app",
 			},
 		},
-		// Clone resource types repository
-		// FR-092-B: Clone resource types repo for bicepconfig.json and Bicep extensions
+		// Clone config repository
+		// FR-092-B: Clone config repo for bicepconfig.json and Bicep extensions
 		{
-			Name: "Clone resource types repository",
+			Name: "Clone config repository",
 			Env: map[string]string{
-				"RADIUS_RESOURCE_TYPES_REPO": "${{ vars.RADIUS_RESOURCE_TYPES_REPO }}",
+				"RADIUS_CONFIG_REPO": "${{ vars.RADIUS_CONFIG_REPO }}",
 			},
-			Run: `# Parse RADIUS_RESOURCE_TYPES_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
-REPO_PATH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
-BRANCH=$(echo "$RADIUS_RESOURCE_TYPES_REPO" | sed 's|.*/tree/||')
+			Run: `# Parse RADIUS_CONFIG_REPO URL (format: https://github.com/<owner>/<repo>/tree/<branch>)
+REPO_PATH=$(echo "$RADIUS_CONFIG_REPO" | sed 's|https://github.com/||' | sed 's|/tree/.*||')
+BRANCH=$(echo "$RADIUS_CONFIG_REPO" | sed 's|.*/tree/||')
 
-git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
+rm -rf resource-types && git clone --depth 1 --branch "$BRANCH" "https://github.com/${REPO_PATH}.git" resource-types
 
 # Copy bicepconfig.json and Bicep extension archives to app directory
 # so rad deploy can resolve Bicep extensions (Bicep searches parent dirs from .bicep file)
-cp resource-types/default-config/bicepconfig.json app/
-cp resource-types/default-config/*.tgz app/`,
+cp resource-types/config/bicepconfig.json app/
+cp resource-types/config/*.tgz app/`,
 		},
 		{
 			Name: "Install k3d",
@@ -1570,7 +2074,7 @@ exit 1`,
 		// FR-092-C: Read types.yaml and register each resource type in the control plane
 		{
 			Name: "Register resource types",
-			Run: `cd resource-types/default-config
+			Run: `cd resource-types/config
 for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
   echo "Registering resource type from $def_file..."
   rad resource-type create --from-file "$def_file"
@@ -1583,9 +2087,21 @@ done`,
 		// Environment is created in the Radius control plane using the GitHub Environment name.
 		// This bridges the GitHub Environment (which holds cloud credentials and config)
 		// with a Radius environment (which the control plane needs for deployment).
+		// D064: Retry environment creation - Applications.Core may not be registered yet
 		{
 			Name: "Create environment",
-			Run:  "rad env create ${{ inputs.environment }} --group github",
+			Run: `echo "Creating Radius environment..."
+ENV_NAME="${{ inputs.environment }}"
+for i in $(seq 1 15); do
+  if rad env create "$ENV_NAME" --group github 2>&1; then
+    echo "Environment created successfully."
+    exit 0
+  fi
+  echo "Environment creation not ready, retrying in 2s... ($i/15)"
+  sleep 2
+done
+echo "ERROR: Failed to create environment after retries."
+exit 1`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},

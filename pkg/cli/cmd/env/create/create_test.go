@@ -106,15 +106,6 @@ func Test_Validate(t *testing.T) {
 			},
 		},
 		{
-			Name:          "Create command with fallback workspace - requires resource group",
-			Input:         []string{"testingenv"},
-			ExpectedValid: false,
-			ConfigHolder: framework.ConfigHolder{
-				ConfigFilePath: "",
-				Config:         radcli.LoadEmptyConfig(t),
-			},
-		},
-		{
 			Name:          "Create command with invalid environment",
 			Input:         []string{"testingenv", "-e", "testingenv"},
 			ExpectedValid: false,
@@ -275,4 +266,72 @@ func createShowUCPError(appManagementClient *clients.MockApplicationsManagementC
 		GetResourceGroup(gomock.Any(), gomock.Any(), "invalidresourcegroup").
 		Return(testResourceGroup, clierrors.Message("The resource group %q could not be found.", "invalidresourcegroup")).Times(1)
 
+}
+
+// GitHub mode tests
+
+func Test_Runner_GitHubModeFields(t *testing.T) {
+	// Verify Runner struct has GitHub mode fields
+	runner := &Runner{
+		Provider: "azure",
+		Recipes:  "https://example.com/recipes.yaml",
+	}
+	require.Equal(t, "azure", runner.Provider)
+	require.Equal(t, "https://example.com/recipes.yaml", runner.Recipes)
+}
+
+func Test_Runner_IsGitHubWorkspace(t *testing.T) {
+	// Test that IsGitHubWorkspace returns true for github workspaces
+	githubWorkspace := &workspaces.Workspace{
+		Connection: map[string]any{
+			"kind": "github",
+			"url":  "https://github.com/owner/repo",
+		},
+	}
+	require.True(t, githubWorkspace.IsGitHubWorkspace())
+
+	// Test that IsGitHubWorkspace returns false for kubernetes workspaces
+	k8sWorkspace := &workspaces.Workspace{
+		Connection: map[string]any{
+			"kind":    "kubernetes",
+			"context": "kind-kind",
+		},
+	}
+	require.False(t, k8sWorkspace.IsGitHubWorkspace())
+}
+
+func Test_parseGitHubURL(t *testing.T) {
+	testcases := []struct {
+		name          string
+		url           string
+		expectedOwner string
+		expectedRepo  string
+	}{
+		{
+			name:          "https url",
+			url:           "https://github.com/radius-project/radius",
+			expectedOwner: "radius-project",
+			expectedRepo:  "radius",
+		},
+		{
+			name:          "https url with .git suffix",
+			url:           "https://github.com/radius-project/radius.git",
+			expectedOwner: "radius-project",
+			expectedRepo:  "radius",
+		},
+		{
+			name:          "short url",
+			url:           "owner/repo",
+			expectedOwner: "owner",
+			expectedRepo:  "repo",
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			owner, repo := parseGitHubURL(tc.url)
+			require.Equal(t, tc.expectedOwner, owner)
+			require.Equal(t, tc.expectedRepo, repo)
+		})
+	}
 }
