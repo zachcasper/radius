@@ -947,6 +947,68 @@ cp resource-types/config/*.tgz app/`,
 			Name: "Export kubeconfig",
 			Run:  "k3d kubeconfig get radius-ephemeral > /tmp/kubeconfig.yaml",
 		},
+		// Target cluster authentication: Azure OIDC login (only when targeting AKS)
+		{
+			Name: "Azure Login (target cluster)",
+			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'azure' }}",
+			Uses: "azure/login@v2",
+			With: map[string]string{
+				"client-id":       "${{ secrets.AZURE_CLIENT_ID }}",
+				"tenant-id":       "${{ secrets.AZURE_TENANT_ID }}",
+				"subscription-id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+			},
+		},
+		// Target cluster authentication: AWS OIDC credentials (only when targeting EKS)
+		{
+			Name: "Configure AWS credentials (target cluster)",
+			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'aws' }}",
+			Uses: "aws-actions/configure-aws-credentials@v4",
+			With: map[string]string{
+				"role-to-assume": "${{ secrets.AWS_OIDC_ROLE_ARN }}",
+				"aws-region":     "${{ secrets.AWS_REGION }}",
+			},
+		},
+		// Fetch kubeconfig for the external target cluster where output resources will be deployed.
+		// When RADIUS_TARGET_CLUSTER_PROVIDER is set, Radius deploys application output resources
+		// (Deployments, Services, etc.) to this external cluster instead of to the ephemeral k3d cluster.
+		{
+			Name: "Fetch target cluster credentials",
+			Env: map[string]string{
+				"RADIUS_TARGET_CLUSTER_PROVIDER": "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER }}",
+				"RADIUS_TARGET_CLUSTER_NAME":     "${{ vars.RADIUS_TARGET_CLUSTER_NAME }}",
+				"RADIUS_TARGET_CLUSTER_RG":       "${{ vars.RADIUS_TARGET_CLUSTER_RG }}",
+				"RADIUS_TARGET_CLUSTER_REGION":   "${{ vars.RADIUS_TARGET_CLUSTER_REGION }}",
+			},
+			Run: `TARGET_KUBECONFIG="/tmp/target-kubeconfig.yaml"
+if [ -z "$RADIUS_TARGET_CLUSTER_PROVIDER" ]; then
+  echo "No RADIUS_TARGET_CLUSTER_PROVIDER configured, resources will deploy to local k3d cluster"
+  exit 0
+fi
+
+echo "Fetching credentials for target cluster: $RADIUS_TARGET_CLUSTER_NAME ($RADIUS_TARGET_CLUSTER_PROVIDER)"
+
+if [ "$RADIUS_TARGET_CLUSTER_PROVIDER" = "azure" ]; then
+  az aks get-credentials \
+    --resource-group "$RADIUS_TARGET_CLUSTER_RG" \
+    --name "$RADIUS_TARGET_CLUSTER_NAME" \
+    --file "$TARGET_KUBECONFIG" \
+    --overwrite-existing
+elif [ "$RADIUS_TARGET_CLUSTER_PROVIDER" = "aws" ]; then
+  aws eks update-kubeconfig \
+    --name "$RADIUS_TARGET_CLUSTER_NAME" \
+    --region "$RADIUS_TARGET_CLUSTER_REGION" \
+    --kubeconfig "$TARGET_KUBECONFIG"
+else
+  echo "ERROR: Unsupported target cluster provider: $RADIUS_TARGET_CLUSTER_PROVIDER"
+  exit 1
+fi
+
+echo "Target cluster kubeconfig saved to $TARGET_KUBECONFIG"
+kubectl --kubeconfig "$TARGET_KUBECONFIG" cluster-info || {
+  echo "ERROR: Cannot connect to target cluster"
+  exit 1
+}`,
+		},
 		{
 			Name: "Install Radius control plane",
 			Run:  "rad install kubernetes --skip-contour-install --set dashboard.enabled=false ${RADIUS_IMAGE_REGISTRY:+--set global.imageRegistry=$RADIUS_IMAGE_REGISTRY} ${RADIUS_IMAGE_TAG:+--set global.imageTag=$RADIUS_IMAGE_TAG}",
@@ -976,6 +1038,61 @@ done`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
+		},
+		// Inject the target cluster kubeconfig into the Radius control plane so that
+		// applications-rp deploys output resources to the external cluster.
+		{
+			Name: "Configure external deployment target",
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+			Run: `TARGET_KUBECONFIG="/tmp/target-kubeconfig.yaml"
+if [ ! -f "$TARGET_KUBECONFIG" ]; then
+  echo "No target kubeconfig found, skipping external target configuration"
+  exit 0
+fi
+
+echo "Configuring Radius to deploy output resources to external cluster..."
+
+# Create a Kubernetes secret containing the target cluster kubeconfig
+kubectl create secret generic target-kubeconfig \
+  --namespace radius-system \
+  --from-file=config="$TARGET_KUBECONFIG"
+
+# Patch applications-rp to mount the target kubeconfig and set the env var
+kubectl patch deployment applications-rp -n radius-system --type=json -p='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/volumes/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "secret": {
+        "secretName": "target-kubeconfig"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/volumeMounts/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "mountPath": "/etc/radius/target-kubeconfig",
+      "readOnly": true
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "RADIUS_TARGET_KUBECONFIG",
+      "value": "/etc/radius/target-kubeconfig/config"
+    }
+  }
+]'
+
+echo "Waiting for applications-rp to restart with target kubeconfig..."
+kubectl rollout status deployment/applications-rp -n radius-system --timeout=120s
+echo "External deployment target configured successfully"`,
 		},
 		{
 			Name: "Wait for Radius and create resource group",
@@ -1166,6 +1283,66 @@ func generateRadAppDeleteSteps() []WorkflowStep {
 			Name: "Export kubeconfig",
 			Run:  "k3d kubeconfig get radius-ephemeral > /tmp/kubeconfig.yaml",
 		},
+		// Target cluster authentication: Azure OIDC login (only when targeting AKS)
+		{
+			Name: "Azure Login (target cluster)",
+			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'azure' }}",
+			Uses: "azure/login@v2",
+			With: map[string]string{
+				"client-id":       "${{ secrets.AZURE_CLIENT_ID }}",
+				"tenant-id":       "${{ secrets.AZURE_TENANT_ID }}",
+				"subscription-id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+			},
+		},
+		// Target cluster authentication: AWS OIDC credentials (only when targeting EKS)
+		{
+			Name: "Configure AWS credentials (target cluster)",
+			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'aws' }}",
+			Uses: "aws-actions/configure-aws-credentials@v4",
+			With: map[string]string{
+				"role-to-assume": "${{ secrets.AWS_OIDC_ROLE_ARN }}",
+				"aws-region":     "${{ secrets.AWS_REGION }}",
+			},
+		},
+		// Fetch kubeconfig for the external target cluster where output resources will be deployed.
+		{
+			Name: "Fetch target cluster credentials",
+			Env: map[string]string{
+				"RADIUS_TARGET_CLUSTER_PROVIDER": "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER }}",
+				"RADIUS_TARGET_CLUSTER_NAME":     "${{ vars.RADIUS_TARGET_CLUSTER_NAME }}",
+				"RADIUS_TARGET_CLUSTER_RG":       "${{ vars.RADIUS_TARGET_CLUSTER_RG }}",
+				"RADIUS_TARGET_CLUSTER_REGION":   "${{ vars.RADIUS_TARGET_CLUSTER_REGION }}",
+			},
+			Run: `TARGET_KUBECONFIG="/tmp/target-kubeconfig.yaml"
+if [ -z "$RADIUS_TARGET_CLUSTER_PROVIDER" ]; then
+  echo "No RADIUS_TARGET_CLUSTER_PROVIDER configured, resources will deploy to local k3d cluster"
+  exit 0
+fi
+
+echo "Fetching credentials for target cluster: $RADIUS_TARGET_CLUSTER_NAME ($RADIUS_TARGET_CLUSTER_PROVIDER)"
+
+if [ "$RADIUS_TARGET_CLUSTER_PROVIDER" = "azure" ]; then
+  az aks get-credentials \
+    --resource-group "$RADIUS_TARGET_CLUSTER_RG" \
+    --name "$RADIUS_TARGET_CLUSTER_NAME" \
+    --file "$TARGET_KUBECONFIG" \
+    --overwrite-existing
+elif [ "$RADIUS_TARGET_CLUSTER_PROVIDER" = "aws" ]; then
+  aws eks update-kubeconfig \
+    --name "$RADIUS_TARGET_CLUSTER_NAME" \
+    --region "$RADIUS_TARGET_CLUSTER_REGION" \
+    --kubeconfig "$TARGET_KUBECONFIG"
+else
+  echo "ERROR: Unsupported target cluster provider: $RADIUS_TARGET_CLUSTER_PROVIDER"
+  exit 1
+fi
+
+echo "Target cluster kubeconfig saved to $TARGET_KUBECONFIG"
+kubectl --kubeconfig "$TARGET_KUBECONFIG" cluster-info || {
+  echo "ERROR: Cannot connect to target cluster"
+  exit 1
+}`,
+		},
 		{
 			Name: "Install Radius control plane",
 			Run:  "rad install kubernetes --skip-contour-install --set dashboard.enabled=false ${RADIUS_IMAGE_REGISTRY:+--set global.imageRegistry=$RADIUS_IMAGE_REGISTRY} ${RADIUS_IMAGE_TAG:+--set global.imageTag=$RADIUS_IMAGE_TAG}",
@@ -1194,6 +1371,61 @@ done`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
+		},
+		// Inject the target cluster kubeconfig into the Radius control plane so that
+		// applications-rp deploys output resources to the external cluster.
+		{
+			Name: "Configure external deployment target",
+			Env: map[string]string{
+				"KUBECONFIG": "/tmp/kubeconfig.yaml",
+			},
+			Run: `TARGET_KUBECONFIG="/tmp/target-kubeconfig.yaml"
+if [ ! -f "$TARGET_KUBECONFIG" ]; then
+  echo "No target kubeconfig found, skipping external target configuration"
+  exit 0
+fi
+
+echo "Configuring Radius to deploy output resources to external cluster..."
+
+# Create a Kubernetes secret containing the target cluster kubeconfig
+kubectl create secret generic target-kubeconfig \
+  --namespace radius-system \
+  --from-file=config="$TARGET_KUBECONFIG"
+
+# Patch applications-rp to mount the target kubeconfig and set the env var
+kubectl patch deployment applications-rp -n radius-system --type=json -p='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/volumes/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "secret": {
+        "secretName": "target-kubeconfig"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/volumeMounts/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "mountPath": "/etc/radius/target-kubeconfig",
+      "readOnly": true
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "RADIUS_TARGET_KUBECONFIG",
+      "value": "/etc/radius/target-kubeconfig/config"
+    }
+  }
+]'
+
+echo "Waiting for applications-rp to restart with target kubeconfig..."
+kubectl rollout status deployment/applications-rp -n radius-system --timeout=120s
+echo "External deployment target configured successfully"`,
 		},
 		{
 			Name: "Wait for Radius and create resource group",

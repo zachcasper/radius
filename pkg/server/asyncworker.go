@@ -19,6 +19,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"os"
 
 	ctrl "github.com/radius-project/radius/pkg/armrpc/asyncoperation/controller"
 	"github.com/radius-project/radius/pkg/armrpc/asyncoperation/statusmanager"
@@ -30,6 +31,7 @@ import (
 	"github.com/radius-project/radius/pkg/corerp/backend/deployment"
 	"github.com/radius-project/radius/pkg/corerp/model"
 	"github.com/radius-project/radius/pkg/kubeutil"
+	"github.com/radius-project/radius/pkg/ucp/ucplog"
 )
 
 // AsyncWorker is a service to run AsyncRequestProcessWorker.
@@ -94,12 +96,33 @@ func (w *AsyncWorker) init(ctx context.Context) error {
 
 // Run starts the service and worker.
 func (w *AsyncWorker) Run(ctx context.Context) error {
+	logger := ucplog.FromContextOrDiscard(ctx)
+
 	k8s, err := kubeutil.NewClients(w.options.K8sConfig)
 	if err != nil {
 		return fmt.Errorf("failed to initialize kubernetes clients: %w", err)
 	}
 
-	appModel, err := model.NewApplicationModel(w.options.Arm, k8s.RuntimeClient, k8s.ClientSet, k8s.DiscoveryClient, k8s.DynamicClient)
+	// targetK8s holds the Kubernetes clients used for deploying application output resources
+	// (Deployments, Services, etc.). By default, this is the same cluster the control plane runs on.
+	// When RADIUS_TARGET_KUBECONFIG is set, output resources are deployed to the external cluster
+	// specified by that kubeconfig file. This enables the "GitHub mode" pattern where the Radius
+	// control plane runs on an ephemeral k3d cluster while deploying to a real AKS/EKS cluster.
+	targetK8s := k8s
+	if targetKubeconfigPath := os.Getenv(kubeutil.TargetKubeconfigEnvVar); targetKubeconfigPath != "" {
+		logger.Info("Using external target cluster for output resource deployment", "kubeconfig", targetKubeconfigPath)
+		targetConfig, err := kubeutil.NewClientConfigFromFile(targetKubeconfigPath)
+		if err != nil {
+			return fmt.Errorf("failed to load target kubeconfig from %s: %w", targetKubeconfigPath, err)
+		}
+
+		targetK8s, err = kubeutil.NewClients(targetConfig)
+		if err != nil {
+			return fmt.Errorf("failed to initialize target kubernetes clients: %w", err)
+		}
+	}
+
+	appModel, err := model.NewApplicationModel(w.options.Arm, targetK8s.RuntimeClient, targetK8s.ClientSet, targetK8s.DiscoveryClient, targetK8s.DynamicClient)
 	if err != nil {
 		return fmt.Errorf("failed to initialize application model: %w", err)
 	}
@@ -114,7 +137,7 @@ func (w *AsyncWorker) Run(ctx context.Context) error {
 			DatabaseClient: w.DatabaseClient,
 			KubeClient:     k8s.RuntimeClient,
 			GetDeploymentProcessor: func() deployment.DeploymentProcessor {
-				return deployment.NewDeploymentProcessor(appModel, w.DatabaseClient, k8s.RuntimeClient, k8s.ClientSet)
+				return deployment.NewDeploymentProcessor(appModel, w.DatabaseClient, targetK8s.RuntimeClient, targetK8s.ClientSet)
 			},
 		}
 
