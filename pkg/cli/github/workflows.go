@@ -1215,8 +1215,8 @@ rad deploy ".radius/applications/${{ inputs.application }}.bicep" \
   --plan \
   --output "$PLAN_DIR"`,
 			Env: map[string]string{
-				"KUBECONFIG":    "/tmp/kubeconfig.yaml",
-				"COMMIT_HASH":   "${{ inputs.commit }}",
+				"KUBECONFIG":  "/tmp/kubeconfig.yaml",
+				"COMMIT_HASH": "${{ inputs.commit }}",
 			},
 		},
 		// Step 11: Commit and push the deployment plan
