@@ -303,6 +303,8 @@ A developer or platform engineer wants to see what environments are available in
 - **FR-026**: When `--provider` is `azure` and `--deployment-tool` is `bicep` (or default), `RADIUS_RECIPES_MANIFEST` MUST default to the `config/recipes-azure-bicep.yaml` file from the config repository specified by `RADIUS_CONFIG_REPO`.
 - **FR-027**: When `--provider` is `azure` and `--deployment-tool` is `terraform`, `RADIUS_RECIPES_MANIFEST` MUST default to the `config/recipes-azure-terraform.yaml` file from the config repository specified by `RADIUS_CONFIG_REPO`.
 - **FR-028**: For AWS environments, system MUST follow the same OIDC setup flow as the current `rad environment connect` (prompting for account ID, region, EKS cluster, namespace, and IAM role).
+- **FR-028a**: For AWS environments, system MUST attempt to detect the current AWS account ID by running `aws sts get-caller-identity --query Account --output text`. If successful, the system MUST prompt the user to confirm the detected account ID or enter a different one. If the detection fails (e.g., AWS CLI not installed or not authenticated), the system MUST fall back to prompting for manual entry.
+- **FR-028b**: For AWS environments, system MUST attempt to detect the current AWS region by running `aws configure get region`. If successful, the system MUST prompt the user to confirm the detected region or enter a different one. If the detection fails, the system MUST fall back to prompting for manual entry.
 - **FR-029**: For AWS environments, system MUST create the following environment variables within the GitHub Environment:
   - `AWS_ACCOUNT_ID`
   - `AWS_ROLE_ARN`
@@ -329,6 +331,9 @@ A developer or platform engineer wants to see what environments are available in
 - **FR-030-L**: For AWS environments, if the user confirms OIDC cleanup, the system MUST delete the IAM role and OIDC identity provider using the AWS CLI (`aws iam delete-role` and `aws iam delete-open-id-connect-provider`). The `AWS_ROLE_ARN` stored in the GitHub Environment variables MUST be used to identify the resources.
 - **FR-030-M**: If the user declines OIDC cleanup, the system MUST display the cloud provider resource identifiers (Azure app registration client ID or AWS IAM role ARN and OIDC provider ARN) so the user can clean them up manually.
 - **FR-030-N**: OIDC cleanup MUST occur before the GitHub Environment is deleted, since the environment variables contain the identifiers needed to locate the cloud resources.
+- **FR-030-O**: After OIDC cleanup, `rad environment delete` MUST prompt the user whether to also delete the Terraform state backend resources. For AWS environments, this includes the S3 bucket (`TF_STATE_BUCKET`) and DynamoDB table (`TF_STATE_DYNAMODB_TABLE`). For Azure environments, this includes the Azure Storage Account (`TF_STATE_STORAGE_ACCOUNT`) and its container (`TF_STATE_CONTAINER`).
+- **FR-030-P**: If the user confirms Terraform state backend cleanup, the system MUST delete the resources using the respective cloud CLI. For AWS: `aws s3 rb` (with `--force` to remove objects) and `aws dynamodb delete-table`. For Azure: `az storage account delete`.
+- **FR-030-Q**: If the user declines Terraform state backend cleanup, the system MUST display the resource identifiers so the user can clean them up manually.
 
 #### CLI Commands: rad pr create, rad pr merge, rad pr destroy (Removed)
 

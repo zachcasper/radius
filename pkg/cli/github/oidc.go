@@ -120,20 +120,30 @@ func (s *OIDCSetup) SetupAWSOIDC(ctx context.Context) (*AWSOIDCResult, error) {
 	}
 	s.Output.LogInfo("AWS CLI authenticated.")
 
-	// FR-018: Prompt for account ID (default from caller identity)
+	// FR-028a: Prompt for account ID (default from caller identity)
 	defaultAccountID := extractJSONField(callerIdentity, "Account")
-	accountID, err := s.Prompter.GetTextInput("AWS Account ID", prompt.TextInputOptions{
-		Default: defaultAccountID,
+	promptMsg := "AWS Account ID"
+	if defaultAccountID != "" {
+		promptMsg = fmt.Sprintf("AWS Account ID (detected: %s)", defaultAccountID)
+	}
+	accountID, err := s.Prompter.GetTextInput(promptMsg, prompt.TextInputOptions{
+		Default:     defaultAccountID,
+		Placeholder: defaultAccountID,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// FR-019: Prompt for region
+	// FR-028b: Prompt for region (default from aws configure)
 	defaultRegion, _ := s.CmdRunner.RunCommand(ctx, "aws", "configure", "get", "region")
 	defaultRegion = strings.TrimSpace(defaultRegion)
-	region, err := s.Prompter.GetTextInput("AWS Region", prompt.TextInputOptions{
-		Default: defaultRegion,
+	regionPrompt := "AWS Region"
+	if defaultRegion != "" {
+		regionPrompt = fmt.Sprintf("AWS Region (detected: %s)", defaultRegion)
+	}
+	region, err := s.Prompter.GetTextInput(regionPrompt, prompt.TextInputOptions{
+		Default:     defaultRegion,
+		Placeholder: defaultRegion,
 	})
 	if err != nil {
 		return nil, err
@@ -258,10 +268,17 @@ func (s *OIDCSetup) SetupAzureOIDC(ctx context.Context, envName string) (*AzureO
 func (s *OIDCSetup) SetAWSEnvironmentVariables(envName string, result *AWSOIDCResult) error {
 	ghClient := NewClient()
 
+	// Extract just the role name from the full ARN if needed
+	// The ARN format is arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME
+	roleName := result.RoleARN
+	if idx := strings.LastIndex(roleName, "/"); idx >= 0 {
+		roleName = roleName[idx+1:]
+	}
+
 	vars := map[string]string{
 		"AWS_ACCOUNT_ID":       result.AccountID,
 		"AWS_REGION":           result.Region,
-		"AWS_IAM_ROLE_NAME":    result.RoleARN,
+		"AWS_IAM_ROLE_NAME":    roleName,
 		"KUBERNETES_CLUSTER":   result.EKSClusterName,
 		"KUBERNETES_NAMESPACE": result.KubernetesNamespace,
 	}

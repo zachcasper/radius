@@ -19,6 +19,7 @@ package delete
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/radius-project/radius/pkg/cli"
 	"github.com/radius-project/radius/pkg/cli/clierrors"
@@ -227,6 +228,11 @@ func (r *Runner) runGitHubMode(ctx context.Context) error {
 		}
 	}
 
+	// FR-030-O: Prompt whether to delete Terraform state backend
+	if err := r.promptStateBackendCleanup(ctx, cloudProvider, envVars); err != nil {
+		return err
+	}
+
 	// FR-030-B/FR-036: Delete GitHub Environment
 	r.Output.LogInfo("")
 	r.Output.LogInfo("Deleting GitHub Environment '%s'...", r.EnvironmentName)
@@ -285,6 +291,12 @@ func (r *Runner) promptOIDCCleanup(ctx context.Context, cloudProvider string, en
 			return nil
 		}
 
+		// Handle case where full ARN was stored instead of just the role name
+		// ARN format: arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME
+		if strings.Contains(roleName, "/") {
+			roleName = roleName[strings.LastIndex(roleName, "/")+1:]
+		}
+
 		accountID := envVars["AWS_ACCOUNT_ID"]
 		region := envVars["AWS_REGION"]
 
@@ -328,6 +340,141 @@ func (r *Runner) promptOIDCCleanup(ctx context.Context, cloudProvider string, en
 			if accountID != "" {
 				r.Output.LogInfo("  aws iam delete-open-id-connect-provider --open-id-connect-provider-arn arn:aws:iam::%s:oidc-provider/token.actions.githubusercontent.com", accountID)
 			}
+		}
+	}
+
+	return nil
+}
+
+// promptStateBackendCleanup prompts the user to clean up Terraform state backend resources.
+// FR-030-O: Prompt whether to delete Terraform state backend.
+// FR-030-P: AWS: aws s3 rb + aws dynamodb delete-table. Azure: az storage account delete.
+// FR-030-Q: If declined, display resource identifiers for manual cleanup.
+func (r *Runner) promptStateBackendCleanup(ctx context.Context, cloudProvider string, envVars map[string]string) error {
+	switch cloudProvider {
+	case "aws":
+		bucket := envVars["TF_STATE_BUCKET"]
+		dynamoTable := envVars["TF_STATE_DYNAMODB_TABLE"]
+		region := envVars["TF_STATE_REGION"]
+
+		if bucket == "" && dynamoTable == "" {
+			return nil
+		}
+
+		r.Output.LogInfo("")
+		r.Output.LogInfo("This environment has Terraform state backend resources:")
+		if bucket != "" {
+			r.Output.LogInfo("  S3 Bucket: %s", bucket)
+		}
+		if dynamoTable != "" {
+			r.Output.LogInfo("  DynamoDB Table: %s", dynamoTable)
+		}
+		if region != "" {
+			r.Output.LogInfo("  Region: %s", region)
+		}
+		r.Output.LogInfo("")
+
+		confirmed, err := prompt.YesOrNoPrompt("Do you want to delete the Terraform state backend resources?", prompt.ConfirmNo, r.InputPrompter)
+		if err != nil {
+			return err
+		}
+
+		if confirmed {
+			// FR-030-P: Delete S3 bucket (--force removes all objects first)
+			if bucket != "" {
+				r.Output.LogInfo("Deleting S3 bucket %s...", bucket)
+				args := []string{"s3", "rb", fmt.Sprintf("s3://%s", bucket), "--force"}
+				if region != "" {
+					args = append(args, "--region", region)
+				}
+				_, err := r.CommandRunner.RunCommand(ctx, "aws", args...)
+				if err != nil {
+					r.Output.LogInfo("Warning: Failed to delete S3 bucket: %v", err)
+					r.Output.LogInfo("You may need to delete it manually: aws s3 rb s3://%s --force", bucket)
+				} else {
+					r.Output.LogInfo("S3 bucket deleted.")
+				}
+			}
+
+			// FR-030-P: Delete DynamoDB table
+			if dynamoTable != "" {
+				r.Output.LogInfo("Deleting DynamoDB table %s...", dynamoTable)
+				args := []string{"dynamodb", "delete-table", "--table-name", dynamoTable}
+				if region != "" {
+					args = append(args, "--region", region)
+				}
+				_, err := r.CommandRunner.RunCommand(ctx, "aws", args...)
+				if err != nil {
+					r.Output.LogInfo("Warning: Failed to delete DynamoDB table: %v", err)
+					r.Output.LogInfo("You may need to delete it manually: aws dynamodb delete-table --table-name %s", dynamoTable)
+				} else {
+					r.Output.LogInfo("DynamoDB table deleted.")
+				}
+			}
+		} else {
+			// FR-030-Q: Display resource identifiers for manual cleanup
+			r.Output.LogInfo("")
+			r.Output.LogInfo("Terraform state backend resources were NOT deleted. To clean up manually:")
+			if bucket != "" {
+				r.Output.LogInfo("  aws s3 rb s3://%s --force", bucket)
+			}
+			if dynamoTable != "" {
+				args := fmt.Sprintf("aws dynamodb delete-table --table-name %s", dynamoTable)
+				if region != "" {
+					args += fmt.Sprintf(" --region %s", region)
+				}
+				r.Output.LogInfo("  %s", args)
+			}
+		}
+
+	case "azure":
+		storageAccount := envVars["TF_STATE_STORAGE_ACCOUNT"]
+		if storageAccount == "" {
+			return nil
+		}
+
+		resourceGroup := envVars["AZURE_RESOURCE_GROUP"]
+		subscriptionID := envVars["AZURE_SUBSCRIPTION_ID"]
+
+		r.Output.LogInfo("")
+		r.Output.LogInfo("This environment has Terraform state backend resources:")
+		r.Output.LogInfo("  Storage Account: %s", storageAccount)
+		if resourceGroup != "" {
+			r.Output.LogInfo("  Resource Group: %s", resourceGroup)
+		}
+		r.Output.LogInfo("")
+
+		confirmed, err := prompt.YesOrNoPrompt("Do you want to delete the Terraform state storage account?", prompt.ConfirmNo, r.InputPrompter)
+		if err != nil {
+			return err
+		}
+
+		if confirmed {
+			// FR-030-P: Delete Azure Storage account
+			r.Output.LogInfo("Deleting storage account %s...", storageAccount)
+			args := []string{"storage", "account", "delete", "--name", storageAccount, "--yes"}
+			if resourceGroup != "" {
+				args = append(args, "--resource-group", resourceGroup)
+			}
+			if subscriptionID != "" {
+				args = append(args, "--subscription", subscriptionID)
+			}
+			_, err := r.CommandRunner.RunCommand(ctx, "az", args...)
+			if err != nil {
+				r.Output.LogInfo("Warning: Failed to delete storage account: %v", err)
+				r.Output.LogInfo("You may need to delete it manually: az storage account delete --name %s --resource-group %s --yes", storageAccount, resourceGroup)
+			} else {
+				r.Output.LogInfo("Storage account deleted.")
+			}
+		} else {
+			// FR-030-Q: Display resource identifiers for manual cleanup
+			r.Output.LogInfo("")
+			r.Output.LogInfo("Terraform state backend resources were NOT deleted. To clean up manually:")
+			cmd := fmt.Sprintf("az storage account delete --name %s --yes", storageAccount)
+			if resourceGroup != "" {
+				cmd += fmt.Sprintf(" --resource-group %s", resourceGroup)
+			}
+			r.Output.LogInfo("  %s", cmd)
 		}
 	}
 
