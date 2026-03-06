@@ -809,6 +809,209 @@ const (
 	DestroyWorkflowFile = "radius-destroy.yaml"
 )
 
+// configureExternalDeploymentTargetScript is the shell script used by the
+// "Configure external deployment target" workflow step. It patches applications-rp,
+// dynamic-rp, and bicep-de deployments to mount the target cluster kubeconfig.
+//
+// This script is shared between generateRadDeploySteps and generateRadAppDeleteSteps
+// because both workflows need the same patching logic.
+const configureExternalDeploymentTargetScript = `TARGET_KUBECONFIG="/tmp/target-kubeconfig.yaml"
+echo "=== Configure External Deployment Target ==="
+echo "Checking for target kubeconfig at: $TARGET_KUBECONFIG"
+
+if [ ! -f "$TARGET_KUBECONFIG" ]; then
+  echo "INFO: No target kubeconfig found at $TARGET_KUBECONFIG"
+  echo "INFO: Resources will deploy to local k3d cluster (default behavior)"
+  exit 0
+fi
+
+echo "Target kubeconfig file found ($(wc -c < "$TARGET_KUBECONFIG") bytes)"
+echo "Target cluster info:"
+kubectl --kubeconfig "$TARGET_KUBECONFIG" cluster-info 2>&1 || echo "WARNING: Could not get target cluster info"
+
+echo ""
+echo "--- Step 1: Creating target-kubeconfig secret in radius-system namespace ---"
+kubectl create secret generic target-kubeconfig \
+  --namespace radius-system \
+  --from-file=config="$TARGET_KUBECONFIG"
+echo "Secret created successfully"
+kubectl get secret target-kubeconfig -n radius-system -o jsonpath='{.metadata.name}' && echo " exists"
+
+echo ""
+echo "--- Step 2: Current state of Radius deployments ---"
+echo "applications-rp pods:"
+kubectl get pods -n radius-system -l app.kubernetes.io/name=applications-rp -o wide 2>&1
+echo "dynamic-rp pods:"
+kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp -o wide 2>&1
+echo "bicep-de pods:"
+kubectl get pods -n radius-system -l app.kubernetes.io/name=bicep-de -o wide 2>&1
+
+PATCH_APPLICATIONS_RP='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/volumes/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "secret": {
+        "secretName": "target-kubeconfig"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/volumeMounts/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "mountPath": "/etc/radius/target-kubeconfig",
+      "readOnly": true
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "RADIUS_TARGET_KUBECONFIG",
+      "value": "/etc/radius/target-kubeconfig/config"
+    }
+  }
+]'
+
+# dynamic-rp also gets KUBE_CONFIG_PATH — the native Terraform kubernetes provider env var.
+# This ensures Terraform recipes deploy to the target cluster even if the dynamic-rp image
+# does not include the RADIUS_TARGET_KUBECONFIG code change in BuildConfig().
+PATCH_DYNAMIC_RP='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/volumes/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "secret": {
+        "secretName": "target-kubeconfig"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/volumeMounts/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "mountPath": "/etc/radius/target-kubeconfig",
+      "readOnly": true
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "RADIUS_TARGET_KUBECONFIG",
+      "value": "/etc/radius/target-kubeconfig/config"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "KUBE_CONFIG_PATH",
+      "value": "/etc/radius/target-kubeconfig/config"
+    }
+  }
+]'
+
+# bicep-de is the Bicep Deployment Engine that processes recipe templates.
+# When a recipe uses 'extension kubernetes with { kubeConfig: '' }', the DE
+# resolves the Kubernetes connection. Without KUBECONFIG set, it uses in-cluster
+# config and creates resources on the k3d control plane cluster instead of the
+# target cluster. Setting KUBECONFIG makes the DE target the external cluster.
+PATCH_BICEP_DE='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/volumes/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "secret": {
+        "secretName": "target-kubeconfig"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/volumeMounts/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "mountPath": "/etc/radius/target-kubeconfig",
+      "readOnly": true
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "KUBECONFIG",
+      "value": "/etc/radius/target-kubeconfig/config"
+    }
+  }
+]'
+
+echo ""
+echo "--- Step 3: Patching applications-rp deployment ---"
+kubectl patch deployment applications-rp -n radius-system --type=json -p="$PATCH_APPLICATIONS_RP"
+echo "applications-rp patched"
+
+echo ""
+echo "--- Step 4: Patching dynamic-rp deployment ---"
+kubectl patch deployment dynamic-rp -n radius-system --type=json -p="$PATCH_DYNAMIC_RP"
+echo "dynamic-rp patched"
+
+echo ""
+echo "--- Step 5: Patching bicep-de deployment ---"
+kubectl patch deployment bicep-de -n radius-system --type=json -p="$PATCH_BICEP_DE"
+echo "bicep-de patched"
+
+echo ""
+echo "--- Step 6: Waiting for rollouts ---"
+echo "Waiting for applications-rp rollout..."
+kubectl rollout status deployment/applications-rp -n radius-system --timeout=120s
+echo "applications-rp rolled out successfully"
+
+echo "Waiting for dynamic-rp rollout..."
+kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=120s
+echo "dynamic-rp rolled out successfully"
+
+echo "Waiting for bicep-de rollout..."
+kubectl rollout status deployment/bicep-de -n radius-system --timeout=120s
+echo "bicep-de rolled out successfully"
+
+echo ""
+echo "--- Step 7: Verifying configuration ---"
+for deploy in applications-rp dynamic-rp bicep-de; do
+  echo "$deploy env vars:"
+  kubectl get deployment $deploy -n radius-system -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' && echo ""
+  echo "$deploy volume mounts:"
+  kubectl get deployment $deploy -n radius-system -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[*].name}' && echo ""
+done
+
+echo ""
+echo "--- Step 8: Verifying kubeconfig is mounted in pods ---"
+for deploy in applications-rp dynamic-rp bicep-de; do
+  POD=$(kubectl get pod -n radius-system -l app.kubernetes.io/name=$deploy -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  if [ -n "$POD" ]; then
+    echo "$deploy pod ($POD):"
+    echo "  File exists: $(kubectl exec -n radius-system "$POD" -- ls -la /etc/radius/target-kubeconfig/config 2>&1)"
+    if [ "$deploy" = "bicep-de" ]; then
+      echo "  KUBECONFIG: $(kubectl exec -n radius-system "$POD" -- printenv KUBECONFIG 2>&1)"
+    else
+      echo "  RADIUS_TARGET_KUBECONFIG: $(kubectl exec -n radius-system "$POD" -- printenv RADIUS_TARGET_KUBECONFIG 2>&1)"
+      echo "  KUBE_CONFIG_PATH: $(kubectl exec -n radius-system "$POD" -- printenv KUBE_CONFIG_PATH 2>&1)"
+    fi
+  else
+    echo "WARNING: No pod found for $deploy"
+  fi
+done
+
+echo ""
+echo "=== External deployment target configured successfully ==="
+echo "applications-rp, dynamic-rp, and bicep-de will deploy output resources to the target cluster"`
+
 // GenerateRadDeployWorkflow creates the deploy workflow for GitHub mode.
 // FR-037: Triggered via workflow_dispatch when `rad deploy` is executed.
 // FR-098: Takes bicep_file and environment inputs.
@@ -1040,119 +1243,16 @@ done`,
 			},
 		},
 		// Inject the target cluster kubeconfig into the Radius control plane so that
-		// applications-rp and dynamic-rp deploy output resources to the external cluster.
+		// applications-rp, dynamic-rp, and bicep-de deploy output resources to the external cluster.
+		// bicep-de is the Bicep Deployment Engine — it processes recipe templates containing
+		// 'extension kubernetes with { kubeConfig: '' }' and must have KUBECONFIG set to
+		// target the external cluster instead of the k3d control plane.
 		{
 			Name: "Configure external deployment target",
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
-			Run: `TARGET_KUBECONFIG="/tmp/target-kubeconfig.yaml"
-echo "=== Configure External Deployment Target ==="
-echo "Checking for target kubeconfig at: $TARGET_KUBECONFIG"
-
-if [ ! -f "$TARGET_KUBECONFIG" ]; then
-  echo "INFO: No target kubeconfig found at $TARGET_KUBECONFIG"
-  echo "INFO: Resources will deploy to local k3d cluster (default behavior)"
-  exit 0
-fi
-
-echo "Target kubeconfig file found ($(wc -c < "$TARGET_KUBECONFIG") bytes)"
-echo "Target cluster info:"
-kubectl --kubeconfig "$TARGET_KUBECONFIG" cluster-info 2>&1 || echo "WARNING: Could not get target cluster info"
-
-echo ""
-echo "--- Step 1: Creating target-kubeconfig secret in radius-system namespace ---"
-kubectl create secret generic target-kubeconfig \
-  --namespace radius-system \
-  --from-file=config="$TARGET_KUBECONFIG"
-echo "Secret created successfully"
-kubectl get secret target-kubeconfig -n radius-system -o jsonpath='{.metadata.name}' && echo " exists"
-
-echo ""
-echo "--- Step 2: Current state of Radius deployments ---"
-echo "applications-rp pods:"
-kubectl get pods -n radius-system -l app.kubernetes.io/name=applications-rp -o wide 2>&1
-echo "dynamic-rp pods:"
-kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp -o wide 2>&1
-
-PATCH='[
-  {
-    "op": "add",
-    "path": "/spec/template/spec/volumes/-",
-    "value": {
-      "name": "target-kubeconfig",
-      "secret": {
-        "secretName": "target-kubeconfig"
-      }
-    }
-  },
-  {
-    "op": "add",
-    "path": "/spec/template/spec/containers/0/volumeMounts/-",
-    "value": {
-      "name": "target-kubeconfig",
-      "mountPath": "/etc/radius/target-kubeconfig",
-      "readOnly": true
-    }
-  },
-  {
-    "op": "add",
-    "path": "/spec/template/spec/containers/0/env/-",
-    "value": {
-      "name": "RADIUS_TARGET_KUBECONFIG",
-      "value": "/etc/radius/target-kubeconfig/config"
-    }
-  }
-]'
-
-echo ""
-echo "--- Step 3: Patching applications-rp deployment ---"
-kubectl patch deployment applications-rp -n radius-system --type=json -p="$PATCH"
-echo "applications-rp patched"
-
-echo ""
-echo "--- Step 4: Patching dynamic-rp deployment ---"
-kubectl patch deployment dynamic-rp -n radius-system --type=json -p="$PATCH"
-echo "dynamic-rp patched"
-
-echo ""
-echo "--- Step 5: Waiting for rollouts ---"
-echo "Waiting for applications-rp rollout..."
-kubectl rollout status deployment/applications-rp -n radius-system --timeout=120s
-echo "applications-rp rolled out successfully"
-
-echo "Waiting for dynamic-rp rollout..."
-kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=120s
-echo "dynamic-rp rolled out successfully"
-
-echo ""
-echo "--- Step 6: Verifying configuration ---"
-echo "applications-rp env vars:"
-kubectl get deployment applications-rp -n radius-system -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' && echo ""
-echo "applications-rp volume mounts:"
-kubectl get deployment applications-rp -n radius-system -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[*].name}' && echo ""
-
-echo "dynamic-rp env vars:"
-kubectl get deployment dynamic-rp -n radius-system -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' && echo ""
-echo "dynamic-rp volume mounts:"
-kubectl get deployment dynamic-rp -n radius-system -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[*].name}' && echo ""
-
-echo ""
-echo "--- Step 7: Verifying kubeconfig is mounted in pods ---"
-for deploy in applications-rp dynamic-rp; do
-  POD=$(kubectl get pod -n radius-system -l app.kubernetes.io/name=$deploy -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-  if [ -n "$POD" ]; then
-    echo "$deploy pod ($POD):"
-    echo "  File exists: $(kubectl exec -n radius-system "$POD" -- ls -la /etc/radius/target-kubeconfig/config 2>&1)"
-    echo "  Env var: $(kubectl exec -n radius-system "$POD" -- printenv RADIUS_TARGET_KUBECONFIG 2>&1)"
-  else
-    echo "WARNING: No pod found for $deploy"
-  fi
-done
-
-echo ""
-echo "=== External deployment target configured successfully ==="
-echo "Both applications-rp and dynamic-rp will deploy output resources to the target cluster"`,
+			Run: configureExternalDeploymentTargetScript,
 		},
 		{
 			Name: "Wait for Radius and create resource group",
@@ -1433,119 +1533,16 @@ done`,
 			},
 		},
 		// Inject the target cluster kubeconfig into the Radius control plane so that
-		// applications-rp and dynamic-rp deploy output resources to the external cluster.
+		// applications-rp, dynamic-rp, and bicep-de deploy output resources to the external cluster.
+		// bicep-de is the Bicep Deployment Engine — it processes recipe templates containing
+		// 'extension kubernetes with { kubeConfig: '' }' and must have KUBECONFIG set to
+		// target the external cluster instead of the k3d control plane.
 		{
 			Name: "Configure external deployment target",
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
 			},
-			Run: `TARGET_KUBECONFIG="/tmp/target-kubeconfig.yaml"
-echo "=== Configure External Deployment Target ==="
-echo "Checking for target kubeconfig at: $TARGET_KUBECONFIG"
-
-if [ ! -f "$TARGET_KUBECONFIG" ]; then
-  echo "INFO: No target kubeconfig found at $TARGET_KUBECONFIG"
-  echo "INFO: Resources will deploy to local k3d cluster (default behavior)"
-  exit 0
-fi
-
-echo "Target kubeconfig file found ($(wc -c < "$TARGET_KUBECONFIG") bytes)"
-echo "Target cluster info:"
-kubectl --kubeconfig "$TARGET_KUBECONFIG" cluster-info 2>&1 || echo "WARNING: Could not get target cluster info"
-
-echo ""
-echo "--- Step 1: Creating target-kubeconfig secret in radius-system namespace ---"
-kubectl create secret generic target-kubeconfig \
-  --namespace radius-system \
-  --from-file=config="$TARGET_KUBECONFIG"
-echo "Secret created successfully"
-kubectl get secret target-kubeconfig -n radius-system -o jsonpath='{.metadata.name}' && echo " exists"
-
-echo ""
-echo "--- Step 2: Current state of Radius deployments ---"
-echo "applications-rp pods:"
-kubectl get pods -n radius-system -l app.kubernetes.io/name=applications-rp -o wide 2>&1
-echo "dynamic-rp pods:"
-kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp -o wide 2>&1
-
-PATCH='[
-  {
-    "op": "add",
-    "path": "/spec/template/spec/volumes/-",
-    "value": {
-      "name": "target-kubeconfig",
-      "secret": {
-        "secretName": "target-kubeconfig"
-      }
-    }
-  },
-  {
-    "op": "add",
-    "path": "/spec/template/spec/containers/0/volumeMounts/-",
-    "value": {
-      "name": "target-kubeconfig",
-      "mountPath": "/etc/radius/target-kubeconfig",
-      "readOnly": true
-    }
-  },
-  {
-    "op": "add",
-    "path": "/spec/template/spec/containers/0/env/-",
-    "value": {
-      "name": "RADIUS_TARGET_KUBECONFIG",
-      "value": "/etc/radius/target-kubeconfig/config"
-    }
-  }
-]'
-
-echo ""
-echo "--- Step 3: Patching applications-rp deployment ---"
-kubectl patch deployment applications-rp -n radius-system --type=json -p="$PATCH"
-echo "applications-rp patched"
-
-echo ""
-echo "--- Step 4: Patching dynamic-rp deployment ---"
-kubectl patch deployment dynamic-rp -n radius-system --type=json -p="$PATCH"
-echo "dynamic-rp patched"
-
-echo ""
-echo "--- Step 5: Waiting for rollouts ---"
-echo "Waiting for applications-rp rollout..."
-kubectl rollout status deployment/applications-rp -n radius-system --timeout=120s
-echo "applications-rp rolled out successfully"
-
-echo "Waiting for dynamic-rp rollout..."
-kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=120s
-echo "dynamic-rp rolled out successfully"
-
-echo ""
-echo "--- Step 6: Verifying configuration ---"
-echo "applications-rp env vars:"
-kubectl get deployment applications-rp -n radius-system -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' && echo ""
-echo "applications-rp volume mounts:"
-kubectl get deployment applications-rp -n radius-system -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[*].name}' && echo ""
-
-echo "dynamic-rp env vars:"
-kubectl get deployment dynamic-rp -n radius-system -o jsonpath='{.spec.template.spec.containers[0].env[*].name}' && echo ""
-echo "dynamic-rp volume mounts:"
-kubectl get deployment dynamic-rp -n radius-system -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[*].name}' && echo ""
-
-echo ""
-echo "--- Step 7: Verifying kubeconfig is mounted in pods ---"
-for deploy in applications-rp dynamic-rp; do
-  POD=$(kubectl get pod -n radius-system -l app.kubernetes.io/name=$deploy -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-  if [ -n "$POD" ]; then
-    echo "$deploy pod ($POD):"
-    echo "  File exists: $(kubectl exec -n radius-system "$POD" -- ls -la /etc/radius/target-kubeconfig/config 2>&1)"
-    echo "  Env var: $(kubectl exec -n radius-system "$POD" -- printenv RADIUS_TARGET_KUBECONFIG 2>&1)"
-  else
-    echo "WARNING: No pod found for $deploy"
-  fi
-done
-
-echo ""
-echo "=== External deployment target configured successfully ==="
-echo "Both applications-rp and dynamic-rp will deploy output resources to the target cluster"`,
+			Run: configureExternalDeploymentTargetScript,
 		},
 		{
 			Name: "Wait for Radius and create resource group",
