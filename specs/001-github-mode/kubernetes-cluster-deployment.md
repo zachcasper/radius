@@ -24,26 +24,33 @@ that keeps Radius out of the critical path for running applications.
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  GitHub Actions Runner                              │
-│                                                     │
-│  ┌───────────────────────────────────────────┐      │
-│  │  k3d Cluster (ephemeral)                  │      │
-│  │                                           │      │
-│  │  ┌─────────────────┐  ┌──────────────┐   │      │
-│  │  │ applications-rp  │  │   bicep-de   │   │      │
-│  │  │                  │  └──────────────┘   │      │
-│  │  │  RADIUS_TARGET_  │  ┌──────────────┐   │      │
-│  │  │  KUBECONFIG ─────┼──│ Secret:      │   │      │
-│  │  │  (env var)       │  │ target-      │   │      │
-│  │  │                  │  │ kubeconfig   │   │      │
-│  │  └──────┬───────────┘  └──────────────┘   │      │
-│  │         │                                  │      │
-│  └─────────┼──────────────────────────────────┘      │
-│            │                                         │
-│            │ Deploys output resources via             │
-│            │ external kubeconfig                     │
-└────────────┼─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  GitHub Actions Runner                                  │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │  k3d Cluster (ephemeral)                        │    │
+│  │                                                  │    │
+│  │  ┌─────────────────┐  ┌──────────────────────┐  │    │
+│  │  │ applications-rp  │  │   dynamic-rp         │  │    │
+│  │  │                  │  │                      │  │    │
+│  │  │ RADIUS_TARGET_   │  │  RADIUS_TARGET_      │  │    │
+│  │  │ KUBECONFIG ──┐   │  │  KUBECONFIG ──┐     │  │    │
+│  │  └──────┬───────┘   │  └──────┬────────┘     │  │    │
+│  │         │   ┌───────┘         │   ┌──────────┘  │    │
+│  │         │   │  ┌──────────────┘   │             │    │
+│  │         ▼   ▼  ▼                  ▼             │    │
+│  │     ┌──────────────────────────┐                │    │
+│  │     │ Secret: target-kubeconfig│                │    │
+│  │     └──────────────────────────┘                │    │
+│  │                                                  │    │
+│  │  ┌──────────────┐                               │    │
+│  │  │   bicep-de   │                               │    │
+│  │  └──────────────┘                               │    │
+│  └──────────────────────────────────────────────────┘    │
+│            │                                             │
+│            │ Both RPs deploy output resources via        │
+│            │ external kubeconfig                         │
+└────────────┼─────────────────────────────────────────────┘
              │
              ▼
 ┌────────────────────────────┐
@@ -66,10 +73,15 @@ that keeps Radius out of the critical path for running applications.
 1. The Radius control plane runs on an ephemeral k3d cluster (unchanged).
 2. The target cluster kubeconfig is fetched via cloud CLI (az/aws) during the workflow.
 3. The kubeconfig is injected as a Kubernetes Secret into k3d's `radius-system` namespace.
-4. The `applications-rp` deployment is patched to mount the secret and set the
-   `RADIUS_TARGET_KUBECONFIG` environment variable.
-5. The async worker in `applications-rp` detects the env var and creates a separate set of
-   Kubernetes clients pointing at the target cluster for deploying output resources.
+4. Both the `applications-rp` and `dynamic-rp` deployments are patched to mount the secret
+   and set the `RADIUS_TARGET_KUBECONFIG` environment variable.
+5. **applications-rp path**: The async worker detects the env var and creates a separate set of
+   Kubernetes clients pointing at the target cluster for deploying output resources
+   (handles `Applications.Core/*` built-in types).
+6. **dynamic-rp path**: The Terraform recipe engine's kubernetes provider reads the env var
+   and generates `config_path` in the provider configuration, directing Terraform to deploy
+   resources to the target cluster (handles dynamic types like `Radius.Compute/*`,
+   `Radius.Data/*`).
 
 ### Why Not Install Radius Directly on the Target Cluster?
 
@@ -98,7 +110,22 @@ The `AsyncWorker.Run()` method is modified to check for `RADIUS_TARGET_KUBECONFI
   so that output resources (Deployments, Services, etc.) are deployed to the external cluster.
   The original `k8s` clients are still used for `KubeClient` (control plane operations).
 
-### 3. `pkg/cli/github/workflows.go` — Workflow Step Generation
+This handles built-in types like `Applications.Core/containers`.
+
+### 3. `pkg/recipes/terraform/config/providers/kubernetes.go` — Target Kubeconfig in Terraform Provider
+
+The `BuildConfig()` function for the Terraform kubernetes provider is modified to check for
+`RADIUS_TARGET_KUBECONFIG` **before** falling back to in-cluster config:
+
+- If **set**: returns `{"config_path": "<path>"}` so Terraform's kubernetes provider uses
+  the target cluster kubeconfig file.
+- If **not set**: uses the existing in-cluster config / default kubeconfig behavior.
+
+This is the critical fix for dynamic resource types (`Radius.Compute/*`, `Radius.Data/*`)
+which are handled by `dynamic-rp` through the recipe engine. Without this change, Terraform
+always deploys kubernetes resources to the k3d cluster (via in-cluster config).
+
+### 4. `pkg/cli/github/workflows.go` — Workflow Step Generation
 
 Both `generateRadDeploySteps()` and `generateRadAppDeleteSteps()` are updated with new steps:
 
@@ -114,7 +141,7 @@ Both `generateRadDeploySteps()` and `generateRadAppDeleteSteps()` are updated wi
 
 | Step | Description |
 |------|-------------|
-| **Configure external deployment target** | Creates a K8s Secret from the target kubeconfig, patches `applications-rp` to mount it and set `RADIUS_TARGET_KUBECONFIG`, waits for rollout. Skips if no target kubeconfig file exists. |
+| **Configure external deployment target** | Creates a K8s Secret from the target kubeconfig, patches **both** `applications-rp` and `dynamic-rp` to mount it and set `RADIUS_TARGET_KUBECONFIG`, waits for rollouts, and verifies the configuration with 7 verbose logging steps. Skips if no target kubeconfig file exists. |
 
 ## Configuration
 
@@ -144,7 +171,7 @@ When `RADIUS_TARGET_CLUSTER_PROVIDER` is **not set**:
 - No cloud authentication steps run (conditional `if` in workflow YAML).
 - The "Fetch target cluster credentials" step exits early.
 - The "Configure external deployment target" step exits early.
-- `RADIUS_TARGET_KUBECONFIG` is never set on `applications-rp`.
+- `RADIUS_TARGET_KUBECONFIG` is never set on `applications-rp` or `dynamic-rp`.
 - All output resources deploy to the k3d cluster as before.
 
 This is fully backward-compatible with existing GitHub mode workflows.
