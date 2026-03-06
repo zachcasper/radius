@@ -953,9 +953,9 @@ cp resource-types/config/*.tgz app/`,
 			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'azure' }}",
 			Uses: "azure/login@v2",
 			With: map[string]string{
-				"client-id":       "${{ secrets.AZURE_CLIENT_ID }}",
-				"tenant-id":       "${{ secrets.AZURE_TENANT_ID }}",
-				"subscription-id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+				"client-id":       "${{ vars.AZURE_CLIENT_ID }}",
+				"tenant-id":       "${{ vars.AZURE_TENANT_ID }}",
+				"subscription-id": "${{ vars.AZURE_SUBSCRIPTION_ID }}",
 			},
 		},
 		// Target cluster authentication: AWS OIDC credentials (only when targeting EKS)
@@ -964,8 +964,8 @@ cp resource-types/config/*.tgz app/`,
 			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'aws' }}",
 			Uses: "aws-actions/configure-aws-credentials@v4",
 			With: map[string]string{
-				"role-to-assume": "${{ secrets.AWS_OIDC_ROLE_ARN }}",
-				"aws-region":     "${{ secrets.AWS_REGION }}",
+				"role-to-assume": "arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_IAM_ROLE_NAME }}",
+				"aws-region":     "${{ vars.AWS_REGION }}",
 			},
 		},
 		// Fetch kubeconfig for the external target cluster where output resources will be deployed.
@@ -1349,9 +1349,9 @@ func generateRadAppDeleteSteps() []WorkflowStep {
 			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'azure' }}",
 			Uses: "azure/login@v2",
 			With: map[string]string{
-				"client-id":       "${{ secrets.AZURE_CLIENT_ID }}",
-				"tenant-id":       "${{ secrets.AZURE_TENANT_ID }}",
-				"subscription-id": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+				"client-id":       "${{ vars.AZURE_CLIENT_ID }}",
+				"tenant-id":       "${{ vars.AZURE_TENANT_ID }}",
+				"subscription-id": "${{ vars.AZURE_SUBSCRIPTION_ID }}",
 			},
 		},
 		// Target cluster authentication: AWS OIDC credentials (only when targeting EKS)
@@ -1360,8 +1360,8 @@ func generateRadAppDeleteSteps() []WorkflowStep {
 			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'aws' }}",
 			Uses: "aws-actions/configure-aws-credentials@v4",
 			With: map[string]string{
-				"role-to-assume": "${{ secrets.AWS_OIDC_ROLE_ARN }}",
-				"aws-region":     "${{ secrets.AWS_REGION }}",
+				"role-to-assume": "arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_IAM_ROLE_NAME }}",
+				"aws-region":     "${{ vars.AWS_REGION }}",
 			},
 		},
 		// Fetch kubeconfig for the external target cluster where output resources will be deployed.
