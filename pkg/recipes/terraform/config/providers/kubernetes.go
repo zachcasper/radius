@@ -19,8 +19,11 @@ package providers
 import (
 	"context"
 	"errors"
+	"os"
 
+	"github.com/radius-project/radius/pkg/kubeutil"
 	"github.com/radius-project/radius/pkg/recipes"
+	"github.com/radius-project/radius/pkg/ucp/ucplog"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -33,15 +36,34 @@ var _ Provider = (*kubernetesProvider)(nil)
 
 type kubernetesProvider struct{}
 
-// BuildKubernetesProviderConfig generates the Terraform provider configuration for Kubernetes provider.
-// It returns an error if the in cluster config cannot be retrieved, and uses default kubeconfig file if
-// in-cluster config is not present.
-// https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs
+// BuildConfig generates the Terraform provider configuration for the Kubernetes provider.
+//
+// When RADIUS_TARGET_KUBECONFIG is set, the provider is configured to use that kubeconfig file
+// so that Terraform recipes deploy Kubernetes resources to the external target cluster (e.g., AKS/EKS)
+// instead of the local cluster where the Radius control plane is running.
+//
+// When not set, the provider uses in-cluster config (if available) or the default kubeconfig file.
 func (p *kubernetesProvider) BuildConfig(ctx context.Context, envConfig *recipes.Configuration) (map[string]any, error) {
+	logger := ucplog.FromContextOrDiscard(ctx)
+
+	// Check if a target kubeconfig is configured for external cluster deployment.
+	if targetKubeconfigPath := os.Getenv(kubeutil.TargetKubeconfigEnvVar); targetKubeconfigPath != "" {
+		logger.Info("Terraform kubernetes provider: using external target cluster kubeconfig",
+			"kubeconfig", targetKubeconfigPath,
+			"envVar", kubeutil.TargetKubeconfigEnvVar)
+		return map[string]any{
+			"config_path": targetKubeconfigPath,
+		}, nil
+	}
+
+	logger.Info("Terraform kubernetes provider: RADIUS_TARGET_KUBECONFIG not set, using default cluster config")
+
 	_, err := rest.InClusterConfig()
 	if err != nil {
 		// If in cluster config is not present, then use default kubeconfig file.
 		if errors.Is(err, rest.ErrNotInCluster) {
+			logger.Info("Terraform kubernetes provider: not in cluster, using local kubeconfig",
+				"config_path", clientcmd.RecommendedHomeFile)
 			return map[string]any{
 				"config_path": clientcmd.RecommendedHomeFile,
 			}, nil
@@ -50,6 +72,7 @@ func (p *kubernetesProvider) BuildConfig(ctx context.Context, envConfig *recipes
 		return nil, err
 	}
 
+	logger.Info("Terraform kubernetes provider: using in-cluster config")
 	// No additional config is needed if in cluster config is present.
 	// https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs#in-cluster-config
 	return nil, nil
