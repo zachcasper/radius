@@ -110,6 +110,32 @@ func NewClientConfig(options *ConfigOptions) (*rest.Config, error) {
 	return config, nil
 }
 
+// TargetKubeconfigEnvVar is the environment variable that specifies the path to a kubeconfig file
+// for the target Kubernetes cluster where application resources should be deployed. When set, the
+// Radius control plane will deploy output resources (Deployments, Services, etc.) to this external
+// cluster instead of the local cluster where the control plane is running.
+const TargetKubeconfigEnvVar = "RADIUS_TARGET_KUBECONFIG"
+
+// NewClientConfigFromFile builds a Kubernetes client config from a kubeconfig file at the given path.
+// This is used to create a client targeting an external cluster (e.g., AKS/EKS) when the Radius
+// control plane is running on a separate ephemeral cluster.
+func NewClientConfigFromFile(kubeconfigPath string) (*rest.Config, error) {
+	cfg, err := clientcmd.LoadFromFile(kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load kubeconfig from %s: %w", kubeconfigPath, err)
+	}
+
+	config, err := clientcmd.NewNonInteractiveClientConfig(*cfg, cfg.CurrentContext, nil, nil).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to build client config from %s: %w", kubeconfigPath, err)
+	}
+
+	config.QPS = DefaultServerQPS
+	config.Burst = DefaultServerBurst
+
+	return config, nil
+}
+
 // NewClientConfigFromLocal builds a Kubernetes client config from a ConfigOptions instance, loading the config file from the
 // ConfigFilePath and setting the QPS and Burst values if specified. It returns an error if the config file cannot be loaded
 // or the client config cannot be initialized.
