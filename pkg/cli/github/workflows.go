@@ -1075,7 +1075,7 @@ kubectl get pods -n radius-system -l app.kubernetes.io/name=applications-rp -o w
 echo "dynamic-rp pods:"
 kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp -o wide 2>&1
 
-PATCH='[
+PATCH_APPLICATIONS_RP='[
   {
     "op": "add",
     "path": "/spec/template/spec/volumes/-",
@@ -1105,14 +1105,55 @@ PATCH='[
   }
 ]'
 
+# dynamic-rp also gets KUBE_CONFIG_PATH — the native Terraform kubernetes provider env var.
+# This ensures Terraform recipes deploy to the target cluster even if the dynamic-rp image
+# does not include the RADIUS_TARGET_KUBECONFIG code change in BuildConfig().
+PATCH_DYNAMIC_RP='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/volumes/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "secret": {
+        "secretName": "target-kubeconfig"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/volumeMounts/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "mountPath": "/etc/radius/target-kubeconfig",
+      "readOnly": true
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "RADIUS_TARGET_KUBECONFIG",
+      "value": "/etc/radius/target-kubeconfig/config"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "KUBE_CONFIG_PATH",
+      "value": "/etc/radius/target-kubeconfig/config"
+    }
+  }
+]'
+
 echo ""
 echo "--- Step 3: Patching applications-rp deployment ---"
-kubectl patch deployment applications-rp -n radius-system --type=json -p="$PATCH"
+kubectl patch deployment applications-rp -n radius-system --type=json -p="$PATCH_APPLICATIONS_RP"
 echo "applications-rp patched"
 
 echo ""
 echo "--- Step 4: Patching dynamic-rp deployment ---"
-kubectl patch deployment dynamic-rp -n radius-system --type=json -p="$PATCH"
+kubectl patch deployment dynamic-rp -n radius-system --type=json -p="$PATCH_DYNAMIC_RP"
 echo "dynamic-rp patched"
 
 echo ""
@@ -1144,7 +1185,8 @@ for deploy in applications-rp dynamic-rp; do
   if [ -n "$POD" ]; then
     echo "$deploy pod ($POD):"
     echo "  File exists: $(kubectl exec -n radius-system "$POD" -- ls -la /etc/radius/target-kubeconfig/config 2>&1)"
-    echo "  Env var: $(kubectl exec -n radius-system "$POD" -- printenv RADIUS_TARGET_KUBECONFIG 2>&1)"
+    echo "  RADIUS_TARGET_KUBECONFIG: $(kubectl exec -n radius-system "$POD" -- printenv RADIUS_TARGET_KUBECONFIG 2>&1)"
+    echo "  KUBE_CONFIG_PATH: $(kubectl exec -n radius-system "$POD" -- printenv KUBE_CONFIG_PATH 2>&1)"
   else
     echo "WARNING: No pod found for $deploy"
   fi
@@ -1468,7 +1510,7 @@ kubectl get pods -n radius-system -l app.kubernetes.io/name=applications-rp -o w
 echo "dynamic-rp pods:"
 kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp -o wide 2>&1
 
-PATCH='[
+PATCH_APPLICATIONS_RP='[
   {
     "op": "add",
     "path": "/spec/template/spec/volumes/-",
@@ -1498,14 +1540,55 @@ PATCH='[
   }
 ]'
 
+# dynamic-rp also gets KUBE_CONFIG_PATH — the native Terraform kubernetes provider env var.
+# This ensures Terraform recipes deploy to the target cluster even if the dynamic-rp image
+# does not include the RADIUS_TARGET_KUBECONFIG code change in BuildConfig().
+PATCH_DYNAMIC_RP='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/volumes/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "secret": {
+        "secretName": "target-kubeconfig"
+      }
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/volumeMounts/-",
+    "value": {
+      "name": "target-kubeconfig",
+      "mountPath": "/etc/radius/target-kubeconfig",
+      "readOnly": true
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "RADIUS_TARGET_KUBECONFIG",
+      "value": "/etc/radius/target-kubeconfig/config"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "KUBE_CONFIG_PATH",
+      "value": "/etc/radius/target-kubeconfig/config"
+    }
+  }
+]'
+
 echo ""
 echo "--- Step 3: Patching applications-rp deployment ---"
-kubectl patch deployment applications-rp -n radius-system --type=json -p="$PATCH"
+kubectl patch deployment applications-rp -n radius-system --type=json -p="$PATCH_APPLICATIONS_RP"
 echo "applications-rp patched"
 
 echo ""
 echo "--- Step 4: Patching dynamic-rp deployment ---"
-kubectl patch deployment dynamic-rp -n radius-system --type=json -p="$PATCH"
+kubectl patch deployment dynamic-rp -n radius-system --type=json -p="$PATCH_DYNAMIC_RP"
 echo "dynamic-rp patched"
 
 echo ""
@@ -1537,7 +1620,8 @@ for deploy in applications-rp dynamic-rp; do
   if [ -n "$POD" ]; then
     echo "$deploy pod ($POD):"
     echo "  File exists: $(kubectl exec -n radius-system "$POD" -- ls -la /etc/radius/target-kubeconfig/config 2>&1)"
-    echo "  Env var: $(kubectl exec -n radius-system "$POD" -- printenv RADIUS_TARGET_KUBECONFIG 2>&1)"
+    echo "  RADIUS_TARGET_KUBECONFIG: $(kubectl exec -n radius-system "$POD" -- printenv RADIUS_TARGET_KUBECONFIG 2>&1)"
+    echo "  KUBE_CONFIG_PATH: $(kubectl exec -n radius-system "$POD" -- printenv KUBE_CONFIG_PATH 2>&1)"
   else
     echo "WARNING: No pod found for $deploy"
   fi
