@@ -1153,7 +1153,7 @@ cp resource-types/config/*.tgz app/`,
 		// Target cluster authentication: Azure OIDC login (only when targeting AKS)
 		{
 			Name: "Azure Login (target cluster)",
-			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'azure' }}",
+			If:   "${{ vars.AZURE_SUBSCRIPTION_ID != '' && vars.KUBERNETES_CLUSTER != '' }}",
 			Uses: "azure/login@v2",
 			With: map[string]string{
 				"client-id":       "${{ vars.AZURE_CLIENT_ID }}",
@@ -1164,7 +1164,7 @@ cp resource-types/config/*.tgz app/`,
 		// Target cluster authentication: AWS OIDC credentials (only when targeting EKS)
 		{
 			Name: "Configure AWS credentials (target cluster)",
-			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'aws' }}",
+			If:   "${{ vars.AWS_ACCOUNT_ID != '' && vars.KUBERNETES_CLUSTER != '' }}",
 			Uses: "aws-actions/configure-aws-credentials@v4",
 			With: map[string]string{
 				"role-to-assume": "arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_IAM_ROLE_NAME }}",
@@ -1172,38 +1172,50 @@ cp resource-types/config/*.tgz app/`,
 			},
 		},
 		// Fetch kubeconfig for the external target cluster where output resources will be deployed.
-		// When RADIUS_TARGET_CLUSTER_PROVIDER is set, Radius deploys application output resources
+		// When KUBERNETES_CLUSTER is set, Radius deploys application output resources
 		// (Deployments, Services, etc.) to this external cluster instead of to the ephemeral k3d cluster.
+		// The cloud provider is inferred from AZURE_SUBSCRIPTION_ID or AWS_ACCOUNT_ID.
 		{
 			Name: "Fetch target cluster credentials",
 			Env: map[string]string{
-				"RADIUS_TARGET_CLUSTER_PROVIDER": "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER }}",
-				"RADIUS_TARGET_CLUSTER_NAME":     "${{ vars.RADIUS_TARGET_CLUSTER_NAME }}",
-				"RADIUS_TARGET_CLUSTER_RG":       "${{ vars.RADIUS_TARGET_CLUSTER_RG }}",
-				"RADIUS_TARGET_CLUSTER_REGION":   "${{ vars.RADIUS_TARGET_CLUSTER_REGION }}",
+				"KUBERNETES_CLUSTER":    "${{ vars.KUBERNETES_CLUSTER }}",
+				"AZURE_SUBSCRIPTION_ID": "${{ vars.AZURE_SUBSCRIPTION_ID }}",
+				"AZURE_RESOURCE_GROUP":  "${{ vars.AZURE_RESOURCE_GROUP }}",
+				"AWS_ACCOUNT_ID":        "${{ vars.AWS_ACCOUNT_ID }}",
+				"AWS_REGION":            "${{ vars.AWS_REGION }}",
 			},
 			Run: `TARGET_KUBECONFIG="/tmp/target-kubeconfig.yaml"
-if [ -z "$RADIUS_TARGET_CLUSTER_PROVIDER" ]; then
-  echo "No RADIUS_TARGET_CLUSTER_PROVIDER configured, resources will deploy to local k3d cluster"
+if [ -z "$KUBERNETES_CLUSTER" ]; then
+  echo "No KUBERNETES_CLUSTER configured, resources will deploy to local k3d cluster"
   exit 0
 fi
 
-echo "Fetching credentials for target cluster: $RADIUS_TARGET_CLUSTER_NAME ($RADIUS_TARGET_CLUSTER_PROVIDER)"
+# Infer cloud provider from environment variables
+if [ -n "$AZURE_SUBSCRIPTION_ID" ] && [ -n "$AWS_ACCOUNT_ID" ]; then
+  echo "ERROR: Both AZURE_SUBSCRIPTION_ID and AWS_ACCOUNT_ID are set. Only one cloud provider is supported."
+  exit 1
+elif [ -n "$AZURE_SUBSCRIPTION_ID" ]; then
+  PROVIDER="azure"
+elif [ -n "$AWS_ACCOUNT_ID" ]; then
+  PROVIDER="aws"
+else
+  echo "ERROR: KUBERNETES_CLUSTER is set but neither AZURE_SUBSCRIPTION_ID nor AWS_ACCOUNT_ID is configured."
+  exit 1
+fi
 
-if [ "$RADIUS_TARGET_CLUSTER_PROVIDER" = "azure" ]; then
+echo "Fetching credentials for target cluster: $KUBERNETES_CLUSTER (provider: $PROVIDER)"
+
+if [ "$PROVIDER" = "azure" ]; then
   az aks get-credentials \
-    --resource-group "$RADIUS_TARGET_CLUSTER_RG" \
-    --name "$RADIUS_TARGET_CLUSTER_NAME" \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --name "$KUBERNETES_CLUSTER" \
     --file "$TARGET_KUBECONFIG" \
     --overwrite-existing
-elif [ "$RADIUS_TARGET_CLUSTER_PROVIDER" = "aws" ]; then
+elif [ "$PROVIDER" = "aws" ]; then
   aws eks update-kubeconfig \
-    --name "$RADIUS_TARGET_CLUSTER_NAME" \
-    --region "$RADIUS_TARGET_CLUSTER_REGION" \
+    --name "$KUBERNETES_CLUSTER" \
+    --region "$AWS_REGION" \
     --kubeconfig "$TARGET_KUBECONFIG"
-else
-  echo "ERROR: Unsupported target cluster provider: $RADIUS_TARGET_CLUSTER_PROVIDER"
-  exit 1
 fi
 
 echo "Target cluster kubeconfig saved to $TARGET_KUBECONFIG"
@@ -1278,7 +1290,17 @@ exit 1`,
 			Run: `cd resource-types/config
 for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
   echo "Registering resource type from $def_file..."
-  rad resource-type create --from-file "$def_file"
+  for attempt in $(seq 1 5); do
+    if rad resource-type create --from-file "$def_file" 2>&1; then
+      break
+    fi
+    if [ $attempt -eq 5 ]; then
+      echo "Failed to register $def_file after 5 attempts"
+      exit 1
+    fi
+    echo "  Retrying in 5s... ($attempt/5)"
+    sleep 5
+  done
 done`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
@@ -1446,7 +1468,7 @@ func generateRadAppDeleteSteps() []WorkflowStep {
 		// Target cluster authentication: Azure OIDC login (only when targeting AKS)
 		{
 			Name: "Azure Login (target cluster)",
-			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'azure' }}",
+			If:   "${{ vars.AZURE_SUBSCRIPTION_ID != '' && vars.KUBERNETES_CLUSTER != '' }}",
 			Uses: "azure/login@v2",
 			With: map[string]string{
 				"client-id":       "${{ vars.AZURE_CLIENT_ID }}",
@@ -1457,7 +1479,7 @@ func generateRadAppDeleteSteps() []WorkflowStep {
 		// Target cluster authentication: AWS OIDC credentials (only when targeting EKS)
 		{
 			Name: "Configure AWS credentials (target cluster)",
-			If:   "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER == 'aws' }}",
+			If:   "${{ vars.AWS_ACCOUNT_ID != '' && vars.KUBERNETES_CLUSTER != '' }}",
 			Uses: "aws-actions/configure-aws-credentials@v4",
 			With: map[string]string{
 				"role-to-assume": "arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_IAM_ROLE_NAME }}",
@@ -1465,36 +1487,50 @@ func generateRadAppDeleteSteps() []WorkflowStep {
 			},
 		},
 		// Fetch kubeconfig for the external target cluster where output resources will be deployed.
+		// When KUBERNETES_CLUSTER is set, Radius deploys application output resources
+		// (Deployments, Services, etc.) to this external cluster instead of to the ephemeral k3d cluster.
+		// The cloud provider is inferred from AZURE_SUBSCRIPTION_ID or AWS_ACCOUNT_ID.
 		{
 			Name: "Fetch target cluster credentials",
 			Env: map[string]string{
-				"RADIUS_TARGET_CLUSTER_PROVIDER": "${{ vars.RADIUS_TARGET_CLUSTER_PROVIDER }}",
-				"RADIUS_TARGET_CLUSTER_NAME":     "${{ vars.RADIUS_TARGET_CLUSTER_NAME }}",
-				"RADIUS_TARGET_CLUSTER_RG":       "${{ vars.RADIUS_TARGET_CLUSTER_RG }}",
-				"RADIUS_TARGET_CLUSTER_REGION":   "${{ vars.RADIUS_TARGET_CLUSTER_REGION }}",
+				"KUBERNETES_CLUSTER":    "${{ vars.KUBERNETES_CLUSTER }}",
+				"AZURE_SUBSCRIPTION_ID": "${{ vars.AZURE_SUBSCRIPTION_ID }}",
+				"AZURE_RESOURCE_GROUP":  "${{ vars.AZURE_RESOURCE_GROUP }}",
+				"AWS_ACCOUNT_ID":        "${{ vars.AWS_ACCOUNT_ID }}",
+				"AWS_REGION":            "${{ vars.AWS_REGION }}",
 			},
 			Run: `TARGET_KUBECONFIG="/tmp/target-kubeconfig.yaml"
-if [ -z "$RADIUS_TARGET_CLUSTER_PROVIDER" ]; then
-  echo "No RADIUS_TARGET_CLUSTER_PROVIDER configured, resources will deploy to local k3d cluster"
+if [ -z "$KUBERNETES_CLUSTER" ]; then
+  echo "No KUBERNETES_CLUSTER configured, resources will deploy to local k3d cluster"
   exit 0
 fi
 
-echo "Fetching credentials for target cluster: $RADIUS_TARGET_CLUSTER_NAME ($RADIUS_TARGET_CLUSTER_PROVIDER)"
+# Infer cloud provider from environment variables
+if [ -n "$AZURE_SUBSCRIPTION_ID" ] && [ -n "$AWS_ACCOUNT_ID" ]; then
+  echo "ERROR: Both AZURE_SUBSCRIPTION_ID and AWS_ACCOUNT_ID are set. Only one cloud provider is supported."
+  exit 1
+elif [ -n "$AZURE_SUBSCRIPTION_ID" ]; then
+  PROVIDER="azure"
+elif [ -n "$AWS_ACCOUNT_ID" ]; then
+  PROVIDER="aws"
+else
+  echo "ERROR: KUBERNETES_CLUSTER is set but neither AZURE_SUBSCRIPTION_ID nor AWS_ACCOUNT_ID is configured."
+  exit 1
+fi
 
-if [ "$RADIUS_TARGET_CLUSTER_PROVIDER" = "azure" ]; then
+echo "Fetching credentials for target cluster: $KUBERNETES_CLUSTER (provider: $PROVIDER)"
+
+if [ "$PROVIDER" = "azure" ]; then
   az aks get-credentials \
-    --resource-group "$RADIUS_TARGET_CLUSTER_RG" \
-    --name "$RADIUS_TARGET_CLUSTER_NAME" \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --name "$KUBERNETES_CLUSTER" \
     --file "$TARGET_KUBECONFIG" \
     --overwrite-existing
-elif [ "$RADIUS_TARGET_CLUSTER_PROVIDER" = "aws" ]; then
+elif [ "$PROVIDER" = "aws" ]; then
   aws eks update-kubeconfig \
-    --name "$RADIUS_TARGET_CLUSTER_NAME" \
-    --region "$RADIUS_TARGET_CLUSTER_REGION" \
+    --name "$KUBERNETES_CLUSTER" \
+    --region "$AWS_REGION" \
     --kubeconfig "$TARGET_KUBECONFIG"
-else
-  echo "ERROR: Unsupported target cluster provider: $RADIUS_TARGET_CLUSTER_PROVIDER"
-  exit 1
 fi
 
 echo "Target cluster kubeconfig saved to $TARGET_KUBECONFIG"
@@ -1568,7 +1604,17 @@ exit 1`,
 			Run: `cd resource-types/config
 for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
   echo "Registering resource type from $def_file..."
-  rad resource-type create --from-file "$def_file"
+  for attempt in $(seq 1 5); do
+    if rad resource-type create --from-file "$def_file" 2>&1; then
+      break
+    fi
+    if [ $attempt -eq 5 ]; then
+      echo "Failed to register $def_file after 5 attempts"
+      exit 1
+    fi
+    echo "  Retrying in 5s... ($attempt/5)"
+    sleep 5
+  done
 done`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
@@ -1954,7 +2000,17 @@ exit 1`,
 			Run: `cd resource-types/config
 for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
   echo "Registering resource type from $def_file..."
-  rad resource-type create --from-file "$def_file"
+  for attempt in $(seq 1 5); do
+    if rad resource-type create --from-file "$def_file" 2>&1; then
+      break
+    fi
+    if [ $attempt -eq 5 ]; then
+      echo "Failed to register $def_file after 5 attempts"
+      exit 1
+    fi
+    echo "  Retrying in 5s... ($attempt/5)"
+    sleep 5
+  done
 done`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
@@ -2203,7 +2259,17 @@ exit 1`,
 			Run: `cd resource-types/config
 for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
   echo "Registering resource type from $def_file..."
-  rad resource-type create --from-file "$def_file"
+  for attempt in $(seq 1 5); do
+    if rad resource-type create --from-file "$def_file" 2>&1; then
+      break
+    fi
+    if [ $attempt -eq 5 ]; then
+      echo "Failed to register $def_file after 5 attempts"
+      exit 1
+    fi
+    echo "  Retrying in 5s... ($attempt/5)"
+    sleep 5
+  done
 done`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",
@@ -2444,7 +2510,17 @@ exit 1`,
 			Run: `cd resource-types/config
 for def_file in $(yq -r '.types[].definitionLocation' types.yaml); do
   echo "Registering resource type from $def_file..."
-  rad resource-type create --from-file "$def_file"
+  for attempt in $(seq 1 5); do
+    if rad resource-type create --from-file "$def_file" 2>&1; then
+      break
+    fi
+    if [ $attempt -eq 5 ]; then
+      echo "Failed to register $def_file after 5 attempts"
+      exit 1
+    fi
+    echo "  Retrying in 5s... ($attempt/5)"
+    sleep 5
+  done
 done`,
 			Env: map[string]string{
 				"KUBECONFIG": "/tmp/kubeconfig.yaml",

@@ -170,14 +170,30 @@ func RegisterDirectory(ctx context.Context, clientFactory *v20231001preview.Clie
 	return nil
 }
 
-// EnsureResourceProviderExists ensures a resource provider exists, creating it if necessary
+// EnsureResourceProviderExists ensures a resource provider and its location exist, creating them if necessary.
+// This handles the race condition where the resource provider may have been created by UCP's async initializer
+// but the location has not yet been created.
 func EnsureResourceProviderExists(ctx context.Context, clientFactory *v20231001preview.ClientFactory, planeName string, resourceProvider ResourceProvider, logger func(format string, args ...any)) error {
+	locationName, address := extractLocationInfo(resourceProvider)
+
 	_, err := clientFactory.NewResourceProvidersClient().Get(ctx, planeName, resourceProvider.Namespace, nil)
 	if clients.Is404Error(err) {
 		return CreateEmptyResourceProvider(ctx, clientFactory, planeName, resourceProvider, logger)
 	} else if err != nil {
 		return err
 	}
+
+	// The provider exists. Check whether its location also exists — it might not if the provider
+	// was partially created by UCP's async initializer (race condition).
+	_, err = clientFactory.NewLocationsClient().Get(ctx, planeName, resourceProvider.Namespace, locationName, nil)
+	if clients.Is404Error(err) {
+		logIfEnabled(logger, "Resource provider %s exists but location %s not found, creating it...", resourceProvider.Namespace, locationName)
+		return createLocationResource(ctx, clientFactory, planeName, resourceProvider.Namespace, locationName, address,
+			map[string]*v20231001preview.LocationResourceType{}, logger)
+	} else if err != nil {
+		return err
+	}
+
 	return nil
 }
 
