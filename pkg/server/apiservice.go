@@ -70,12 +70,13 @@ func (s *APIService) Run(ctx context.Context) error {
 		Configure: func(r chi.Router) error {
 			for _, b := range s.handlerBuilder {
 				opts := apictrl.Options{
-					Address:        address,
-					PathBase:       s.Options.Config.Server.PathBase,
-					DatabaseClient: databaseClient,
-					Arm:            s.Options.Arm, // This is a temporary fix to avoid ARM initialization in the test environment.
-					KubeClient:     s.KubeClient,
-					StatusManager:  s.OperationStatusManager,
+					Address:          address,
+					PathBase:         s.Options.Config.Server.PathBase,
+					DatabaseClient:   databaseClient,
+					Arm:              s.Options.Arm, // This is a temporary fix to avoid ARM initialization in the test environment.
+					KubeClient:       s.KubeClient,
+					TargetKubeClient: s.TargetKubeClient,
+					StatusManager:    s.OperationStatusManager,
 				}
 
 				validator, err := builder.NewOpenAPIValidator(ctx, opts.PathBase, b.Namespace())

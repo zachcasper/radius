@@ -149,6 +149,20 @@ func CreateAppScopedNamespace(ctx context.Context, newResource, oldResource *dat
 		logger.Info("Created the namespace", "namespace", kubeNamespace)
 	}
 
+	// Also create the namespace on the target cluster (GitHub mode) so that
+	// bicep-de can deploy K8s extensibility resources there.
+	if opt.TargetKubeClient != nil {
+		err = opt.TargetKubeClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: kubeNamespace}})
+		if apierrors.IsAlreadyExists(err) {
+			logger.Info("Using existing namespace on target cluster", "namespace", kubeNamespace)
+		} else if err != nil {
+			logger.Error(err, "Failed to create namespace on target cluster", "namespace", kubeNamespace)
+			// Non-fatal: log but don't fail — the namespace may be created by the recipe template.
+		} else {
+			logger.Info("Created the namespace on target cluster", "namespace", kubeNamespace)
+		}
+	}
+
 	return nil, nil
 }
 

@@ -116,6 +116,8 @@ func (w *AsyncWorker) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to load target kubeconfig from %s: %w", targetKubeconfigPath, err)
 		}
 
+		logger.Info("Target cluster API server resolved", "host", targetConfig.Host)
+
 		targetK8s, err = kubeutil.NewClients(targetConfig)
 		if err != nil {
 			return fmt.Errorf("failed to initialize target kubernetes clients: %w", err)
@@ -137,7 +139,9 @@ func (w *AsyncWorker) Run(ctx context.Context) error {
 			DatabaseClient: w.DatabaseClient,
 			KubeClient:     k8s.RuntimeClient,
 			GetDeploymentProcessor: func() deployment.DeploymentProcessor {
-				return deployment.NewDeploymentProcessor(appModel, w.DatabaseClient, targetK8s.RuntimeClient, targetK8s.ClientSet)
+				// Use local k8s clients for control-plane lookups (e.g., contour-envoy Service in radius-system)
+				// and targetK8s clients (via appModel) for output resource deployment.
+				return deployment.NewDeploymentProcessor(appModel, w.DatabaseClient, k8s.RuntimeClient, k8s.ClientSet)
 			},
 		}
 

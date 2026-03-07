@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 
 	manager "github.com/radius-project/radius/pkg/armrpc/asyncoperation/statusmanager"
 	"github.com/radius-project/radius/pkg/armrpc/authentication"
@@ -50,6 +51,12 @@ type Service struct {
 
 	// KubeClient is the Kubernetes controller runtime client.
 	KubeClient controller_runtime.Client
+
+	// TargetKubeClient is the Kubernetes controller runtime client for the external target cluster.
+	// This is used in "GitHub mode" where output resources deploy to a real AKS/EKS cluster
+	// while the Radius control plane runs on an ephemeral k3d cluster.
+	// When nil, only the local cluster is used for namespace creation.
+	TargetKubeClient controller_runtime.Client
 }
 
 // Init initializes web service - it initializes the DatabaseProvider, QueueProvider, OperationStatusManager, KubeClient and ARMCertManager
@@ -73,6 +80,23 @@ func (s *Service) Init(ctx context.Context) error {
 	s.KubeClient, err = kubeutil.NewRuntimeClient(s.Options.K8sConfig)
 	if err != nil {
 		return err
+	}
+
+	// If a target kubeconfig is configured (GitHub mode), also create a client for the target cluster.
+	// This allows frontend controllers to create namespaces on the target cluster.
+	if targetKubeconfigPath := os.Getenv(kubeutil.TargetKubeconfigEnvVar); targetKubeconfigPath != "" {
+		logger.Info("Frontend service: loading target cluster kubeconfig for namespace creation", "kubeconfig", targetKubeconfigPath)
+		targetConfig, err := kubeutil.NewClientConfigFromFile(targetKubeconfigPath)
+		if err != nil {
+			logger.Error(err, "Failed to load target kubeconfig, namespace creation will only happen on local cluster", "path", targetKubeconfigPath)
+		} else {
+			s.TargetKubeClient, err = kubeutil.NewRuntimeClient(targetConfig)
+			if err != nil {
+				logger.Error(err, "Failed to create target cluster client, namespace creation will only happen on local cluster")
+			} else {
+				logger.Info("Frontend service: target cluster client ready", "host", targetConfig.Host)
+			}
+		}
 	}
 
 	// Initialize the manager for ARM client cert validation

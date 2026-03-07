@@ -114,6 +114,20 @@ func (e *CreateOrUpdateEnvironment) Run(ctx context.Context, w http.ResponseWrit
 		} else {
 			logger.Info("Created the namespace", "namespace", namespace)
 		}
+
+		// Also create the namespace on the target cluster (GitHub mode) so that
+		// bicep-de can deploy K8s extensibility resources there.
+		if targetClient := e.Options().TargetKubeClient; targetClient != nil {
+			err = targetClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}})
+			if apierrors.IsAlreadyExists(err) {
+				logger.Info("Using existing namespace on target cluster", "namespace", namespace)
+			} else if err != nil {
+				logger.Error(err, "Failed to create namespace on target cluster", "namespace", namespace)
+				// Non-fatal: log but don't fail — the namespace may be created by the recipe template.
+			} else {
+				logger.Info("Created the namespace on target cluster", "namespace", namespace)
+			}
+		}
 	}
 
 	newResource.SetProvisioningState(v1.ProvisioningStateSucceeded)

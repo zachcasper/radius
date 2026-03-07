@@ -922,7 +922,20 @@ PATCH_DYNAMIC_RP='[
 # resolves the Kubernetes connection. Without KUBECONFIG set, it uses in-cluster
 # config and creates resources on the k3d control plane cluster instead of the
 # target cluster. Setting KUBECONFIG makes the DE target the external cluster.
+#
+# CRITICAL: Two fixes for bicep-de to target the external cluster:
+# 1. automountServiceAccountToken=false: The .NET K8s client prefers in-cluster
+#    config (service account token) over file-based config. Disabling the token
+#    mount prevents it from connecting to k3d.
+# 2. Mount kubeconfig at /root/.kube/config: The .NET K8s client in KubeCredentials.cs
+#    calls BuildConfigFromConfigFile() which looks at ~/.kube/config (i.e. /root/.kube/config).
+#    It does NOT read the KUBECONFIG environment variable like kubectl does.
 PATCH_BICEP_DE='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/automountServiceAccountToken",
+    "value": false
+  },
   {
     "op": "add",
     "path": "/spec/template/spec/volumes/-",
@@ -938,7 +951,7 @@ PATCH_BICEP_DE='[
     "path": "/spec/template/spec/containers/0/volumeMounts/-",
     "value": {
       "name": "target-kubeconfig",
-      "mountPath": "/etc/radius/target-kubeconfig",
+      "mountPath": "/root/.kube",
       "readOnly": true
     }
   },
@@ -947,7 +960,7 @@ PATCH_BICEP_DE='[
     "path": "/spec/template/spec/containers/0/env/-",
     "value": {
       "name": "KUBECONFIG",
-      "value": "/etc/radius/target-kubeconfig/config"
+      "value": "/root/.kube/config"
     }
   }
 ]'
@@ -1212,10 +1225,32 @@ if [ "$PROVIDER" = "azure" ]; then
     --file "$TARGET_KUBECONFIG" \
     --overwrite-existing
 elif [ "$PROVIDER" = "aws" ]; then
-  aws eks update-kubeconfig \
-    --name "$KUBERNETES_CLUSTER" \
-    --region "$AWS_REGION" \
-    --kubeconfig "$TARGET_KUBECONFIG"
+  # Generate a static kubeconfig with a bearer token.
+  # aws eks update-kubeconfig creates an exec-based config that requires AWS CLI
+  # inside containers. bicep-de and dynamic-rp don't have AWS CLI, so we fetch
+  # the endpoint, CA, and token explicitly and build a static kubeconfig.
+  ENDPOINT=$(aws eks describe-cluster --name "$KUBERNETES_CLUSTER" --region "$AWS_REGION" --query 'cluster.endpoint' --output text)
+  CA_DATA=$(aws eks describe-cluster --name "$KUBERNETES_CLUSTER" --region "$AWS_REGION" --query 'cluster.certificateAuthority.data' --output text)
+  TOKEN=$(aws eks get-token --cluster-name "$KUBERNETES_CLUSTER" --region "$AWS_REGION" --output json | jq -r '.status.token')
+  cat > "$TARGET_KUBECONFIG" <<EOF
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: $CA_DATA
+    server: $ENDPOINT
+  name: eks
+contexts:
+- context:
+    cluster: eks
+    user: eks-user
+  name: eks
+current-context: eks
+kind: Config
+users:
+- name: eks-user
+  user:
+    token: $TOKEN
+EOF
 fi
 
 echo "Target cluster kubeconfig saved to $TARGET_KUBECONFIG"
@@ -1339,13 +1374,13 @@ exit 1`,
 fi
 curl -fsSL "$RADIUS_RECIPES_MANIFEST" -o /tmp/recipes-manifest.yaml
 echo "Registering recipes from manifest..."
-# Iterate over top-level keys that have recipeKind (skip comment-only keys like 'recipes')
-for resource_type in $(yq e 'keys | .[]' /tmp/recipes-manifest.yaml); do
-  kind=$(yq e ".\"${resource_type}\".recipeKind // \"\"" /tmp/recipes-manifest.yaml)
+# Iterate over keys under the top-level 'recipes:' wrapper
+for resource_type in $(yq e '.recipes | keys | .[]' /tmp/recipes-manifest.yaml); do
+  kind=$(yq e ".recipes.\"${resource_type}\".recipeKind // \"\"" /tmp/recipes-manifest.yaml)
   if [ -z "$kind" ] || [ "$kind" = "null" ]; then
     continue
   fi
-  location=$(yq e ".\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
+  location=$(yq e ".recipes.\"${resource_type}\".recipeLocation" /tmp/recipes-manifest.yaml)
   echo "  Registering $resource_type ($kind)..."
   rad recipe register default \
     --resource-type "$resource_type" \
@@ -1527,10 +1562,32 @@ if [ "$PROVIDER" = "azure" ]; then
     --file "$TARGET_KUBECONFIG" \
     --overwrite-existing
 elif [ "$PROVIDER" = "aws" ]; then
-  aws eks update-kubeconfig \
-    --name "$KUBERNETES_CLUSTER" \
-    --region "$AWS_REGION" \
-    --kubeconfig "$TARGET_KUBECONFIG"
+  # Generate a static kubeconfig with a bearer token.
+  # aws eks update-kubeconfig creates an exec-based config that requires AWS CLI
+  # inside containers. bicep-de and dynamic-rp don't have AWS CLI, so we fetch
+  # the endpoint, CA, and token explicitly and build a static kubeconfig.
+  ENDPOINT=$(aws eks describe-cluster --name "$KUBERNETES_CLUSTER" --region "$AWS_REGION" --query 'cluster.endpoint' --output text)
+  CA_DATA=$(aws eks describe-cluster --name "$KUBERNETES_CLUSTER" --region "$AWS_REGION" --query 'cluster.certificateAuthority.data' --output text)
+  TOKEN=$(aws eks get-token --cluster-name "$KUBERNETES_CLUSTER" --region "$AWS_REGION" --output json | jq -r '.status.token')
+  cat > "$TARGET_KUBECONFIG" <<EOF
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: $CA_DATA
+    server: $ENDPOINT
+  name: eks
+contexts:
+- context:
+    cluster: eks
+    user: eks-user
+  name: eks
+current-context: eks
+kind: Config
+users:
+- name: eks-user
+  user:
+    token: $TOKEN
+EOF
 fi
 
 echo "Target cluster kubeconfig saved to $TARGET_KUBECONFIG"

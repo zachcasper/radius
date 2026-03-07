@@ -99,6 +99,7 @@ func (handler *kubernetesHandler) Put(ctx context.Context, options *PutOptions) 
 
 	err = kubeutil.PatchNamespace(ctx, handler.client, item.GetNamespace())
 	if err != nil {
+		logger.Error(err, "kubernetesHandler.Put: failed to patch namespace", "namespace", item.GetNamespace())
 		return nil, err
 	}
 
@@ -108,6 +109,10 @@ func (handler *kubernetesHandler) Put(ctx context.Context, options *PutOptions) 
 	//nolint:staticcheck // SA1019: client.Apply will be replaced when ApplyConfiguration support is available
 	err = handler.client.Patch(ctx, &item, client.Apply, &client.PatchOptions{FieldManager: kubernetes.FieldManager})
 	if err != nil {
+		logger.Error(err, "kubernetesHandler.Put: failed to apply resource",
+			"kind", item.GetKind(),
+			"name", item.GetName(),
+			"namespace", item.GetNamespace())
 		return nil, err
 	}
 

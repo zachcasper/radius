@@ -391,11 +391,27 @@ func (s *OIDCSetup) createAWSRole(ctx context.Context, accountID, region string)
 	}
 
 	// Attach necessary policies
+	// AWS limits roles to 10 managed policies. This set covers EKS, Terraform recipes,
+	// and common AWS resources. For prototype/development use.
 	s.Output.LogInfo("Attaching policies to role...")
 	policies := []string{
+		// Compute & networking
 		"arn:aws:iam::aws:policy/AmazonEC2FullAccess",
+		"arn:aws:iam::aws:policy/AmazonVPCFullAccess",
+		// Storage & state
 		"arn:aws:iam::aws:policy/AmazonS3FullAccess",
 		"arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess",
+		// EKS: fetch cluster endpoint/CA, generate kubeconfig tokens
+		"arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+		"arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+		// Databases: RDS (PostgreSQL, MySQL, etc.) for Terraform recipes
+		"arn:aws:iam::aws:policy/AmazonRDSFullAccess",
+		// Caching: ElastiCache (Redis, Memcached) for Terraform recipes
+		"arn:aws:iam::aws:policy/AmazonElastiCacheFullAccess",
+		// Messaging: SQS for Terraform recipes
+		"arn:aws:iam::aws:policy/AmazonSQSFullAccess",
+		// IAM: Terraform may need to create service-linked roles
+		"arn:aws:iam::aws:policy/IAMFullAccess",
 	}
 	for _, policy := range policies {
 		_, err = s.CmdRunner.RunCommand(ctx, "aws", "iam", "attach-role-policy",

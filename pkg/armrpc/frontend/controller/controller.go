@@ -62,6 +62,12 @@ type Options struct {
 	// KubeClient is the Kubernetes controller runtime client.
 	KubeClient runtimeclient.Client
 
+	// TargetKubeClient is the Kubernetes controller runtime client for the target cluster.
+	// This is used when deploying output resources to an external cluster (e.g., AKS/EKS)
+	// while running the Radius control plane on an ephemeral cluster (e.g., k3d).
+	// When nil, only the local cluster is used.
+	TargetKubeClient runtimeclient.Client
+
 	// ResourceType is the string that represents the resource type. May be empty if the controller
 	// does not represent a single type of resource.
 	ResourceType string
@@ -148,6 +154,12 @@ func (b *BaseController) DatabaseClient() database.Client {
 // KubeClient gets Kubernetes client for this controller.
 func (b *BaseController) KubeClient() runtimeclient.Client {
 	return b.options.KubeClient
+}
+
+// TargetKubeClient gets the Kubernetes client for the target cluster.
+// Returns nil if no target cluster is configured.
+func (b *BaseController) TargetKubeClient() runtimeclient.Client {
+	return b.options.TargetKubeClient
 }
 
 // ResourceType gets the resource type for this controller.
