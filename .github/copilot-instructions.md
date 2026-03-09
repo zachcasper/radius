@@ -35,6 +35,26 @@ The following instruction files are available:
 - **[Make](instructions/make.instructions.md)** - Best practices for GNU Make Makefiles
 - **[Shell Scripts](instructions/shell.instructions.md)** - Guidelines for Bash/Shell script development
 
+## Skills
+
+Skills are on-demand workflows that guide Copilot through multi-step tasks. Type `/` in chat to see available skills, or describe what you want and Copilot will automatically invoke the right one.
+
+| Skill | Description | Example Prompts |
+|-------|-------------|-----------------|
+| **[Build CLI](skills/radius-build-cli/SKILL.md)** | Build the `rad` binary from source | `/radius-build-cli`, "build rad for linux/amd64", "create a debug build of the CLI" |
+| **[Build Images](skills/radius-build-images/SKILL.md)** | Build and push container images to a registry | `/radius-build-images`, "build and push Radius images to ghcr.io/myorg" |
+| **[Install Custom](skills/radius-install-custom/SKILL.md)** | Install Radius on Kubernetes from custom images | `/radius-install-custom`, "install Radius from my custom images" |
+
+### Typical Workflow
+
+For end-to-end testing of local changes:
+
+1. **Build the CLI** — `/radius-build-cli`
+2. **Build and push images** — `/radius-build-images`
+3. **Install on a cluster** — `/radius-install-custom`
+
+Each skill will check prerequisites, prompt for missing information (like the target registry), and verify success.
+
 ## How to Use
 
 When working on files that match the patterns defined in instruction files (e.g., `*.sh`, `.github/workflows/*.yml`), Copilot will automatically apply the relevant guidelines from the corresponding instruction file.
