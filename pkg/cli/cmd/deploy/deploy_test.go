@@ -900,77 +900,6 @@ func Test_Run(t *testing.T) {
 		// is always empty.
 		require.Empty(t, outputSink.Writes)
 	})
-
-	t.Run("Deployment with deprecated Applications.* resource types shows warning", func(t *testing.T) {
-		ctrl := gomock.NewController(t)
-		defer ctrl.Finish()
-
-		bicepMock := bicep.NewMockInterface(ctrl)
-
-		deployMock := deploy.NewMockInterface(ctrl)
-		deployMock.EXPECT().
-			DeployWithProgress(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, o deploy.Options) (clients.DeploymentResult, error) {
-				return clients.DeploymentResult{}, nil
-			}).
-			Times(1)
-
-		workspace := &workspaces.Workspace{
-			Connection: map[string]any{
-				"kind":    "kubernetes",
-				"context": "kind-kind",
-			},
-			Name: "kind-kind",
-		}
-		outputSink := &output.MockOutput{}
-
-		providers := clients.Providers{
-			Radius: &clients.RadiusProvider{
-				EnvironmentID: fmt.Sprintf("/planes/radius/local/resourceGroups/%s/providers/applications.core/environments/%s", radcli.TestEnvironmentName, radcli.TestEnvironmentName),
-			},
-		}
-
-		runner := &Runner{
-			Bicep:               bicepMock,
-			ConnectionFactory:   &connections.MockFactory{},
-			Deploy:              deployMock,
-			Output:              outputSink,
-			Providers:           &providers,
-			FilePath:            "app.bicep",
-			EnvironmentNameOrID: radcli.TestEnvironmentID,
-			Parameters:          map[string]map[string]any{},
-			Workspace:           workspace,
-			Template:            map[string]any{},
-			TemplateInspectionResult: bicep.TemplateInspectionResult{
-				ContainsEnvironmentResource: false,
-				DeprecatedResources:         []string{"Applications.Core/containers@2023-10-01-preview"},
-			},
-		}
-
-		err := runner.Run(context.Background())
-		require.NoError(t, err)
-
-		// Verify deprecation warning was logged
-		require.NotEmpty(t, outputSink.Writes)
-
-		// Check that the warning message contains the expected text
-		foundWarning := false
-		foundResourceType := false
-		for _, write := range outputSink.Writes {
-			if logOutput, ok := write.(output.LogOutput); ok {
-				if logOutput.Format == "WARNING: The following resource types are deprecated:" {
-					foundWarning = true
-				}
-				if logOutput.Format == "  - %s" && len(logOutput.Params) > 0 {
-					if resourceType, ok := logOutput.Params[0].(string); ok && resourceType == "Applications.Core/containers@2023-10-01-preview" {
-						foundResourceType = true
-					}
-				}
-			}
-		}
-		require.True(t, foundWarning, "Expected to find deprecation warning in output")
-		require.True(t, foundResourceType, "Expected to find deprecated resource type in output")
-	})
 }
 
 func Test_injectAutomaticParameters(t *testing.T) {
@@ -1162,7 +1091,20 @@ func Test_setupCloudProviders(t *testing.T) {
 				Scope: "/planes/aws/aws/accounts/account-id/regions/us-west-2",
 			},
 			expectedAzure: &clients.AzureProvider{
-				Scope: "/planes/azure/azure/Subscriptions/test-subscription/ResourceGroups/test-rg",
+				Scope: "/subscriptions/test-subscription/resourceGroups/test-rg",
+			},
+		},
+		{
+			name: "v20250801preview with Azure subscription only (nil ResourceGroupName)",
+			properties: &v20250801preview.EnvironmentProperties{
+				Providers: &v20250801preview.Providers{
+					Azure: &v20250801preview.ProvidersAzure{
+						SubscriptionID: to.Ptr("test-subscription"),
+					},
+				},
+			},
+			expectedAzure: &clients.AzureProvider{
+				Scope: "/subscriptions/test-subscription",
 			},
 		},
 	}
@@ -1575,7 +1517,7 @@ func Test_ConfigureProviders(t *testing.T) {
 			applicationName:       "myapp",
 			expectedEnvironmentID: "/planes/radius/local/resourceGroups/test-rg/providers/Radius.Core/environments/myenv",
 			expectedApplicationID: "/planes/radius/local/resourceGroups/test-rg/providers/Radius.Core/applications/myapp",
-			expectedAzureScope:    "/planes/azure/azure/Subscriptions/test-sub-id/ResourceGroups/test-rg-name",
+			expectedAzureScope:    "/subscriptions/test-sub-id/resourceGroups/test-rg-name",
 			expectedAWSScope:      "/planes/aws/aws/accounts/123456789012/regions/us-west-2",
 		},
 		{

@@ -263,18 +263,6 @@ func (r *Runner) Run(ctx context.Context) error {
 	// Use the template that was prepared during validation
 	template := r.Template
 
-	// Check for deprecated resource types and warn the user (using the result from Validate)
-	deprecatedResources := r.TemplateInspectionResult.DeprecatedResources
-	if len(deprecatedResources) > 0 {
-		r.Output.LogInfo("")
-		r.Output.LogInfo("WARNING: The following resource types are deprecated:")
-		for _, resourceType := range deprecatedResources {
-			r.Output.LogInfo("  - %s", resourceType)
-		}
-		r.Output.LogInfo("Please migrate to the new Radius.* namespace.")
-		r.Output.LogInfo("")
-	}
-
 	// This is the earliest point where we can inject parameters, we have
 	// to wait until the template is prepared.
 	err := r.injectAutomaticParameters(template)
@@ -642,8 +630,12 @@ func (r *Runner) setupCloudProviders(properties any) {
 				}
 			}
 			if props.Providers.Azure != nil {
+				scope := "/subscriptions/" + *props.Providers.Azure.SubscriptionID
+				if props.Providers.Azure.ResourceGroupName != nil && *props.Providers.Azure.ResourceGroupName != "" {
+					scope += "/resourceGroups/" + *props.Providers.Azure.ResourceGroupName
+				}
 				r.Providers.Azure = &clients.AzureProvider{
-					Scope: "/planes/azure/azure/" + "Subscriptions/" + *props.Providers.Azure.SubscriptionID + "/ResourceGroups/" + *props.Providers.Azure.ResourceGroupName,
+					Scope: scope,
 				}
 			}
 		}

@@ -58,14 +58,14 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
           cache: true
 
       - name: Setup NodeJS
-        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version-file: .node-version
 
@@ -76,7 +76,7 @@ jobs:
         run: go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.17.0
 
       - name: Install helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        uses: azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2 # v5.0.0
         with:
           version: v3.19.4
 
@@ -95,7 +95,7 @@ jobs:
       - name: Run linter
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
-          version: v2.8.0
+          version: v2.9.0
           args: --timeout=10m
           skip-cache: true
           install-mode: binary
@@ -130,7 +130,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup NodeJS
-        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version-file: .node-version
 

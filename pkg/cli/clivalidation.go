@@ -26,6 +26,7 @@ import (
 	"github.com/radius-project/radius/pkg/cli/clierrors"
 	"github.com/radius-project/radius/pkg/cli/cmd/commonflags"
 	"github.com/radius-project/radius/pkg/cli/config"
+	"github.com/radius-project/radius/pkg/cli/output"
 	"github.com/radius-project/radius/pkg/cli/workspaces"
 	"github.com/radius-project/radius/pkg/ucp/resources"
 	resources_radius "github.com/radius-project/radius/pkg/ucp/resources/radius"
@@ -351,8 +352,32 @@ func RequireAzureSubscriptionId(cmd *cobra.Command) (string, error) {
 	return subscriptionId, err
 }
 
+// RequireOutput reads the output format flag, normalizes it (trim and lowercase), and validates
+// it against the supported formats. Returns an error if the format is not supported.
+//
+// For backwards compatibility, "plain-text" is silently normalized to "table".
 func RequireOutput(cmd *cobra.Command) (string, error) {
-	return cmd.Flags().GetString("output")
+	format, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return "", err
+	}
+
+	format = strings.ToLower(strings.TrimSpace(format))
+
+	if format == "" {
+		return output.DefaultFormat, nil
+	}
+
+	// Backwards compatibility: accept deprecated aliases silently.
+	format = output.NormalizeFormat(format)
+
+	for _, f := range output.SupportedFormats() {
+		if format == f {
+			return format, nil
+		}
+	}
+
+	return "", clierrors.Message("unsupported output format %q, supported formats are: %s", format, strings.Join(output.SupportedFormats(), ", "))
 }
 
 // RequireWorkspace is used by commands that require an existing workspace either set as the default,
